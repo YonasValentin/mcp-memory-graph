@@ -138,6 +138,171 @@ const KNOWLEDGE_TOOLS = [
       },
     },
   },
+  // ── File & Folder CRUD Tools ──────────────────────────────────────────
+  {
+    name: 'list_folders',
+    description: 'List all folders in the knowledge base with file counts.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+    },
+  },
+  {
+    name: 'create_folder',
+    description: 'Create a new folder (namespace) in the knowledge base.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Name of the folder to create',
+        },
+        description: {
+          type: 'string',
+          description: 'Optional description of the folder',
+        },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'delete_folder',
+    description: 'Delete a folder and all its contents. Requires force=true to confirm.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Name of the folder to delete',
+        },
+        force: {
+          type: 'boolean',
+          description: 'Set to true to confirm deletion (default: false)',
+        },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'list_files',
+    description: 'List files in the knowledge base with optional folder filter, search, and type filter.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        folder: {
+          type: 'string',
+          description: 'Filter by folder name',
+        },
+        search: {
+          type: 'string',
+          description: 'Semantic search query to find files',
+        },
+        type: {
+          type: 'string',
+          description: 'Filter by file type (e.g., pdf, excel, docx, text)',
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum number of results (default: 20)',
+        },
+      },
+    },
+  },
+  {
+    name: 'get_file',
+    description: 'Get a file with full content and chunks by its ID.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        id: {
+          type: 'string',
+          description: 'The file ID to retrieve',
+        },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'update_file',
+    description: 'Update a file\'s metadata (title, tags, content).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        id: {
+          type: 'string',
+          description: 'The file ID to update',
+        },
+        title: {
+          type: 'string',
+          description: 'New title for the file',
+        },
+        tags: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Updated tags',
+        },
+        content: {
+          type: 'string',
+          description: 'New content for the file',
+        },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'delete_file',
+    description: 'Delete a file and all its chunks from the knowledge base.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        id: {
+          type: 'string',
+          description: 'The file ID to delete',
+        },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'move_file',
+    description: 'Move a file to a different folder.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        id: {
+          type: 'string',
+          description: 'The file ID to move',
+        },
+        folder: {
+          type: 'string',
+          description: 'Target folder name (use null for root)',
+        },
+      },
+      required: ['id', 'folder'],
+    },
+  },
+  {
+    name: 'copy_file',
+    description: 'Copy a file to a new location, optionally with a new title.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        id: {
+          type: 'string',
+          description: 'The file ID to copy',
+        },
+        folder: {
+          type: 'string',
+          description: 'Target folder for the copy',
+        },
+        new_title: {
+          type: 'string',
+          description: 'Optional new title for the copy',
+        },
+      },
+      required: ['id'],
+    },
+  },
 ];
 
 // ── Knowledge Base API Client ────────────────────────────────────────────
@@ -202,6 +367,49 @@ class KnowledgeBaseClient {
     const params = department ? `?department=${department}` : '';
     return this.request('GET', `/api/v1/stats${params}`);
   }
+
+  // ── File & Folder CRUD ──────────────────────────────────────────────
+
+  async listFolders(): Promise<any> {
+    return this.request('GET', '/api/v1/folders');
+  }
+
+  async createFolder(name: string, description?: string): Promise<any> {
+    return this.request('POST', '/api/v1/folders', { name, description });
+  }
+
+  async deleteFolder(name: string, force: boolean = false): Promise<any> {
+    return this.request('DELETE', `/api/v1/folders/${encodeURIComponent(name)}?force=${force}`);
+  }
+
+  async listFiles(options?: { folder?: string; search?: string; type?: string; limit?: number }): Promise<any> {
+    const params = new URLSearchParams();
+    if (options?.folder) params.set('folder', options.folder);
+    if (options?.search) params.set('search', options.search);
+    if (options?.type) params.set('type', options.type);
+    if (options?.limit) params.set('limit', String(options.limit));
+    return this.request('GET', `/api/v1/files?${params.toString()}`);
+  }
+
+  async getFile(id: string): Promise<any> {
+    return this.request('GET', `/api/v1/files/${id}`);
+  }
+
+  async updateFile(id: string, updates: { title?: string; tags?: string[]; content?: string }): Promise<any> {
+    return this.request('PUT', `/api/v1/files/${id}`, updates);
+  }
+
+  async deleteFile(id: string): Promise<any> {
+    return this.request('DELETE', `/api/v1/files/${id}`);
+  }
+
+  async moveFile(id: string, folder: string): Promise<any> {
+    return this.request('PUT', `/api/v1/files/${id}/move`, { folder });
+  }
+
+  async copyFile(id: string, folder?: string, newTitle?: string): Promise<any> {
+    return this.request('POST', `/api/v1/files/${id}/copy`, { folder, new_title: newTitle });
+  }
 }
 
 // ── Tool Execution ───────────────────────────────────────────────────────
@@ -243,6 +451,52 @@ async function executeTool(
 
       case 'get_stats':
         result = await kb.getStats(toolInput.department);
+        break;
+
+      // ── File & Folder CRUD ──────────────────────────────────────────
+      case 'list_folders':
+        result = await kb.listFolders();
+        break;
+
+      case 'create_folder':
+        result = await kb.createFolder(toolInput.name, toolInput.description);
+        break;
+
+      case 'delete_folder':
+        result = await kb.deleteFolder(toolInput.name, toolInput.force ?? false);
+        break;
+
+      case 'list_files':
+        result = await kb.listFiles({
+          folder: toolInput.folder,
+          search: toolInput.search,
+          type: toolInput.type,
+          limit: toolInput.limit,
+        });
+        break;
+
+      case 'get_file':
+        result = await kb.getFile(toolInput.id);
+        break;
+
+      case 'update_file':
+        result = await kb.updateFile(toolInput.id, {
+          title: toolInput.title,
+          tags: toolInput.tags,
+          content: toolInput.content,
+        });
+        break;
+
+      case 'delete_file':
+        result = await kb.deleteFile(toolInput.id);
+        break;
+
+      case 'move_file':
+        result = await kb.moveFile(toolInput.id, toolInput.folder);
+        break;
+
+      case 'copy_file':
+        result = await kb.copyFile(toolInput.id, toolInput.folder, toolInput.new_title);
         break;
 
       default:
@@ -379,6 +633,11 @@ When answering questions:
 4. If you cannot find relevant information, say so honestly
 5. Use find_related to discover connected documents when exploring a topic
 6. You can list_documents to browse what's available
+
+You can also manage files and folders:
+- list_folders / create_folder / delete_folder to organize the knowledge base
+- list_files / get_file to browse and read documents
+- update_file / delete_file / move_file / copy_file to manage documents
 
 Be helpful, accurate, and always ground your answers in the actual documents from the knowledge base.`;
 

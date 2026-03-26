@@ -13,6 +13,7 @@ import { registerMemoryRoutes } from './routes/memories.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerUploadRoutes } from './routes/upload.js';
+import { registerFileRoutes } from './routes/files.js';
 
 export interface HttpServerDeps {
   config: EnterpriseConfig;
@@ -113,6 +114,7 @@ export async function createHttpServer(deps: HttpServerDeps): Promise<any> {
 
   await registerMemoryRoutes(app, { storage, embedder, logger, metrics, cache });
   await registerUploadRoutes(app, { storage, embedder, logger, metrics, cache });
+  await registerFileRoutes(app, { storage, embedder, logger, metrics, cache });
 
   return app;
 }
