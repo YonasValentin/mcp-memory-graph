@@ -1,16 +1,20 @@
 {
   "name": "mcp-memory-server",
-  "version": "1.0.0",
-  "description": "Enterprise-grade vector memory MCP server with hybrid search",
+  "version": "2.0.0",
+  "description": "PureGate Knowledge — Enterprise vector memory platform with hybrid search, multi-tenancy, and REST API",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "mcp-memory-server": "dist/index.js"
+    "mcp-memory-server": "dist/index.js",
+    "puregate-knowledge": "dist/index.js"
   },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
+    "start:mcp": "SERVER_MODE=mcp node dist/index.js",
+    "start:http": "SERVER_MODE=http node dist/index.js",
+    "start:dual": "SERVER_MODE=dual node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "prepublishOnly": "npm run build"
@@ -28,7 +32,11 @@
     "embeddings",
     "knowledge-management",
     "rag",
-    "enterprise"
+    "enterprise",
+    "multi-tenant",
+    "puregate",
+    "pgvector",
+    "hybrid-search"
   ],
   "license": "MIT",
   "dependencies": {
@@ -39,11 +47,21 @@
     "sqlite-vec": "^0.1.7",
     "uuid": "^11.1.0",
     "yaml": "^2.8.3",
-    "zod": "^3.24.0"
+    "zod": "^3.24.0",
+    "fastify": "^5.0.0",
+    "@fastify/cors": "^11.0.0",
+    "@fastify/rate-limit": "^10.0.0",
+    "jose": "^6.0.0",
+    "pg": "^8.13.0",
+    "pgvector": "^0.2.0",
+    "ioredis": "^5.4.0",
+    "pino": "^9.0.0",
+    "prom-client": "^15.1.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.0",
     "@types/picomatch": "^3.0.2",
     "@types/uuid": "^10.0.0",
     "typescript": "^5.7.2",

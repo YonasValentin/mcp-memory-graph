@@ -1,0 +1,75 @@
+# ── PureGate Knowledge — Docker Compose ────────────────────────────────────
+
+services:
+  # ── API Server ───────────────────────────────────────────────────────
+  api:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      SERVER_MODE: http
+      PORT: 3000
+      DB_PROVIDER: postgres
+      DATABASE_URL: postgresql://puregate:puregate_secret@postgres:5432/puregate_knowledge
+      PG_POOL_MIN: 2
+      PG_POOL_MAX: 20
+      EMBEDDING_PROVIDER: transformers
+      MCP_MEMORY_MODEL: Xenova/all-MiniLM-L6-v2
+      MCP_MEMORY_DIMENSIONS: "384"
+      AUTH_ENABLED: "true"
+      JWT_SECRET: change-this-to-a-secure-random-string-at-least-32-chars
+      JWT_ISSUER: puregate-knowledge
+      JWT_AUDIENCE: puregate-api
+      REDIS_ENABLED: "true"
+      REDIS_URL: redis://redis:6379
+      RATE_LIMIT_ENABLED: "true"
+      METRICS_ENABLED: "true"
+      LOG_LEVEL: info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2"
+
+  # ── PostgreSQL + pgvector ────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: puregate_knowledge
+      POSTGRES_USER: puregate
+      POSTGRES_PASSWORD: puregate_secret
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U puregate -d puregate_knowledge"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Redis ────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
