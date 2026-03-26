@@ -9,6 +9,7 @@ import type {
   TemporalDecayConfig,
 } from '../types.js';
 import { hybridSearch } from '../search/hybrid.js';
+import { recordAccess } from '../db/repository.js';
 
 interface SearchInput {
   query: string;
@@ -52,5 +53,19 @@ export async function handleSearch(
   };
 
   const results = await hybridSearch(db, embedder, options);
+
+  if (results.length > 0) {
+    recordAccess(
+      db,
+      results.map((r, index) => ({
+        memory_id: r.memory.id,
+        access_type: 'search' as const,
+        query_text: input.query,
+        result_rank: index,
+        score: r.score,
+      })),
+    );
+  }
+
   return { results, total: results.length };
 }

@@ -532,3 +532,51 @@ export const VaultSearchSchema = z.object({
     .optional()
     .describe('Minimum confidence score threshold (0-1)'),
 });
+
+// ---------------------------------------------------------------------------
+// 16. MemoryConsolidateSchema
+// ---------------------------------------------------------------------------
+
+export const MemoryConsolidateSchema = z.object({
+  scope: scopeField(false),
+  namespace: namespaceField(),
+  similarity_threshold: z
+    .number().min(0.5).max(1.0).default(0.85)
+    .describe('Cosine similarity threshold for duplicate detection (0.5-1.0)'),
+  prune_expired: z
+    .boolean().default(true)
+    .describe('Remove memories past their expires_at date'),
+  prune_low_quality: z
+    .boolean().default(false)
+    .describe('Remove memories with both low importance and low confidence'),
+  dry_run: z
+    .boolean().default(false)
+    .describe('If true, report what would be done without making changes'),
+  max_operations: z
+    .number().int().min(1).max(1000).default(100)
+    .describe('Maximum number of merge/prune operations per run'),
+});
+
+// ---------------------------------------------------------------------------
+// 17. MemoryExtractLearningsSchema
+// ---------------------------------------------------------------------------
+
+export const MemoryExtractLearningsSchema = z.object({
+  transcript: z
+    .string().min(1)
+    .describe('Session transcript or conversation text to extract learnings from'),
+  scope: scopeFieldWithDefault(),
+  namespace: namespaceField(),
+  department: departmentField(),
+  tags: tagsField(),
+  source: z
+    .string().optional()
+    .describe('Source identifier for the session (e.g., "session-2026-03-26")'),
+  categories: z
+    .array(z.enum(['decision', 'pattern', 'error_fix', 'convention']))
+    .optional()
+    .describe('Which categories of learnings to extract (default: all)'),
+  auto_store: z
+    .boolean().default(true)
+    .describe('If true, automatically store extracted learnings as memories'),
+});

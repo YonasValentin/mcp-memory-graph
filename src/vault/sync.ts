@@ -284,6 +284,10 @@ function buildMemoryRow(
     created_at: now,
     updated_at: now,
     expires_at: null,
+    access_count: 0,
+    last_accessed_at: null,
+    importance_score: 0.5,
+    confidence_score: 0.6,
   };
 }
 

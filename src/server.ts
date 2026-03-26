@@ -21,6 +21,8 @@ import {
   VaultSyncSchema,
   VaultStatusSchema,
   VaultSearchSchema,
+  MemoryConsolidateSchema,
+  MemoryExtractLearningsSchema,
 } from './schemas/index.js';
 import { handleStore } from './tools/store.js';
 import { handleSearch } from './tools/search.js';
@@ -37,6 +39,8 @@ import { handleImport } from './tools/import.js';
 import { handleVaultSync } from './tools/vault-sync.js';
 import { handleVaultStatus } from './tools/vault-status.js';
 import { handleVaultSearch } from './tools/vault-search.js';
+import { handleConsolidate } from './tools/consolidate.js';
+import { handleExtractLearnings } from './tools/extract-learnings.js';
 
 function formatResult(data: unknown): { content: Array<{ type: 'text'; text: string }> } {
   return {
@@ -318,6 +322,36 @@ export function createServer(): McpServer {
     async (input) => {
       try {
         const result = await handleVaultSearch(getDb(), await getEmbedder(), input);
+        return formatResult(result);
+      } catch (err) {
+        return formatError(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ── 16. memory_consolidate ───────────────────────────────────────────────
+  server.tool(
+    'memory_consolidate',
+    'Run the "dream cycle": find and merge near-duplicate memories, prune expired/low-quality entries, and update quality scores based on access patterns. Use dry_run=true to preview changes.',
+    MemoryConsolidateSchema.shape,
+    async (input) => {
+      try {
+        const result = await handleConsolidate(getDb(), await getEmbedder(), input);
+        return formatResult(result);
+      } catch (err) {
+        return formatError(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ── 17. memory_extract_learnings ─────────────────────────────────────────
+  server.tool(
+    'memory_extract_learnings',
+    'Extract decisions, patterns, error fixes, and conventions from a session transcript using heuristic analysis. Deduplicates against existing memories and optionally auto-stores.',
+    MemoryExtractLearningsSchema.shape,
+    async (input) => {
+      try {
+        const result = await handleExtractLearnings(getDb(), await getEmbedder(), input);
         return formatResult(result);
       } catch (err) {
         return formatError(err instanceof Error ? err.message : String(err));

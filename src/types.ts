@@ -8,7 +8,7 @@ export type DecayType = 'exponential' | 'linear' | 'none';
 
 export type ContentType = 'text' | 'markdown' | 'code' | 'legal' | 'structured';
 
-export type SortField = 'created_at' | 'updated_at' | 'title';
+export type SortField = 'created_at' | 'updated_at' | 'title' | 'importance_score' | 'confidence_score' | 'access_count';
 
 export type SortOrder = 'asc' | 'desc';
 
@@ -34,6 +34,10 @@ export interface Memory {
   readonly created_at: string;
   updated_at: string;
   expires_at: string | null;
+  access_count: number;
+  last_accessed_at: string | null;
+  importance_score: number;
+  confidence_score: number;
 }
 
 export interface MemoryRow {
@@ -56,6 +60,10 @@ export interface MemoryRow {
   created_at: string;
   updated_at: string;
   expires_at: string | null;
+  access_count: number;
+  last_accessed_at: string | null;
+  importance_score: number;
+  confidence_score: number;
   rowid?: number;
 }
 
@@ -259,4 +267,77 @@ export interface VaultFileEntry {
   absolutePath: string;
   relativePath: string;
   mtimeMs: number;
+}
+
+// ── Self-Improvement Types ──────────────────────────────────────────────
+
+export interface AccessLogEntry {
+  memory_id: string;
+  access_type: 'search' | 'get' | 'related';
+  query_text?: string;
+  result_rank?: number;
+  score?: number;
+}
+
+export interface IngestSourceRecord {
+  id: string;
+  source_path: string;
+  source_hash: string;
+  memory_id: string;
+  chunk_ids: string | null;
+  content_length: number;
+  ingested_at: string;
+  last_checked_at: string;
+  status: 'current' | 'stale' | 'deleted';
+}
+
+export interface ConsolidationReport {
+  duplicates_found: number;
+  duplicates_merged: number;
+  expired_pruned: number;
+  low_quality_pruned: number;
+  scores_updated: number;
+  errors: string[];
+  duration_ms: number;
+}
+
+export interface ExtractedLearning {
+  type: 'decision' | 'pattern' | 'error_fix' | 'convention';
+  title: string;
+  content: string;
+  tags: string[];
+  confidence: number;
+}
+
+export interface ExtractLearningsResult {
+  learnings: ExtractedLearning[];
+  stored_count: number;
+  memory_ids: string[];
+}
+
+export interface ServerConfig {
+  defaults: {
+    scope: MemoryScope;
+    namespace: string;
+  };
+  projects: Array<{
+    path: string;
+    namespace: string;
+    watch: string[];
+  }>;
+  consolidation: {
+    similarity_threshold: number;
+    prune_after_days: number;
+    min_importance_to_keep: number;
+    max_operations: number;
+  };
+  hooks: {
+    extract_on_compact: boolean;
+    extract_on_session_end: boolean;
+    track_searches: boolean;
+  };
+  extraction: {
+    categories: ExtractedLearning['type'][];
+    min_confidence: number;
+  };
 }

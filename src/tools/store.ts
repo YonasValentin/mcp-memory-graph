@@ -31,6 +31,10 @@ export async function handleStore(
     created_at: now,
     updated_at: now,
     expires_at: input.expires_at ?? null,
+    access_count: 0,
+    last_accessed_at: null,
+    importance_score: 0.5,
+    confidence_score: 0.7,
   };
 
   insertMemory(db, row, embedding);

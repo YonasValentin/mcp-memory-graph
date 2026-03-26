@@ -24,6 +24,53 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: 3,
+    up: (db) => {
+      // ALTER TABLE doesn't support IF NOT EXISTS — use try/catch per column
+      const addColumn = (sql: string) => {
+        try { db.exec(sql); } catch { /* column already exists */ }
+      };
+      addColumn('ALTER TABLE memories ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0');
+      addColumn('ALTER TABLE memories ADD COLUMN last_accessed_at TEXT');
+      addColumn('ALTER TABLE memories ADD COLUMN importance_score REAL NOT NULL DEFAULT 0.5');
+      addColumn('ALTER TABLE memories ADD COLUMN confidence_score REAL NOT NULL DEFAULT 0.5');
+
+      db.exec(`
+
+        CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance_score);
+        CREATE INDEX IF NOT EXISTS idx_memories_access_count ON memories(access_count);
+
+        CREATE TABLE IF NOT EXISTS memory_access_log (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          memory_id TEXT NOT NULL,
+          access_type TEXT NOT NULL DEFAULT 'search',
+          query_text TEXT,
+          result_rank INTEGER,
+          score REAL,
+          accessed_at TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_access_log_memory ON memory_access_log(memory_id);
+        CREATE INDEX IF NOT EXISTS idx_access_log_accessed_at ON memory_access_log(accessed_at);
+
+        CREATE TABLE IF NOT EXISTS ingest_source_tracking (
+          id TEXT PRIMARY KEY NOT NULL,
+          source_path TEXT NOT NULL,
+          source_hash TEXT NOT NULL,
+          memory_id TEXT NOT NULL,
+          chunk_ids TEXT,
+          content_length INTEGER NOT NULL,
+          ingested_at TEXT NOT NULL DEFAULT (datetime('now')),
+          last_checked_at TEXT NOT NULL DEFAULT (datetime('now')),
+          status TEXT NOT NULL DEFAULT 'current',
+          FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_source_path ON ingest_source_tracking(source_path);
+        CREATE INDEX IF NOT EXISTS idx_ingest_source_memory ON ingest_source_tracking(memory_id);
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

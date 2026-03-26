@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { EmbeddingProvider, SearchResult, MemoryRow } from '../types.js';
-import { getMemoryById, getMemoryRowid, rowToMemory } from '../db/repository.js';
+import { getMemoryById, getMemoryRowid, rowToMemory, recordAccess } from '../db/repository.js';
 
 interface VecMatch {
   rowid: number;
@@ -23,6 +23,7 @@ export async function handleRelated(
   }
 
   const embedding = await embedder.embed(targetRow.content);
+  recordAccess(db, [{ memory_id: input.id, access_type: 'related' }]);
 
   const fetchLimit = input.limit + 20;
   const vecMatches = db

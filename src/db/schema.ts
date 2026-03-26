@@ -21,7 +21,11 @@ export function initializeSchema(db: Database.Database): void {
       version INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      expires_at TEXT
+      expires_at TEXT,
+      access_count INTEGER NOT NULL DEFAULT 0,
+      last_accessed_at TEXT,
+      importance_score REAL NOT NULL DEFAULT 0.5,
+      confidence_score REAL NOT NULL DEFAULT 0.5
     );
 
     CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
@@ -73,7 +77,7 @@ export function initializeSchema(db: Database.Database): void {
   if (!existing) {
     db.prepare('INSERT INTO schema_meta (key, value) VALUES (?, ?)').run(
       'schema_version',
-      '1',
+      '3',
     );
   }
 }

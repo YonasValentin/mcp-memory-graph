@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { Memory, MemoryRow } from '../types.js';
-import { getMemoryById, rowToMemory } from '../db/repository.js';
+import { getMemoryById, rowToMemory, recordAccess } from '../db/repository.js';
 
 export function handleGet(
   db: Database.Database,
@@ -12,6 +12,7 @@ export function handleGet(
   }
 
   const memory = rowToMemory(row);
+  recordAccess(db, [{ memory_id: input.id, access_type: 'get' }]);
 
   if (!input.include_chunks) {
     return { memory };

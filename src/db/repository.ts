@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { Memory, MemoryRow, ListOptions } from '../types.js';
+import type { Memory, MemoryRow, ListOptions, AccessLogEntry, IngestSourceRecord } from '../types.js';
 
 export function insertMemory(
   db: Database.Database,
@@ -11,11 +11,13 @@ export function insertMemory(
       INSERT INTO memories (
         id, scope, namespace, title, content, document_type, source,
         author, department, tags, access_level, language, metadata,
-        parent_id, chunk_index, version, created_at, updated_at, expires_at
+        parent_id, chunk_index, version, created_at, updated_at, expires_at,
+        access_count, last_accessed_at, importance_score, confidence_score
       ) VALUES (
         @id, @scope, @namespace, @title, @content, @document_type, @source,
         @author, @department, @tags, @access_level, @language, @metadata,
-        @parent_id, @chunk_index, @version, @created_at, @updated_at, @expires_at
+        @parent_id, @chunk_index, @version, @created_at, @updated_at, @expires_at,
+        @access_count, @last_accessed_at, @importance_score, @confidence_score
       )
     `);
 
@@ -91,6 +93,8 @@ export function updateMemory(
       'department',
       'access_level',
       'language',
+      'importance_score',
+      'confidence_score',
     ];
 
     for (const field of allowedFields) {
@@ -303,7 +307,7 @@ export function listMemories(
   const whereClause =
     conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-  const allowedSortFields = ['created_at', 'updated_at', 'title'] as const;
+  const allowedSortFields = ['created_at', 'updated_at', 'title', 'importance_score', 'confidence_score', 'access_count'] as const;
   const sortField = allowedSortFields.includes(options.sort_by as typeof allowedSortFields[number])
     ? options.sort_by
     : 'created_at';
@@ -370,5 +374,128 @@ export function rowToMemory(row: MemoryRow): Memory {
     created_at: row.created_at,
     updated_at: row.updated_at,
     expires_at: row.expires_at,
+    access_count: row.access_count,
+    last_accessed_at: row.last_accessed_at,
+    importance_score: row.importance_score,
+    confidence_score: row.confidence_score,
   };
+}
+
+// ── Access Tracking ──────────────────────────────────────────────────────
+
+export function recordAccess(
+  db: Database.Database,
+  entries: AccessLogEntry[],
+): void {
+  if (entries.length === 0) return;
+
+  const record = db.transaction(() => {
+    const insertLog = db.prepare(`
+      INSERT INTO memory_access_log (memory_id, access_type, query_text, result_rank, score, accessed_at)
+      VALUES (?, ?, ?, ?, ?, datetime('now'))
+    `);
+    const bumpAccess = db.prepare(`
+      UPDATE memories
+      SET access_count = access_count + 1, last_accessed_at = datetime('now')
+      WHERE id = ?
+    `);
+
+    for (const entry of entries) {
+      insertLog.run(
+        entry.memory_id,
+        entry.access_type,
+        entry.query_text ?? null,
+        entry.result_rank ?? null,
+        entry.score ?? null,
+      );
+      bumpAccess.run(entry.memory_id);
+    }
+  });
+
+  record();
+}
+
+// ── Quality Scoring ──────────────────────────────────────────────────────
+
+export function updateQualityScores(db: Database.Database): number {
+  const result = db.prepare(`
+    UPDATE memories SET
+      importance_score = MIN(1.0, MAX(0.0,
+        0.3 * importance_score +
+        0.4 * MIN(1.0, CAST(access_count AS REAL) / MAX(
+          (SELECT MAX(access_count) FROM memories WHERE parent_id IS NULL), 1
+        )) +
+        0.3 * CASE
+          WHEN last_accessed_at IS NULL THEN 0.1
+          WHEN julianday('now') - julianday(last_accessed_at) < 7 THEN 1.0
+          WHEN julianday('now') - julianday(last_accessed_at) < 30 THEN 0.7
+          WHEN julianday('now') - julianday(last_accessed_at) < 90 THEN 0.4
+          ELSE 0.1
+        END
+      ))
+    WHERE parent_id IS NULL
+  `).run();
+
+  return result.changes;
+}
+
+// ── Duplicate Detection ──────────────────────────────────────────────────
+
+export function findNearDuplicates(
+  db: Database.Database,
+  embedding: Float32Array,
+  distanceThreshold: number,
+  limit: number,
+): Array<{ rowid: number; id: string; distance: number }> {
+  const rows = db
+    .prepare<[Buffer, number], { rowid: number; distance: number }>(
+      'SELECT rowid, distance FROM memories_vec WHERE embedding MATCH ? AND k = ? ORDER BY distance',
+    )
+    .all(Buffer.from(embedding.buffer), limit);
+
+  const results: Array<{ rowid: number; id: string; distance: number }> = [];
+  for (const row of rows) {
+    if (row.distance > distanceThreshold) break;
+    const mem = db
+      .prepare<[number], { id: string }>('SELECT id FROM memories WHERE rowid = ?')
+      .get(Number(row.rowid));
+    if (mem) {
+      results.push({ rowid: Number(row.rowid), id: mem.id, distance: row.distance });
+    }
+  }
+  return results;
+}
+
+// ── Ingest Source Tracking ───────────────────────────────────────────────
+
+export function upsertIngestSource(
+  db: Database.Database,
+  record: IngestSourceRecord,
+): void {
+  db.prepare(`
+    INSERT OR REPLACE INTO ingest_source_tracking
+      (id, source_path, source_hash, memory_id, chunk_ids, content_length, ingested_at, last_checked_at, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    record.id,
+    record.source_path,
+    record.source_hash,
+    record.memory_id,
+    record.chunk_ids,
+    record.content_length,
+    record.ingested_at,
+    record.last_checked_at,
+    record.status,
+  );
+}
+
+export function getIngestSourceByPath(
+  db: Database.Database,
+  sourcePath: string,
+): IngestSourceRecord | null {
+  return (
+    db.prepare<[string], IngestSourceRecord>(
+      'SELECT * FROM ingest_source_tracking WHERE source_path = ?',
+    ).get(sourcePath) ?? null
+  );
 }
