@@ -1,0 +1,75 @@
+import type Database from 'better-sqlite3';
+import type { EmbeddingProvider, SearchResult, MemoryRow } from '../types.js';
+import { getMemoryById, getMemoryRowid, rowToMemory } from '../db/repository.js';
+
+interface VecMatch {
+  rowid: number;
+  distance: number;
+}
+
+export async function handleRelated(
+  db: Database.Database,
+  embedder: EmbeddingProvider,
+  input: { id: string; limit: number; min_similarity?: number },
+): Promise<SearchResult[]> {
+  const targetRow = getMemoryById(db, input.id);
+  if (!targetRow) {
+    return [];
+  }
+
+  const targetRowid = getMemoryRowid(db, input.id);
+  if (targetRowid === null) {
+    return [];
+  }
+
+  const embedding = await embedder.embed(targetRow.content);
+
+  const fetchLimit = input.limit + 20;
+  const vecMatches = db
+    .prepare<[Buffer, number], VecMatch>(
+      'SELECT rowid, distance FROM memories_vec WHERE embedding MATCH ? AND k = ? ORDER BY distance',
+    )
+    .all(Buffer.from(embedding.buffer), fetchLimit);
+
+  const childRowids = new Set<number>();
+  const childRows = db
+    .prepare<[string], { rowid: number }>('SELECT rowid FROM memories WHERE parent_id = ?')
+    .all(input.id);
+  for (const child of childRows) {
+    childRowids.add(Number(child.rowid));
+  }
+
+  const minSimilarity = input.min_similarity ?? 0;
+  const results: SearchResult[] = [];
+
+  for (const match of vecMatches) {
+    if (results.length >= input.limit) break;
+
+    const rowid = Number(match.rowid);
+    if (rowid === targetRowid || childRowids.has(rowid)) continue;
+
+    const similarity = 1 - match.distance / 2;
+    if (similarity < minSimilarity) continue;
+
+    const row = db
+      .prepare<[number], MemoryRow>('SELECT * FROM memories WHERE rowid = ?')
+      .get(rowid);
+
+    if (!row) continue;
+    if (row.id === input.id) continue;
+
+    const confidence = Math.min(similarity, 1);
+    const confidenceLevel =
+      confidence >= 0.8 ? 'high' : confidence >= 0.5 ? 'medium' : 'low';
+
+    results.push({
+      memory: rowToMemory(row),
+      score: similarity,
+      confidence,
+      confidence_level: confidenceLevel,
+      match_type: 'vector',
+    });
+  }
+
+  return results;
+}

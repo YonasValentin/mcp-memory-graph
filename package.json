@@ -1,0 +1,49 @@
+{
+  "name": "mcp-memory-server",
+  "version": "1.0.0",
+  "description": "Enterprise-grade vector memory MCP server with hybrid search",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "mcp-memory-server": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "files": [
+    "dist/"
+  ],
+  "keywords": [
+    "mcp",
+    "memory",
+    "vector-search",
+    "embeddings",
+    "knowledge-management",
+    "rag",
+    "enterprise"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
+    "@modelcontextprotocol/sdk": "^1.28.0",
+    "better-sqlite3": "^12.8.0",
+    "sqlite-vec": "^0.1.7",
+    "uuid": "^11.1.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.10.0",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
+  }
+}
