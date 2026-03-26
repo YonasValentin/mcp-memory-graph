@@ -447,23 +447,27 @@ export function findNearDuplicates(
   distanceThreshold: number,
   limit: number,
 ): Array<{ rowid: number; id: string; distance: number }> {
-  const rows = db
-    .prepare<[Buffer, number], { rowid: number; distance: number }>(
-      'SELECT rowid, distance FROM memories_vec WHERE embedding MATCH ? AND k = ? ORDER BY distance',
-    )
-    .all(Buffer.from(embedding.buffer), limit);
+  const find = db.transaction(() => {
+    const rows = db
+      .prepare<[Buffer, number], { rowid: number; distance: number }>(
+        'SELECT rowid, distance FROM memories_vec WHERE embedding MATCH ? AND k = ? ORDER BY distance',
+      )
+      .all(Buffer.from(embedding.buffer), limit);
 
-  const results: Array<{ rowid: number; id: string; distance: number }> = [];
-  for (const row of rows) {
-    if (row.distance > distanceThreshold) break;
-    const mem = db
-      .prepare<[number], { id: string }>('SELECT id FROM memories WHERE rowid = ?')
-      .get(Number(row.rowid));
-    if (mem) {
-      results.push({ rowid: Number(row.rowid), id: mem.id, distance: row.distance });
+    const results: Array<{ rowid: number; id: string; distance: number }> = [];
+    for (const row of rows) {
+      if (row.distance > distanceThreshold) break;
+      const mem = db
+        .prepare<[number], { id: string }>('SELECT id FROM memories WHERE rowid = ?')
+        .get(Number(row.rowid));
+      if (mem) {
+        results.push({ rowid: Number(row.rowid), id: mem.id, distance: row.distance });
+      }
     }
-  }
-  return results;
+    return results;
+  });
+
+  return find();
 }
 
 // ── Ingest Source Tracking ───────────────────────────────────────────────

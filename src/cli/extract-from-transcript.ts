@@ -6,6 +6,9 @@ import { getReadWriteDb, getEmbedder } from '../lib/direct-access.js';
 import { handleExtractLearnings } from '../tools/extract-learnings.js';
 import { resolveNamespace } from '../config/loader.js';
 
+// Safety timeout — background extraction must not run forever
+setTimeout(() => process.exit(1), 5 * 60 * 1000);
+
 async function main(): Promise<void> {
   const [transcriptPath, mode] = process.argv.slice(2);
   if (!transcriptPath) process.exit(1);

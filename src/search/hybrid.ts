@@ -1,7 +1,8 @@
 import type Database from 'better-sqlite3';
-import type { EmbeddingProvider, SearchOptions, SearchResult, Memory, MemoryRow } from '../types.js';
+import type { EmbeddingProvider, SearchOptions, SearchResult, MemoryRow } from '../types.js';
 import { applyTemporalDecay } from './temporal.js';
 import { computeConfidence, confidenceLabel } from './scoring.js';
+import { rowToMemory } from '../db/repository.js';
 
 function sanitizeFtsQuery(query: string): string {
   return query
@@ -12,16 +13,6 @@ function sanitizeFtsQuery(query: string): string {
     .join(' ');
 }
 
-function rowToMemory(row: MemoryRow): Memory {
-  return {
-    ...row,
-    scope: row.scope as Memory['scope'],
-    access_level: row.access_level as Memory['access_level'],
-    tags: row.tags ? JSON.parse(row.tags) : [],
-    metadata: row.metadata ? JSON.parse(row.metadata) : null,
-  };
-}
-
 export async function hybridSearch(
   db: Database.Database,
   embedder: EmbeddingProvider,
@@ -29,7 +20,7 @@ export async function hybridSearch(
 ): Promise<SearchResult[]> {
   const doVector = options.search_mode === 'hybrid' || options.search_mode === 'vector';
   const doKeyword = options.search_mode === 'hybrid' || options.search_mode === 'keyword';
-  const oversampleLimit = options.limit * 3;
+  const oversampleLimit = Math.min(options.limit * 3, 300);
 
   // --- Vector search ---
   const vectorResults = new Map<number, number>();

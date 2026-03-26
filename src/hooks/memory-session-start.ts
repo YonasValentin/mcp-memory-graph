@@ -7,13 +7,23 @@ import { join, resolve } from 'node:path';
 import type BetterSqlite3 from 'better-sqlite3';
 
 async function main(): Promise<void> {
+  // Safety timeout - hooks must never hang
+  const stdinTimeout = setTimeout(() => process.exit(0), 5000);
+
   // Read stdin (hook input JSON)
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) {
     chunks.push(chunk as Buffer);
   }
-  const input = JSON.parse(Buffer.concat(chunks).toString());
-  const cwd = input?.cwd || process.cwd();
+  clearTimeout(stdinTimeout);
+
+  let input: Record<string, unknown> | null = null;
+  try {
+    input = JSON.parse(Buffer.concat(chunks).toString());
+  } catch {
+    process.exit(0);
+  }
+  const cwd = typeof input?.cwd === 'string' ? input.cwd : process.cwd();
 
   // Open SQLite directly — NO embedder
   const dbPath = process.env.MCP_MEMORY_DB_PATH || join(homedir(), '.mcp-memory', 'memory.db');

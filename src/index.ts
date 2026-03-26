@@ -23,10 +23,16 @@ async function main(): Promise<void> {
       // Default: start MCP server on stdio
       const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js');
       const { createServer } = await import('./server.js');
+      const { closeDatabase } = await import('./db/connection.js');
       const server = createServer();
       const transport = new StdioServerTransport();
       await server.connect(transport);
       console.error('MCP Memory Server running on stdio');
+
+      // Clean up database when transport closes
+      transport.onclose = () => {
+        closeDatabase();
+      };
       break;
     }
   }

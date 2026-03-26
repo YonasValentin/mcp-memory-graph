@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import picomatch from 'picomatch';
 import type { VaultFileEntry } from '../types.js';
+import { sanitizePath } from '../lib/path-validation.js';
 
 export interface ScanOptions {
   includePatterns?: string[];
@@ -16,10 +17,14 @@ export function scanVault(
   vaultPath: string,
   options?: ScanOptions,
 ): VaultFileEntry[] {
-  const resolvedPath = path.resolve(vaultPath);
+  const sanitized = sanitizePath(vaultPath);
+  if (!sanitized) {
+    throw new Error(`Invalid vault path: ${vaultPath}`);
+  }
+  const resolvedPath = sanitized;
 
-  const stat = fs.statSync(resolvedPath, { throwIfNoEntry: false });
-  if (!stat || !stat.isDirectory()) {
+  const stat = fs.lstatSync(resolvedPath, { throwIfNoEntry: false });
+  if (!stat || stat.isSymbolicLink() || !stat.isDirectory()) {
     throw new Error(`Vault path is not a directory: ${resolvedPath}`);
   }
 
@@ -58,6 +63,7 @@ function walkDirectory(
 
   for (const dirent of dirents) {
     if (dirent.name.startsWith('.')) continue;
+    if (dirent.isSymbolicLink()) continue;
 
     const fullPath = path.join(dir, dirent.name);
 

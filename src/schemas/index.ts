@@ -389,6 +389,7 @@ const MemoryImportItemSchema = z.object({
   content: z
     .string()
     .min(1)
+    .max(100000)
     .describe('The text content of the memory'),
   id: z
     .string()
@@ -422,7 +423,8 @@ const MemoryImportItemSchema = z.object({
 export const MemoryImportSchema = z.object({
   data: z
     .array(MemoryImportItemSchema)
-    .describe('Array of memory objects to import'),
+    .max(500)
+    .describe('Array of memory objects to import (max 500 per batch)'),
   overwrite: z
     .boolean()
     .default(false)

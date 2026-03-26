@@ -115,7 +115,11 @@ export async function handleConsolidate(
   );
 
   let opsPerformed = 0;
-  const limitReached = (): boolean => opsPerformed >= maxOps;
+  let embeddingOps = 0;
+  const maxEmbeddings = maxOps * 2;
+  const timeBudgetMs = 5 * 60 * 1000;
+  const limitReached = (): boolean =>
+    opsPerformed >= maxOps || embeddingOps >= maxEmbeddings || Date.now() - startTime > timeBudgetMs;
 
   // ── Stage 1: Update quality scores ────────────────────────────────────
   try {
@@ -176,6 +180,7 @@ export async function handleConsolidate(
       for (const row of lowQualityRows) {
         if (limitReached()) break;
         const embedding = await embedder.embed(row.content);
+        embeddingOps++;
         const duplicates = findNearDuplicates(db, embedding, distanceThreshold, 5);
         const hasNearDuplicate = duplicates.some((d) => d.id !== row.id);
         if (!hasNearDuplicate) continue;
@@ -209,6 +214,7 @@ export async function handleConsolidate(
         if (mergedIds.has(mem.id)) continue;
 
         const embedding = await embedder.embed(mem.content);
+        embeddingOps++;
         const duplicates = findNearDuplicates(db, embedding, distanceThreshold, 10);
         const candidates = duplicates.filter((d) => d.id !== mem.id && !mergedIds.has(d.id));
 
@@ -229,9 +235,11 @@ export async function handleConsolidate(
           const merged = mergeContent(primaryRow.content, secondaryRow.content);
 
           if (!dryRun) {
-            const newEmbedding = merged !== primaryRow.content
-              ? await embedder.embed(merged)
-              : undefined;
+            let newEmbedding: Float32Array | undefined;
+            if (merged !== primaryRow.content) {
+              newEmbedding = await embedder.embed(merged);
+              embeddingOps++;
+            }
 
             updateMemory(db, mem.id, { content: merged }, newEmbedding);
             deleteMemory(db, candidate.id);

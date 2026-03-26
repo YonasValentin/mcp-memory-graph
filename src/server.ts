@@ -89,7 +89,8 @@ export function createServer(): McpServer {
     MemoryStoreSchema.shape,
     async (input) => {
       try {
-        const result = await handleStore(getDb(), await getEmbedder(), input);
+        const parsed = MemoryStoreSchema.parse(input);
+        const result = await handleStore(getDb(), await getEmbedder(), parsed);
         return formatResult({ stored: true, memory: result });
       } catch (err) {
         return formatError(err instanceof Error ? err.message : String(err));
@@ -105,7 +106,8 @@ export function createServer(): McpServer {
     MemorySearchSchema.shape,
     async (input) => {
       try {
-        const result = await handleSearch(getDb(), await getEmbedder(), input);
+        const parsed = MemorySearchSchema.parse(input);
+        const result = await handleSearch(getDb(), await getEmbedder(), parsed);
         return formatResult(result);
       } catch (err) {
         return formatError(err instanceof Error ? err.message : String(err));
@@ -121,7 +123,8 @@ export function createServer(): McpServer {
     MemoryGetSchema.shape,
     async (input) => {
       try {
-        const result = handleGet(getDb(), input);
+        const parsed = MemoryGetSchema.parse(input);
+        const result = handleGet(getDb(), parsed);
         if (!result) return formatError('Memory not found');
         return formatResult(result);
       } catch (err) {
@@ -138,7 +141,8 @@ export function createServer(): McpServer {
     MemoryUpdateSchema.shape,
     async (input) => {
       try {
-        const result = await handleUpdate(getDb(), await getEmbedder(), input);
+        const parsed = MemoryUpdateSchema.parse(input);
+        const result = await handleUpdate(getDb(), await getEmbedder(), parsed);
         if (!result) return formatError('Memory not found');
         return formatResult({ updated: true, memory: result });
       } catch (err) {
@@ -158,10 +162,8 @@ export function createServer(): McpServer {
     },
     async (input) => {
       try {
-        if (!input.id && !input.filter) {
-          return formatError('At least one of "id" or "filter" must be provided');
-        }
-        const result = handleDelete(getDb(), input);
+        const parsed = MemoryDeleteSchema.parse(input);
+        const result = handleDelete(getDb(), parsed);
         return formatResult(result);
       } catch (err) {
         return formatError(err instanceof Error ? err.message : String(err));
@@ -177,7 +179,8 @@ export function createServer(): McpServer {
     MemoryListSchema.shape,
     async (input) => {
       try {
-        const result = handleList(getDb(), input);
+        const parsed = MemoryListSchema.parse(input);
+        const result = handleList(getDb(), parsed);
         return formatResult(result);
       } catch (err) {
         return formatError(err instanceof Error ? err.message : String(err));
@@ -193,7 +196,8 @@ export function createServer(): McpServer {
     MemoryIngestSchema.shape,
     async (input) => {
       try {
-        const result = await handleIngest(getDb(), await getEmbedder(), input);
+        const parsed = MemoryIngestSchema.parse(input);
+        const result = await handleIngest(getDb(), await getEmbedder(), parsed);
         return formatResult(result);
       } catch (err) {
         return formatError(err instanceof Error ? err.message : String(err));
@@ -209,7 +213,8 @@ export function createServer(): McpServer {
     MemoryRelatedSchema.shape,
     async (input) => {
       try {
-        const result = await handleRelated(getDb(), await getEmbedder(), input);
+        const parsed = MemoryRelatedSchema.parse(input);
+        const result = await handleRelated(getDb(), await getEmbedder(), parsed);
         return formatResult({ related: result, count: result.length });
       } catch (err) {
         return formatError(err instanceof Error ? err.message : String(err));
@@ -225,7 +230,8 @@ export function createServer(): McpServer {
     MemoryVersionsSchema.shape,
     async (input) => {
       try {
-        const result = handleVersions(getDb(), input);
+        const parsed = MemoryVersionsSchema.parse(input);
+        const result = handleVersions(getDb(), parsed);
         return formatResult(result);
       } catch (err) {
         return formatError(err instanceof Error ? err.message : String(err));
@@ -241,7 +247,8 @@ export function createServer(): McpServer {
     MemoryStatsSchema.shape,
     async (input) => {
       try {
-        const result = handleStats(getDb(), input);
+        const parsed = MemoryStatsSchema.parse(input);
+        const result = handleStats(getDb(), parsed);
         return formatResult(result);
       } catch (err) {
         return formatError(err instanceof Error ? err.message : String(err));
@@ -257,7 +264,8 @@ export function createServer(): McpServer {
     MemoryExportSchema.shape,
     async (input) => {
       try {
-        const result = handleExport(getDb(), input);
+        const parsed = MemoryExportSchema.parse(input);
+        const result = handleExport(getDb(), parsed);
         return formatResult(result);
       } catch (err) {
         return formatError(err instanceof Error ? err.message : String(err));
@@ -273,7 +281,8 @@ export function createServer(): McpServer {
     MemoryImportSchema.shape,
     async (input) => {
       try {
-        const result = await handleImport(getDb(), await getEmbedder(), input);
+        const parsed = MemoryImportSchema.parse(input);
+        const result = await handleImport(getDb(), await getEmbedder(), parsed);
         return formatResult(result);
       } catch (err) {
         return formatError(err instanceof Error ? err.message : String(err));
@@ -289,7 +298,8 @@ export function createServer(): McpServer {
     VaultSyncSchema.shape,
     async (input) => {
       try {
-        const result = await handleVaultSync(getDb(), await getEmbedder(), input);
+        const parsed = VaultSyncSchema.parse(input);
+        const result = await handleVaultSync(getDb(), await getEmbedder(), parsed);
         return formatResult(result);
       } catch (err) {
         return formatError(err instanceof Error ? err.message : String(err));
@@ -305,7 +315,8 @@ export function createServer(): McpServer {
     VaultStatusSchema.shape,
     async (input) => {
       try {
-        const result = handleVaultStatus(getDb(), input);
+        const parsed = VaultStatusSchema.parse(input);
+        const result = handleVaultStatus(getDb(), parsed);
         return formatResult(result);
       } catch (err) {
         return formatError(err instanceof Error ? err.message : String(err));
@@ -321,7 +332,8 @@ export function createServer(): McpServer {
     VaultSearchSchema.shape,
     async (input) => {
       try {
-        const result = await handleVaultSearch(getDb(), await getEmbedder(), input);
+        const parsed = VaultSearchSchema.parse(input);
+        const result = await handleVaultSearch(getDb(), await getEmbedder(), parsed);
         return formatResult(result);
       } catch (err) {
         return formatError(err instanceof Error ? err.message : String(err));
@@ -336,7 +348,8 @@ export function createServer(): McpServer {
     MemoryConsolidateSchema.shape,
     async (input) => {
       try {
-        const result = await handleConsolidate(getDb(), await getEmbedder(), input);
+        const parsed = MemoryConsolidateSchema.parse(input);
+        const result = await handleConsolidate(getDb(), await getEmbedder(), parsed);
         return formatResult(result);
       } catch (err) {
         return formatError(err instanceof Error ? err.message : String(err));
@@ -351,7 +364,8 @@ export function createServer(): McpServer {
     MemoryExtractLearningsSchema.shape,
     async (input) => {
       try {
-        const result = await handleExtractLearnings(getDb(), await getEmbedder(), input);
+        const parsed = MemoryExtractLearningsSchema.parse(input);
+        const result = await handleExtractLearnings(getDb(), await getEmbedder(), parsed);
         return formatResult(result);
       } catch (err) {
         return formatError(err instanceof Error ? err.message : String(err));

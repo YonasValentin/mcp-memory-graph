@@ -98,6 +98,10 @@ export async function syncVault(
 
     for (const { entry, isNew } of batch) {
       try {
+        // Parse FIRST — before deleting old memory
+        const file = parseVaultFile(entry.absolutePath, entry.relativePath, entry.mtimeMs);
+
+        // Only delete old memory AFTER successful parse
         if (!isNew) {
           const meta = syncMeta.get(entry.relativePath);
           if (meta) {
@@ -105,7 +109,6 @@ export async function syncVault(
           }
         }
 
-        const file = parseVaultFile(entry.absolutePath, entry.relativePath, entry.mtimeMs);
         parsed.push({ file, isNew, entry });
       } catch (err) {
         errors.push(`Parse failed for ${entry.relativePath}: ${errorMessage(err)}`);

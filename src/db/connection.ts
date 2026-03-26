@@ -33,6 +33,19 @@ export function getDatabase(dbPath?: string): Database.Database {
   return db;
 }
 
+/**
+ * Creates a fresh database connection without caching.
+ * Used by tests to get isolated in-memory databases.
+ */
+export function createDatabase(dbPath: string): Database.Database {
+  const db = new Database(dbPath);
+  sqliteVec.load(db);
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  db.pragma('busy_timeout = 5000');
+  return db;
+}
+
 export function closeDatabase(): void {
   if (cachedDb) {
     cachedDb.close();
