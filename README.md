@@ -82,7 +82,7 @@ In a Claude Code session, ask:
 What memory tools do you have available?
 ```
 
-Claude should list all 12 `memory_*` tools.
+Claude should list all 15 tools (12 `memory_*` + 3 `vault_*`).
 
 ---
 
@@ -532,25 +532,85 @@ rm ~/.mcp-memory/memory.db
 
 ---
 
+## Obsidian Vault Integration
+
+Sync an Obsidian vault to vector memory. Point at a vault folder, and all markdown files are ingested with their frontmatter, tags, and wiki-links as searchable memories. **No Obsidian app needed** — works by reading files directly from disk.
+
+### Vault Tools
+
+| Tool | Description |
+|------|-------------|
+| `vault_sync` | Scan vault, parse files, embed and store. Incremental (mtime-based). |
+| `vault_status` | Show sync status: files synced/pending/changed, last sync time. |
+| `vault_search` | Hybrid search scoped to a vault's memories. |
+
+### What Gets Extracted
+
+| Obsidian Feature | Memory Field |
+|------------------|-------------|
+| YAML frontmatter `title:` | `title` |
+| YAML frontmatter `tags: [...]` | `tags` (merged with inline) |
+| YAML frontmatter `author:` | `author` |
+| YAML frontmatter (all fields) | `metadata.frontmatter` |
+| Inline `#tags` in content | `tags` (merged with frontmatter) |
+| `[[wiki-links]]` | `metadata.links` array |
+| File path relative to vault | `source` |
+| Vault directory name | `namespace` |
+
+### Usage Examples
+
+```
+Sync my Obsidian vault at ~/Documents/my-vault
+
+Check vault sync status for ~/Documents/my-vault
+
+Search my vault for "meeting action items about hiring"
+
+Sync vault but only the notes/ and projects/ folders:
+  vault_sync with include_patterns=["notes/**", "projects/**"]
+
+Force re-sync everything (ignore modification times):
+  vault_sync with force=true
+```
+
+### `vault_sync` Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `vault_path` | string | — | Absolute path to vault directory (required) |
+| `chunk_size` | number | `1024` | Target chunk size for large files |
+| `chunk_overlap` | number | `50` | Overlap between chunks |
+| `force` | boolean | `false` | Re-sync all files regardless of mtime |
+| `include_patterns` | string[] | — | Only sync matching globs (e.g., `["notes/**"]`) |
+| `exclude_patterns` | string[] | — | Skip matching globs (e.g., `["templates/**"]`) |
+
+### How Sync Works
+
+1. Scans vault directory recursively for `.md` files (skips `.obsidian/`, `.trash/`, `.git/`)
+2. Compares file modification times against last sync
+3. For new/changed files: extracts frontmatter, wiki-links, tags → embeds → stores
+4. For deleted files: removes memories and sync metadata
+5. Large files (> chunk_size) are automatically chunked using markdown-aware splitting
+
+### Incremental Sync
+
+Only files that changed since last sync are re-processed. A `vault_sync_meta` table tracks file paths and modification times. Second sync of an unchanged vault takes <1ms.
+
+---
+
 ## Roadmap
-
-### Planned: Obsidian Vault Integration
-
-A future integration to bridge human-curated notes (Obsidian) with AI-searchable vector memory:
-
-- **`memory_sync_obsidian`** — Point at an Obsidian vault directory, automatically ingest all `.md` files with their frontmatter as metadata, tags, and folder structure as namespaces
-- **Incremental sync** — Only re-embed files that changed since last sync (based on mtime)
-- **Bidirectional export** — Write memories back as `.md` files that Obsidian can read, with proper frontmatter
-- **Backlink awareness** — Parse `[[wiki-links]]` as relationships between memories
-- **Obsidian properties** — Map Obsidian YAML frontmatter fields to memory metadata
-
-This would let you curate knowledge in Obsidian's visual interface while giving Claude semantic search over your entire knowledge base.
 
 ### Planned: Additional Embedding Providers
 
 - **OpenAI embeddings** — For users who prefer cloud-based embeddings with higher accuracy on complex content
 - **Ollama local models** — Run larger embedding models locally via Ollama
 - **Configurable per-scope** — Use fast local embeddings for high-volume scopes, cloud embeddings for critical knowledge
+
+### Planned: Enhanced Vault Features
+
+- **Bidirectional export** — Write memories back as `.md` files Obsidian can read
+- **Backlink graph** — Use wiki-link relationships for multi-hop discovery
+- **Auto-sync on change** — Optional file watcher for real-time sync
 
 ### Planned: Enhanced Features
 
