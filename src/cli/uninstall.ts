@@ -24,19 +24,13 @@ function dim(msg: string): void {
   console.log(`${DIM}    ${msg}${RESET}`);
 }
 
-const HOOK_FILES = [
-  'memory-session-start.js',
-  'memory-post-search.js',
-  'memory-pre-compact.js',
-  'memory-session-end.js',
+// Match hook commands by substring — they contain the hook file name
+const HOOK_IDENTIFIERS = [
+  'memory-session-start',
+  'memory-post-search',
+  'memory-pre-compact',
+  'memory-session-end',
 ];
-
-const HOOK_COMMANDS = new Set([
-  'node "$HOME/.claude/hooks/memory-session-start.js"',
-  'node "$HOME/.claude/hooks/memory-post-search.js"',
-  'node "$HOME/.claude/hooks/memory-pre-compact.js"',
-  'node "$HOME/.claude/hooks/memory-session-end.js"',
-]);
 
 interface HookEntry {
   type: string;
@@ -54,17 +48,21 @@ interface ClaudeSettings {
   [key: string]: unknown;
 }
 
-function removeHookScripts(): void {
+function cleanupLegacyHookFiles(): void {
+  // Clean up any .mjs/.js copies from previous init versions
   const home = homedir();
   const hooksDir = join(home, '.claude', 'hooks');
-
-  for (const file of HOOK_FILES) {
+  const legacyFiles = [
+    'memory-session-start.mjs', 'memory-session-start.js',
+    'memory-post-search.mjs', 'memory-post-search.js',
+    'memory-pre-compact.mjs', 'memory-pre-compact.js',
+    'memory-session-end.mjs', 'memory-session-end.js',
+  ];
+  for (const file of legacyFiles) {
     const filePath = join(hooksDir, file);
     if (existsSync(filePath)) {
       unlinkSync(filePath);
-      success(`Removed ${filePath}`);
-    } else {
-      dim(`${file} not found, skipping`);
+      success(`Removed legacy ${filePath}`);
     }
   }
 }
@@ -90,7 +88,9 @@ function removeSettingsHooks(): void {
   for (const eventName of Object.keys(settings.hooks)) {
     const groups = settings.hooks[eventName];
     const filtered = groups.filter((group) => {
-      const isOurs = group.hooks.some((h) => HOOK_COMMANDS.has(h.command));
+      const isOurs = group.hooks.some((h) =>
+        HOOK_IDENTIFIERS.some((id) => h.command.includes(id)),
+      );
       if (isOurs) removedCount++;
       return !isOurs;
     });
@@ -132,8 +132,8 @@ function removeLaunchdPlist(): void {
 export async function runUninstall(): Promise<void> {
   console.log(`\n${CYAN}MCP Memory Server — Uninstall${RESET}\n`);
 
-  info('Step 1/3: Removing hook scripts...');
-  removeHookScripts();
+  info('Step 1/3: Cleaning up hook files...');
+  cleanupLegacyHookFiles();
 
   console.log('');
   info('Step 2/3: Removing hooks from settings.json...');

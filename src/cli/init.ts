@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -29,7 +29,9 @@ function dim(msg: string): void {
   console.log(`${DIM}    ${msg}${RESET}`);
 }
 
-const HOOK_FILES = [
+// Hook scripts run from dist/hooks/ so they can resolve node_modules dependencies.
+// Settings.json references them via absolute path — no copying needed.
+const HOOK_NAMES = [
   'memory-session-start.js',
   'memory-post-search.js',
   'memory-pre-compact.js',
@@ -52,41 +54,27 @@ interface ClaudeSettings {
   [key: string]: unknown;
 }
 
-const HOOKS_TO_ADD: Record<string, HookGroup[]> = {
-  SessionStart: [
-    {
-      hooks: [
-        { type: 'command', command: 'node "$HOME/.claude/hooks/memory-session-start.js"' },
-      ],
-    },
-  ],
-  PostToolUse: [
-    {
-      matcher: 'mcp__memory-server__memory_search',
-      hooks: [
-        {
-          type: 'command',
-          command: 'node "$HOME/.claude/hooks/memory-post-search.js"',
-          timeout: 5,
-        },
-      ],
-    },
-  ],
-  PreCompact: [
-    {
-      hooks: [
-        { type: 'command', command: 'node "$HOME/.claude/hooks/memory-pre-compact.js"' },
-      ],
-    },
-  ],
-  Stop: [
-    {
-      hooks: [
-        { type: 'command', command: 'node "$HOME/.claude/hooks/memory-session-end.js"' },
-      ],
-    },
-  ],
-};
+function buildHooksToAdd(): Record<string, HookGroup[]> {
+  const hooksDir = hooksSourceDir; // dist/hooks/
+  const q = (name: string) => `node "${join(hooksDir, name)}"`;
+  return {
+    SessionStart: [
+      { hooks: [{ type: 'command', command: q('memory-session-start.js') }] },
+    ],
+    PostToolUse: [
+      {
+        matcher: 'mcp__memory-server__memory_search',
+        hooks: [{ type: 'command', command: q('memory-post-search.js'), timeout: 5 }],
+      },
+    ],
+    PreCompact: [
+      { hooks: [{ type: 'command', command: q('memory-pre-compact.js') }] },
+    ],
+    Stop: [
+      { hooks: [{ type: 'command', command: q('memory-session-end.js') }] },
+    ],
+  };
+}
 
 function hookGroupAlreadyRegistered(existing: HookGroup[], candidate: HookGroup): boolean {
   const candidateCmd = candidate.hooks[0]?.command;
@@ -96,26 +84,14 @@ function hookGroupAlreadyRegistered(existing: HookGroup[], candidate: HookGroup)
   );
 }
 
-function copyHookScripts(): void {
-  const home = homedir();
-  const hooksTargetDir = join(home, '.claude', 'hooks');
-
-  if (!existsSync(hooksTargetDir)) {
-    mkdirSync(hooksTargetDir, { recursive: true });
-    info(`Created ${hooksTargetDir}`);
-  }
-
-  for (const file of HOOK_FILES) {
-    const src = join(hooksSourceDir, file);
-    const dest = join(hooksTargetDir, file);
-
-    if (!existsSync(src)) {
-      warn(`Hook source not found: ${src} (skipping)`);
-      continue;
+function verifyHookScripts(): void {
+  for (const name of HOOK_NAMES) {
+    const path = join(hooksSourceDir, name);
+    if (existsSync(path)) {
+      success(`Found ${name} at ${hooksSourceDir}`);
+    } else {
+      warn(`Hook not found: ${path} (run npm run build first)`);
     }
-
-    copyFileSync(src, dest);
-    success(`Copied ${file} -> ${dest}`);
   }
 }
 
@@ -140,8 +116,9 @@ function mergeSettingsHooks(): void {
     settings.hooks = {};
   }
 
+  const hooksToAdd = buildHooksToAdd();
   let addedCount = 0;
-  for (const [eventName, hookGroups] of Object.entries(HOOKS_TO_ADD)) {
+  for (const [eventName, hookGroups] of Object.entries(hooksToAdd)) {
     if (!settings.hooks[eventName]) {
       settings.hooks[eventName] = [];
     }
@@ -251,8 +228,8 @@ function installLaunchdPlist(): void {
 export async function runInit(): Promise<void> {
   console.log(`\n${CYAN}MCP Memory Server — Init${RESET}\n`);
 
-  info('Step 1/4: Copying hook scripts...');
-  copyHookScripts();
+  info('Step 1/4: Verifying hook scripts...');
+  verifyHookScripts();
 
   console.log('');
   info('Step 2/4: Merging hooks into settings.json...');

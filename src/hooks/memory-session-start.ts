@@ -22,14 +22,14 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // Dynamic import of better-sqlite3
+  // Dynamic import of better-sqlite3 — resolves from node_modules when run from dist/
   let DatabaseConstructor: typeof BetterSqlite3;
   try {
     const mod = await import('better-sqlite3');
     DatabaseConstructor = mod.default;
   } catch {
-    process.exit(0); // Can't load sqlite, skip silently
-    return; // Unreachable, but satisfies definite assignment analysis
+    process.exit(0);
+    return;
   }
 
   const db = new DatabaseConstructor(dbPath, { readonly: true });
