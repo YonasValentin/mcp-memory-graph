@@ -1,12 +1,14 @@
 #!/usr/bin/env node
-// One-time cleanup: removes low-quality auto-extracted memories from the database.
-// Run: node dist/cli/cleanup-extracted.js [--dry-run]
+// Cleanup: removes auto-extracted memories from the database.
+// By default removes ALL auto-extracted entries (they are noise).
+// Run: node dist/cli/cleanup-extracted.js [--dry-run] [--keep-quality]
 
 import { getReadWriteDb } from '../lib/direct-access.js';
 import { isQualityContent } from '../tools/extract-learnings.js';
 import { deleteMemory } from '../db/repository.js';
 
 const dryRun = process.argv.includes('--dry-run');
+const keepQuality = process.argv.includes('--keep-quality');
 
 const db = getReadWriteDb();
 
@@ -20,7 +22,8 @@ let kept = 0;
 let deleted = 0;
 
 for (const row of rows) {
-  if (isQualityContent(row.content)) {
+  const shouldKeep = keepQuality && isQualityContent(row.content);
+  if (shouldKeep) {
     kept++;
   } else {
     if (!dryRun) {
@@ -30,7 +33,8 @@ for (const row of rows) {
   }
 }
 
-const mode = dryRun ? '(DRY RUN)' : '';
-console.log(`Cleanup ${mode}: ${rows.length} auto-extracted memories found`);
-console.log(`  Kept:    ${kept} (passed quality check)`);
-console.log(`  Deleted: ${deleted} (failed quality check)`);
+const mode = dryRun ? '(DRY RUN) ' : '';
+const strategy = keepQuality ? '(keeping quality entries)' : '(removing all auto-extracted)';
+console.log(`Cleanup ${mode}${strategy}: ${rows.length} auto-extracted memories found`);
+console.log(`  Kept:    ${kept}`);
+console.log(`  Deleted: ${deleted}`);

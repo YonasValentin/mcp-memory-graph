@@ -32,8 +32,8 @@ const ServerConfigSchema = z.object({
     .default({}),
   hooks: z
     .object({
-      extract_on_compact: z.boolean().default(true),
-      extract_on_session_end: z.boolean().default(true),
+      extract_on_compact: z.boolean().default(false),
+      extract_on_session_end: z.boolean().default(false),
       track_searches: z.boolean().default(true),
     })
     .default({}),
