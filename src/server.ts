@@ -18,6 +18,9 @@ import {
   MemoryStatsSchema,
   MemoryExportSchema,
   MemoryImportSchema,
+  VaultSyncSchema,
+  VaultStatusSchema,
+  VaultSearchSchema,
 } from './schemas/index.js';
 import { handleStore } from './tools/store.js';
 import { handleSearch } from './tools/search.js';
@@ -31,6 +34,9 @@ import { handleVersions } from './tools/versions.js';
 import { handleStats } from './tools/stats.js';
 import { handleExport } from './tools/export.js';
 import { handleImport } from './tools/import.js';
+import { handleVaultSync } from './tools/vault-sync.js';
+import { handleVaultStatus } from './tools/vault-status.js';
+import { handleVaultSearch } from './tools/vault-search.js';
 
 function formatResult(data: unknown): { content: Array<{ type: 'text'; text: string }> } {
   return {
@@ -264,6 +270,54 @@ export function createServer(): McpServer {
     async (input) => {
       try {
         const result = await handleImport(getDb(), await getEmbedder(), input);
+        return formatResult(result);
+      } catch (err) {
+        return formatError(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ── 13. vault_sync ──────────────────────────────────────────────────────
+
+  server.tool(
+    'vault_sync',
+    'Sync an Obsidian vault to memory. Scans for markdown files, extracts frontmatter/tags/wiki-links, embeds content, and stores as searchable memories. Uses incremental sync based on file modification times.',
+    VaultSyncSchema.shape,
+    async (input) => {
+      try {
+        const result = await handleVaultSync(getDb(), await getEmbedder(), input);
+        return formatResult(result);
+      } catch (err) {
+        return formatError(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ── 14. vault_status ────────────────────────────────────────────────────
+
+  server.tool(
+    'vault_status',
+    'Check the sync status of an Obsidian vault: total files, synced/pending/changed counts, last sync time, and memory count.',
+    VaultStatusSchema.shape,
+    async (input) => {
+      try {
+        const result = handleVaultStatus(getDb(), input);
+        return formatResult(result);
+      } catch (err) {
+        return formatError(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ── 15. vault_search ────────────────────────────────────────────────────
+
+  server.tool(
+    'vault_search',
+    'Search within a synced Obsidian vault using hybrid vector+keyword search. Automatically scopes results to the vault namespace.',
+    VaultSearchSchema.shape,
+    async (input) => {
+      try {
+        const result = await handleVaultSearch(getDb(), await getEmbedder(), input);
         return formatResult(result);
       } catch (err) {
         return formatError(err instanceof Error ? err.message : String(err));

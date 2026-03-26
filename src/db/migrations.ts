@@ -6,9 +6,24 @@ interface Migration {
 }
 
 const migrations: Migration[] = [
-  // Version 1 is the initial schema created by schema.ts.
-  // Future migrations go here:
-  // { version: 2, up: (db) => { db.exec(`ALTER TABLE ...`); } },
+  {
+    version: 2,
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS vault_sync_meta (
+          vault_path TEXT NOT NULL,
+          file_path TEXT NOT NULL,
+          mtime_ms INTEGER NOT NULL,
+          memory_id TEXT NOT NULL,
+          synced_at TEXT NOT NULL,
+          PRIMARY KEY (vault_path, file_path),
+          FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_vault_sync_vault ON vault_sync_meta(vault_path);
+        CREATE INDEX IF NOT EXISTS idx_vault_sync_memory ON vault_sync_meta(memory_id);
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

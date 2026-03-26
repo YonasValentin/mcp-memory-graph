@@ -208,3 +208,55 @@ export interface IngestResult {
   chunk_count: number;
   chunk_ids: string[];
 }
+
+// ── Vault Integration Types ─────────────────────────────────────────────
+
+export interface VaultSyncMeta {
+  vault_path: string;
+  file_path: string;
+  mtime_ms: number;
+  memory_id: string;
+  synced_at: string;
+}
+
+export interface VaultSyncResult {
+  vault_path: string;
+  vault_name: string;
+  files_added: number;
+  files_updated: number;
+  files_deleted: number;
+  files_unchanged: number;
+  files_errored: number;
+  total_memories: number;
+  errors: string[];
+  duration_ms: number;
+}
+
+export interface VaultStatus {
+  vault_path: string;
+  vault_name: string;
+  total_files: number;
+  synced_files: number;
+  pending_files: number;
+  changed_files: number;
+  deleted_files: number;
+  memory_count: number;
+  last_synced_at: string | null;
+}
+
+export interface ParsedVaultFile {
+  title: string;
+  content: string;
+  frontmatter: Record<string, unknown>;
+  tags: string[];
+  links: string[];
+  relativePath: string;
+  absolutePath: string;
+  mtimeMs: number;
+}
+
+export interface VaultFileEntry {
+  absolutePath: string;
+  relativePath: string;
+  mtimeMs: number;
+}

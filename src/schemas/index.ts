@@ -428,3 +428,107 @@ export const MemoryImportSchema = z.object({
     .default(false)
     .describe('If true, overwrite existing memories with same ID'),
 });
+
+// ---------------------------------------------------------------------------
+// 13. VaultSyncSchema
+// ---------------------------------------------------------------------------
+
+export const VaultSyncSchema = z.object({
+  vault_path: z
+    .string()
+    .min(1)
+    .describe('Absolute path to the Obsidian vault directory'),
+  chunk_size: z
+    .number()
+    .int()
+    .min(100)
+    .max(4096)
+    .default(1024)
+    .describe(
+      'Target chunk size in characters for large files (~4 chars per token)',
+    ),
+  chunk_overlap: z
+    .number()
+    .int()
+    .min(0)
+    .max(500)
+    .default(50)
+    .describe(
+      'Overlap between chunks in characters for context preservation',
+    ),
+  force: z
+    .boolean()
+    .default(false)
+    .describe(
+      'If true, re-sync all files regardless of modification time',
+    ),
+  include_patterns: z
+    .array(z.string())
+    .optional()
+    .describe(
+      'Only sync files matching these glob patterns (e.g., ["notes/**", "projects/**"])',
+    ),
+  exclude_patterns: z
+    .array(z.string())
+    .optional()
+    .describe(
+      'Skip files matching these glob patterns (e.g., ["templates/**", "daily/**"])',
+    ),
+});
+
+// ---------------------------------------------------------------------------
+// 14. VaultStatusSchema
+// ---------------------------------------------------------------------------
+
+export const VaultStatusSchema = z.object({
+  vault_path: z
+    .string()
+    .min(1)
+    .describe('Absolute path to the Obsidian vault directory'),
+});
+
+// ---------------------------------------------------------------------------
+// 15. VaultSearchSchema
+// ---------------------------------------------------------------------------
+
+export const VaultSearchSchema = z.object({
+  vault_path: z
+    .string()
+    .min(1)
+    .describe('Absolute path to the Obsidian vault directory'),
+  query: z
+    .string()
+    .min(1)
+    .describe(
+      'Search query — supports natural language for semantic search and keywords for exact matching',
+    ),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(10)
+    .describe('Maximum results to return'),
+  offset: z
+    .number()
+    .int()
+    .min(0)
+    .default(0)
+    .describe('Skip this many results for pagination'),
+  search_mode: z
+    .enum(['hybrid', 'vector', 'keyword'])
+    .default('hybrid')
+    .describe(
+      'Search mode: hybrid (vector+keyword), vector only, or keyword only',
+    ),
+  tags: z
+    .array(z.string())
+    .optional()
+    .describe('Filter to memories containing ALL specified tags'),
+  min_confidence: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe('Minimum confidence score threshold (0-1)'),
+});
