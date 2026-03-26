@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { getReadWriteDb, getEmbedder } from '../lib/direct-access.js';
 import { handleExtractLearnings } from '../tools/extract-learnings.js';
-import { resolveNamespace } from '../config/loader.js';
+import { getConfig, resolveNamespace } from '../config/loader.js';
 
 // Safety timeout — background extraction must not run forever
 setTimeout(() => process.exit(1), 5 * 60 * 1000);
@@ -23,12 +23,15 @@ async function main(): Promise<void> {
   const db = getReadWriteDb();
   const embedder = await getEmbedder();
 
+  const config = getConfig();
+
   await handleExtractLearnings(db, embedder, {
     transcript,
     scope: 'project',
     namespace,
     source: sessionId ? `session-${sessionId}` : `${mode}-${new Date().toISOString()}`,
     auto_store: true,
+    categories: config.extraction.categories,
   });
 }
 

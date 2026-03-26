@@ -16,30 +16,96 @@ const EXTRACTION_PATTERNS: ExtractionPattern[] = [
   {
     type: 'decision',
     regex: /(?:decided|decision|agreed|chose|chosen|will use|going with|settled on|the approach is|we(?:'ll| will| should))\s*(?:to |that |on )?(.+?)(?:\.|$)/gim,
-    confidence: 0.7,
+    confidence: 0.5,
   },
   {
     type: 'error_fix',
     regex: /(?:fixed by|the fix (?:was|is)|solution (?:was|is)|resolved by|the issue (?:was|is)|the problem (?:was|is))\s*[:;]?\s*(.+?)(?:\.|$)/gim,
-    confidence: 0.8,
+    confidence: 0.6,
   },
   {
     type: 'error_fix',
     regex: /(?:error|bug|issue)\s*[:;]?\s*(.+?)\s*(?:—|--|->|=>|:)\s*(?:fix(?:ed)?|resolv(?:ed|e)|solution)\s*[:;]?\s*(.+?)(?:\.|$)/gim,
-    confidence: 0.8,
+    confidence: 0.6,
     combineGroups: true,
   },
   {
     type: 'pattern',
     regex: /(?:pattern|noticed that|turns out|learned that|discovered that|TIL|insight)\s*[:;]?\s*(.+?)(?:\.|$)/gim,
-    confidence: 0.6,
+    confidence: 0.4,
   },
   {
     type: 'convention',
     regex: /(?:convention|standard|rule|policy|guideline|naming convention|must always|should always|never)\s*[:;]?\s*(.+?)(?:\.|$)/gim,
-    confidence: 0.6,
+    confidence: 0.4,
   },
 ];
+
+const MAX_EXTRACTIONS = 20;
+
+/**
+ * Strips structured noise from a Claude Code transcript before regex matching.
+ * Removes code blocks, inline code, tool markers, tables, diffs, JSON, and paths.
+ */
+export function preprocessTranscript(transcript: string): string {
+  let text = transcript;
+
+  // Remove fenced code blocks (```...```)
+  text = text.replace(/```[\s\S]*?```/g, '');
+
+  // Remove inline code (`...`)
+  text = text.replace(/`[^`\n]+`/g, '');
+
+  // Remove XML-style tool markers (<tool_call>, </result>, etc.)
+  text = text.replace(/^<\/?[a-z_-]+>.*$/gim, '');
+
+  // Remove markdown table rows (2+ pipe chars)
+  text = text.replace(/^.*\|.*\|.*$/gm, '');
+
+  // Remove diff headers
+  text = text.replace(/^(?:[+-]{3}\s|@@\s|diff --git\s).+$/gm, '');
+
+  // Remove lines that are only a file path
+  text = text.replace(/^\s*(?:[\w.-]+\/)+[\w.-]+\s*$/gm, '');
+
+  // Remove JSON-like lines
+  text = text.replace(/^\s*[{}]\s*$/gm, '');
+  text = text.replace(/^\s*"[\w-]+":\s*.+$/gm, '');
+
+  // Collapse excessive whitespace
+  text = text.replace(/\n{3,}/g, '\n\n');
+
+  return text;
+}
+
+/**
+ * Validates that extracted content is natural language, not code/JSON/path fragments.
+ */
+export function isQualityContent(content: string): boolean {
+  if (content.length < 30) return false;
+  if (content.length > 500) return false;
+
+  // Must contain at least 3 real words (>2 alpha chars each)
+  const words = content.split(/\s+/);
+  const realWords = words.filter(w => (w.match(/[a-zA-Z]/g) ?? []).length > 2);
+  if (realWords.length < 3) return false;
+
+  // At least 60% alphabetic characters (reject code/JSON/paths)
+  const alphaSpaceCount = (content.match(/[a-zA-Z\s]/g) ?? []).length;
+  if (alphaSpaceCount / content.length < 0.6) return false;
+
+  // Reject if starts with syntax/code indicators
+  const firstChar = content.trimStart()[0];
+  if (firstChar && '`|{}[]/<>#-+*='.includes(firstChar)) return false;
+
+  // Reject if looks like a file path
+  if (/^[\w/\\.-]+\.\w{1,5}$/.test(content.trim())) return false;
+
+  // Reject if contains code patterns
+  if (/(?:import\s+|require\(|function\s*\(|=>\s*\{|const\s+\w+\s*=|export\s+)/.test(content)) return false;
+
+  return true;
+}
 
 const DEDUP_DISTANCE_THRESHOLD = (1 - 0.85) * 2; // 0.85 similarity
 
@@ -49,22 +115,25 @@ function generateTitle(content: string): string {
   return trimmed.slice(0, 77) + '...';
 }
 
-function extractFromTranscript(
+export function extractFromTranscript(
   transcript: string,
   categories?: LearningType[],
 ): ExtractedLearning[] {
+  const cleaned = preprocessTranscript(transcript);
   const allowedTypes = categories && categories.length > 0 ? new Set(categories) : null;
   const learnings: ExtractedLearning[] = [];
   const seenContent = new Set<string>();
 
   for (const pattern of EXTRACTION_PATTERNS) {
+    if (learnings.length >= MAX_EXTRACTIONS) break;
     if (allowedTypes && !allowedTypes.has(pattern.type)) continue;
 
-    // Reset the regex state for each pass
     pattern.regex.lastIndex = 0;
     let match: RegExpExecArray | null;
 
-    while ((match = pattern.regex.exec(transcript)) !== null) {
+    while ((match = pattern.regex.exec(cleaned)) !== null) {
+      if (learnings.length >= MAX_EXTRACTIONS) break;
+
       let content: string;
       if (pattern.combineGroups && match[2]) {
         content = `Problem: ${match[1].trim()} / Fix: ${match[2].trim()}`;
@@ -72,7 +141,7 @@ function extractFromTranscript(
         content = match[1]?.trim() ?? '';
       }
 
-      if (content.length < 10) continue;
+      if (!isQualityContent(content)) continue;
 
       const normalized = content.toLowerCase();
       if (seenContent.has(normalized)) continue;
@@ -151,6 +220,7 @@ export async function handleExtractLearnings(
         department: input.department,
         source: input.source,
         tags: combinedTags,
+        confidence_score: learning.confidence,
         metadata: {
           learning_type: learning.type,
           extraction_confidence: learning.confidence,

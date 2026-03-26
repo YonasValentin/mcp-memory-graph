@@ -34,7 +34,7 @@ export async function handleStore(
     access_count: 0,
     last_accessed_at: null,
     importance_score: 0.5,
-    confidence_score: 0.7,
+    confidence_score: input.confidence_score ?? 0.7,
   };
 
   insertMemory(db, row, embedding);

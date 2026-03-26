@@ -81,6 +81,7 @@ export interface MemoryInput {
   language?: string;
   metadata?: Record<string, unknown>;
   expires_at?: string;
+  confidence_score?: number;
 }
 
 export interface MemoryUpdate {
