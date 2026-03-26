@@ -12,6 +12,7 @@ import { createErrorHandler } from './middleware/error-handler.js';
 import { registerMemoryRoutes } from './routes/memories.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerAuthRoutes } from './routes/auth.js';
+import { registerUploadRoutes } from './routes/upload.js';
 
 export interface HttpServerDeps {
   config: EnterpriseConfig;
@@ -102,7 +103,8 @@ export async function createHttpServer(deps: HttpServerDeps): Promise<any> {
   app.addHook('onRequest', async (request: any, reply: any) => {
     // Skip auth for public routes
     const publicPaths = ['/health', '/health/ready', '/health/live', '/metrics',
-                         '/api/v1/auth/token', '/api/v1/auth/api-key', '/api/v1/tenants'];
+                         '/api/v1/auth/token', '/api/v1/auth/api-key', '/api/v1/tenants',
+                         '/api/v1/upload/supported'];
     if (publicPaths.some(p => request.url.startsWith(p))) return;
     if (request.url.startsWith('/api/')) {
       await authenticate(request, reply);
@@ -110,6 +112,7 @@ export async function createHttpServer(deps: HttpServerDeps): Promise<any> {
   });
 
   await registerMemoryRoutes(app, { storage, embedder, logger, metrics, cache });
+  await registerUploadRoutes(app, { storage, embedder, logger, metrics, cache });
 
   return app;
 }

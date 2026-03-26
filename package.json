@@ -56,7 +56,11 @@
     "pgvector": "^0.2.0",
     "ioredis": "^5.4.0",
     "pino": "^9.0.0",
-    "prom-client": "^15.1.0"
+    "prom-client": "^15.1.0",
+    "@fastify/multipart": "^9.0.0",
+    "xlsx": "^0.18.5",
+    "pdf-parse": "^1.1.1",
+    "mammoth": "^1.8.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
