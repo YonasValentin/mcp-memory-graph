@@ -35,14 +35,22 @@ const HOOK_NAMES = [
   'memory-session-start.js',
   'memory-post-search.js',
   'memory-pre-compact.js',
-  'memory-session-end.js',
 ];
 
-interface HookEntry {
-  type: string;
+interface CommandHookEntry {
+  type: 'command';
   command: string;
   timeout?: number;
 }
+
+interface AgentHookEntry {
+  type: 'agent';
+  prompt: string;
+  model?: string;
+  timeout?: number;
+}
+
+type HookEntry = CommandHookEntry | AgentHookEntry;
 
 interface HookGroup {
   matcher?: string;
@@ -71,16 +79,46 @@ function buildHooksToAdd(): Record<string, HookGroup[]> {
       { hooks: [{ type: 'command', command: q('memory-pre-compact.js') }] },
     ],
     Stop: [
-      { hooks: [{ type: 'command', command: q('memory-session-end.js') }] },
+      {
+        hooks: [{
+          type: 'agent' as const,
+          prompt: [
+            'You are the MCP memory server session-end learning extractor.',
+            '',
+            'Check $ARGUMENTS — if stop_hook_active is true, respond with {"ok": true} immediately (prevents loops).',
+            '',
+            'Otherwise, briefly review what happened this session. If there were significant technical decisions, bug fixes with root causes, discovered patterns, or conventions established, store each via memory_store (scope: \'project\', namespace based on the working directory).',
+            '',
+            'Rules:',
+            '- Only store genuinely useful project knowledge',
+            '- NOT code snippets, NOT meta-commentary about tools, NOT fragments',
+            '- Each entry needs a clear, descriptive title',
+            '- Maximum 5 entries per session',
+            '- If nothing significant happened, store nothing',
+            '',
+            'After storing (or deciding not to), respond with {"ok": true}.',
+          ].join('\n'),
+          timeout: 120,
+        }],
+      },
     ],
   };
 }
 
 function hookGroupAlreadyRegistered(existing: HookGroup[], candidate: HookGroup): boolean {
-  const candidateCmd = candidate.hooks[0]?.command;
-  if (!candidateCmd) return false;
+  const candidateHook = candidate.hooks[0];
+  if (!candidateHook) return false;
+
   return existing.some((group) =>
-    group.hooks.some((h) => h.command === candidateCmd),
+    group.hooks.some((h) => {
+      if (candidateHook.type === 'command' && h.type === 'command') {
+        return (h as CommandHookEntry).command === (candidateHook as CommandHookEntry).command;
+      }
+      if (candidateHook.type === 'agent' && h.type === 'agent') {
+        return true;
+      }
+      return false;
+    }),
   );
 }
 
@@ -114,6 +152,20 @@ function mergeSettingsHooks(): void {
 
   if (!settings.hooks) {
     settings.hooks = {};
+  }
+
+  // Upgrade: remove old command-type memory-session-end hook (replaced by agent hook)
+  if (settings.hooks['Stop']) {
+    const before = settings.hooks['Stop'].length;
+    settings.hooks['Stop'] = settings.hooks['Stop'].filter((group) =>
+      !group.hooks.some((h) =>
+        h.type === 'command' && 'command' in h && typeof h.command === 'string' && h.command.includes('memory-session-end'),
+      ),
+    );
+    const removed = before - settings.hooks['Stop'].length;
+    if (removed > 0) {
+      dim(`Removed ${removed} old command-type Stop hook(s) (replaced by agent hook)`);
+    }
   }
 
   const hooksToAdd = buildHooksToAdd();
@@ -163,8 +215,8 @@ function createDefaultConfig(): void {
       max_operations: 100,
     },
     hooks: {
-      extract_on_compact: true,
-      extract_on_session_end: true,
+      extract_on_compact: false,
+      extract_on_session_end: false,
       track_searches: true,
     },
     extraction: {
