@@ -133,9 +133,28 @@ function verifyHookScripts(): void {
   }
 }
 
-function mergeSettingsHooks(): void {
-  const home = homedir();
-  const settingsPath = join(home, '.claude', 'settings.json');
+type Scope = 'user' | 'project';
+
+function parseScope(): Scope {
+  const idx = process.argv.indexOf('--scope');
+  if (idx !== -1 && process.argv[idx + 1]) {
+    const val = process.argv[idx + 1];
+    if (val === 'user' || val === 'project') return val;
+    warn(`Unknown scope "${val}", using "user"`);
+  }
+  return 'user';
+}
+
+function getSettingsPath(scope: Scope): string {
+  if (scope === 'project') {
+    return join(process.cwd(), '.claude', 'settings.json');
+  }
+  return join(homedir(), '.claude', 'settings.json');
+}
+
+function mergeSettingsHooks(scope: Scope): void {
+  const settingsPath = getSettingsPath(scope);
+  const settingsDir = dirname(settingsPath);
 
   let settings: ClaudeSettings = {};
   if (existsSync(settingsPath)) {
@@ -143,9 +162,8 @@ function mergeSettingsHooks(): void {
     settings = JSON.parse(raw) as ClaudeSettings;
     info(`Read existing ${settingsPath}`);
   } else {
-    const claudeDir = join(home, '.claude');
-    if (!existsSync(claudeDir)) {
-      mkdirSync(claudeDir, { recursive: true });
+    if (!existsSync(settingsDir)) {
+      mkdirSync(settingsDir, { recursive: true });
     }
     info(`Creating new ${settingsPath}`);
   }
@@ -277,15 +295,46 @@ function installLaunchdPlist(): void {
   dim(`Logs: ${home}/.mcp-memory/consolidation.log`);
 }
 
+function createMcpJson(): void {
+  const mcpJsonPath = join(process.cwd(), '.mcp.json');
+
+  if (existsSync(mcpJsonPath)) {
+    dim(`MCP config already exists at ${mcpJsonPath}`);
+    return;
+  }
+
+  const mcpConfig = {
+    mcpServers: {
+      'memory-server': {
+        type: 'stdio',
+        command: 'node',
+        args: ['${CLAUDE_PROJECT_DIR}/dist/index.js'],
+      },
+    },
+  };
+
+  writeFileSync(mcpJsonPath, JSON.stringify(mcpConfig, null, 2) + '\n', 'utf-8');
+  success(`Created .mcp.json (project-scoped MCP server registration)`);
+  dim('Collaborators who clone this project will auto-discover the memory server');
+}
+
 export async function runInit(): Promise<void> {
-  console.log(`\n${CYAN}MCP Memory Server — Init${RESET}\n`);
+  const scope = parseScope();
+
+  console.log(`\n${CYAN}MCP Memory Server — Init (${scope} scope)${RESET}\n`);
 
   info('Step 1/4: Verifying hook scripts...');
   verifyHookScripts();
 
   console.log('');
   info('Step 2/4: Merging hooks into settings.json...');
-  mergeSettingsHooks();
+  mergeSettingsHooks(scope);
+
+  if (scope === 'project') {
+    console.log('');
+    info('Step 2b: Creating .mcp.json for project-scoped MCP server...');
+    createMcpJson();
+  }
 
   console.log('');
   info('Step 3/4: Creating default config...');
@@ -295,5 +344,5 @@ export async function runInit(): Promise<void> {
   info('Step 4/4: Installing scheduled consolidation...');
   installLaunchdPlist();
 
-  console.log(`\n${GREEN}Init complete!${RESET}\n`);
+  console.log(`\n${GREEN}Init complete! (${scope} scope)${RESET}\n`);
 }

@@ -37,18 +37,18 @@ AI assistants lose context between sessions. Your decisions, patterns, and insti
 
 - **Access tracking** — Every search, get, and related-memory call records which memories were accessed, building a usage profile over time
 - **Quality scoring** — Automatic `importance_score` and `confidence_score` (0-1) on every memory, combining access frequency, recency, and content signals
-- **Learning extraction** — Heuristic pattern matching mines session transcripts for decisions, patterns, error fixes, and conventions without needing an external LLM
+- **Learning extraction** — Agent-based session review uses Claude's own judgment to identify and store significant decisions, patterns, and fixes at session end
 - **Dream cycle consolidation** — Scheduled or on-demand deduplication, scoring, pruning, expiration enforcement, and knowledge gap detection
 - **Knowledge gap detection** — Tracks zero-result searches to identify missing knowledge areas
 
 ### Claude Code Hooks
 
-Four opt-in hook scripts that integrate with Claude Code's lifecycle:
+Four opt-in hooks that integrate with Claude Code's lifecycle:
 
 - **SessionStart** — Fast status check (memory count, expired, stale docs)
 - **PostToolUse** — Tracks search hits and misses to `search-log.jsonl`
-- **PreCompact** — Mines the transcript for learnings before context compression
-- **Stop** — End-of-session learning extraction
+- **PreCompact** — Triggers learning extraction before context compression
+- **Stop** — Agent hook that uses Claude's judgment to review the session and store 0-5 curated learnings via `memory_store` (replaces the old regex-based extraction)
 
 ### Enterprise Metadata
 
@@ -86,10 +86,10 @@ The memory server is a self-improving system. Rather than being a passive store 
                │
                ▼
  ┌──────────────────────────────────────────────────────────┐
- │               SESSION END (hook)                          │
- │  Transcript mined → decisions, patterns, error fixes      │
- │  Deduplicated against existing memories                   │
- │  Auto-stored with source attribution                      │
+ │               SESSION END (agent hook)                    │
+ │  Claude reviews session → identifies significant learnings│
+ │  Stores 0-5 curated entries via memory_store              │
+ │  Deduplicates against existing memories                   │
  └─────────────┬────────────────────────────────────────────┘
                │
                ▼
@@ -151,17 +151,25 @@ claude mcp add memory-server node /path/to/mcp-memory-server/dist/index.js
 
 The first time a memory tool is used, the embedding model (~30MB) downloads automatically from HuggingFace and is cached locally at `~/.cache/huggingface/`. Subsequent starts are instant.
 
-### One-Command Setup (Recommended)
+### Setup Hooks (Recommended)
 
-After building, run the init command to set up hooks, config, and nightly consolidation in one step:
+After building, run the init command to register hooks, config, and nightly consolidation:
 
 ```bash
+# Global (user scope) — hooks apply to all projects
 npx mcp-memory-server init
+
+# Per-project — hooks and MCP registration scoped to this project only
+npx mcp-memory-server init --scope project
 ```
 
-This will:
-1. Copy Claude Code hook scripts to the appropriate location
-2. Update `settings.json` with hook registrations
+**User scope** (default) writes hooks to `~/.claude/settings.json`. Hooks fire in every Claude Code session regardless of project.
+
+**Project scope** writes hooks to `.claude/settings.json` in the current directory and creates `.mcp.json` for automatic MCP server discovery. Collaborators who clone the project get the memory server registered automatically.
+
+Init performs these steps:
+1. Verify hook scripts exist in `dist/hooks/`
+2. Register hooks in settings.json (SessionStart, PostToolUse, PreCompact, Stop)
 3. Create `~/.mcp-memory/config.json` with sensible defaults
 4. Set up nightly consolidation schedule (macOS: launchd, Linux: cron suggestion)
 
@@ -234,8 +242,8 @@ The config file at `~/.mcp-memory/config.json` controls self-improvement behavio
     "max_operations": 100
   },
   "hooks": {
-    "extract_on_compact": true,
-    "extract_on_session_end": true,
+    "extract_on_compact": false,
+    "extract_on_session_end": false,
     "track_searches": true
   },
   "extraction": {
@@ -256,8 +264,8 @@ The config file at `~/.mcp-memory/config.json` controls self-improvement behavio
 | `consolidation` | `prune_after_days` | `30` | Days before pruning low-quality memories |
 | `consolidation` | `min_importance_to_keep` | `0.1` | Minimum importance score to survive pruning |
 | `consolidation` | `max_operations` | `100` | Max operations per consolidation run |
-| `hooks` | `extract_on_compact` | `true` | Mine transcript before context compression |
-| `hooks` | `extract_on_session_end` | `true` | Extract learnings when session ends |
+| `hooks` | `extract_on_compact` | `false` | Mine transcript before context compression (regex-based, disabled by default) |
+| `hooks` | `extract_on_session_end` | `false` | Extract learnings when session ends (regex-based, disabled by default) |
 | `hooks` | `track_searches` | `true` | Log search hits/misses to `search-log.jsonl` |
 | `extraction` | `categories` | `["decision", "pattern", "error_fix", "convention"]` | Learning categories to extract |
 | `extraction` | `min_confidence` | `0.4` | Minimum confidence for extracted learnings |
@@ -268,9 +276,10 @@ The config file at `~/.mcp-memory/config.json` controls self-improvement behavio
 
 | Command | Description |
 |---------|-------------|
-| `npx mcp-memory-server` | Start MCP server on stdio (default, unchanged) |
-| `npx mcp-memory-server init` | One-command setup: hooks, config, nightly schedule |
-| `npx mcp-memory-server uninstall` | Reverse init: remove hooks, config, schedule |
+| `npx mcp-memory-server` | Start MCP server on stdio (default) |
+| `npx mcp-memory-server init` | Setup hooks, config, and nightly schedule (user scope) |
+| `npx mcp-memory-server init --scope project` | Setup for current project only (creates `.mcp.json` + `.claude/settings.json`) |
+| `npx mcp-memory-server uninstall` | Reverse init: remove hooks and schedule |
 | `npx mcp-memory-server consolidate` | Run the dream cycle manually |
 
 ---
