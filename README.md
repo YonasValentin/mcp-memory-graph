@@ -47,7 +47,7 @@ Four opt-in hooks that integrate with Claude Code's lifecycle:
 
 - **SessionStart** — Fast status check (memory count, expired, stale docs)
 - **PostToolUse** — Tracks search hits and misses to `search-log.jsonl`
-- **PreCompact** — Triggers learning extraction before context compression
+- **PreCompact** — Triggers learning extraction before context compression (disabled by default)
 - **Stop** — Agent hook that uses Claude's judgment to review the session and store 0-5 curated learnings via `memory_store` (replaces the old regex-based extraction)
 
 ### Enterprise Metadata
@@ -171,7 +171,8 @@ Init performs these steps:
 1. Verify hook scripts exist in `dist/hooks/`
 2. Register hooks in settings.json (SessionStart, PostToolUse, PreCompact, Stop)
 3. Create `~/.mcp-memory/config.json` with sensible defaults
-4. Set up nightly consolidation schedule (macOS: launchd, Linux: cron suggestion)
+4. Set up `.claude/CLAUDE.md` with memory server usage instructions (project scope) or print snippet (user scope)
+5. Set up nightly consolidation schedule (macOS: launchd, Linux: cron suggestion)
 
 To reverse everything:
 
@@ -634,8 +635,8 @@ Claude Code Hooks (opt-in)
     │
     ├── SessionStart ──> memory_stats (status check)
     ├── PostToolUse ───> search-log.jsonl (hit/miss tracking)
-    ├── PreCompact ────> memory_extract_learnings (mine before compress)
-    └── Stop ──────────> memory_extract_learnings (session end)
+    ├── PreCompact ────> (reserved, disabled by default)
+    └── Stop ──────────> agent hook (curated learnings via memory_store)
 
 Nightly Schedule (opt-in)
     └── 3:00 AM ───────> memory_consolidate (dream cycle)
@@ -737,12 +738,11 @@ src/
 │   ├── init.ts           # npx mcp-memory-server init
 │   ├── uninstall.ts      # npx mcp-memory-server uninstall
 │   ├── consolidate.ts    # npx mcp-memory-server consolidate
-│   └── extract-from-transcript.ts  # Background extraction script
+│   └── cleanup-extracted.ts  # Utility to purge auto-extracted noise
 ├── hooks/
 │   ├── memory-session-start.ts
 │   ├── memory-post-search.ts
-│   ├── memory-pre-compact.ts
-│   └── memory-session-end.ts
+│   └── memory-pre-compact.ts
 └── schemas/
     └── index.ts          # 17 Zod schemas with LLM-discoverable descriptions
 ```

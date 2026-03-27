@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, platform } from 'node:os';
+import { CLAUDE_MD_MARKER } from './init.js';
 
 const GREEN = '\x1b[32m';
 const YELLOW = '\x1b[33m';
@@ -34,7 +35,8 @@ const HOOK_IDENTIFIERS = [
 
 interface HookEntry {
   type: string;
-  command: string;
+  command?: string;
+  prompt?: string;
   timeout?: number;
 }
 
@@ -67,30 +69,33 @@ function cleanupLegacyHookFiles(): void {
   }
 }
 
-function removeSettingsHooks(): void {
-  const home = homedir();
-  const settingsPath = join(home, '.claude', 'settings.json');
-
+function removeSettingsHooksAt(settingsPath: string): number {
   if (!existsSync(settingsPath)) {
-    dim('No settings.json found, skipping');
-    return;
+    dim(`No ${settingsPath} found, skipping`);
+    return 0;
   }
 
   const raw = readFileSync(settingsPath, 'utf-8');
   const settings = JSON.parse(raw) as ClaudeSettings;
 
   if (!settings.hooks) {
-    dim('No hooks section in settings.json, skipping');
-    return;
+    dim(`No hooks section in ${settingsPath}, skipping`);
+    return 0;
   }
 
   let removedCount = 0;
   for (const eventName of Object.keys(settings.hooks)) {
     const groups = settings.hooks[eventName];
     const filtered = groups.filter((group) => {
-      const isOurs = group.hooks.some((h) =>
-        HOOK_IDENTIFIERS.some((id) => h.command.includes(id)),
-      );
+      const isOurs = group.hooks.some((h) => {
+        if (h.type === 'command' && h.command) {
+          return HOOK_IDENTIFIERS.some((id) => h.command!.includes(id));
+        }
+        if (h.type === 'agent' && h.prompt) {
+          return h.prompt.includes('memory_store') && h.prompt.includes('memory server');
+        }
+        return false;
+      });
       if (isOurs) removedCount++;
       return !isOurs;
     });
@@ -107,7 +112,76 @@ function removeSettingsHooks(): void {
   }
 
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
-  success(`Updated settings.json (${removedCount} hook(s) removed)`);
+  success(`Updated ${settingsPath} (${removedCount} hook(s) removed)`);
+  return removedCount;
+}
+
+function removeMcpJson(): void {
+  const mcpJsonPath = join(process.cwd(), '.mcp.json');
+  if (!existsSync(mcpJsonPath)) {
+    dim('No .mcp.json found in current directory, skipping');
+    return;
+  }
+
+  try {
+    const raw = readFileSync(mcpJsonPath, 'utf-8');
+    const config = JSON.parse(raw) as { mcpServers?: Record<string, unknown> };
+
+    if (config.mcpServers?.['memory-server']) {
+      delete config.mcpServers['memory-server'];
+
+      if (Object.keys(config.mcpServers).length === 0) {
+        unlinkSync(mcpJsonPath);
+        success('Removed .mcp.json (no other servers registered)');
+      } else {
+        writeFileSync(mcpJsonPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
+        success('Removed memory-server from .mcp.json');
+      }
+    } else {
+      dim('memory-server not found in .mcp.json, skipping');
+    }
+  } catch {
+    warn('Could not parse .mcp.json, skipping');
+  }
+}
+
+function removeClaudeMd(): void {
+  const claudeMdPath = join(process.cwd(), '.claude', 'CLAUDE.md');
+  if (!existsSync(claudeMdPath)) {
+    dim('No .claude/CLAUDE.md found, skipping');
+    return;
+  }
+
+  const content = readFileSync(claudeMdPath, 'utf-8');
+  if (!content.includes(CLAUDE_MD_MARKER)) {
+    dim('CLAUDE.md does not contain memory server section, skipping');
+    return;
+  }
+
+  // Remove the MCP Memory Server section
+  const lines = content.split('\n');
+  const startIdx = lines.findIndex((l) => l.includes(CLAUDE_MD_MARKER));
+  if (startIdx === -1) return;
+
+  // Find end: next ## heading or end of file
+  let endIdx = lines.length;
+  for (let i = startIdx + 1; i < lines.length; i++) {
+    if (lines[i].startsWith('## ')) {
+      endIdx = i;
+      break;
+    }
+  }
+
+  lines.splice(startIdx, endIdx - startIdx);
+  const remaining = lines.join('\n').trim();
+
+  if (remaining.length === 0) {
+    unlinkSync(claudeMdPath);
+    success('Removed .claude/CLAUDE.md (no other content)');
+  } else {
+    writeFileSync(claudeMdPath, remaining + '\n', 'utf-8');
+    success('Removed memory server section from .claude/CLAUDE.md');
+  }
 }
 
 function removeLaunchdPlist(): void {
@@ -132,21 +206,27 @@ function removeLaunchdPlist(): void {
 export async function runUninstall(): Promise<void> {
   console.log(`\n${CYAN}MCP Memory Server — Uninstall${RESET}\n`);
 
-  info('Step 1/3: Cleaning up hook files...');
+  info('Step 1/5: Cleaning up legacy hook files...');
   cleanupLegacyHookFiles();
 
   console.log('');
-  info('Step 2/3: Removing hooks from settings.json...');
-  removeSettingsHooks();
+  info('Step 2/5: Removing hooks from settings.json...');
+  removeSettingsHooksAt(join(homedir(), '.claude', 'settings.json'));
+  removeSettingsHooksAt(join(process.cwd(), '.claude', 'settings.json'));
 
   console.log('');
-  info('Step 3/3: Removing scheduled consolidation...');
+  info('Step 3/5: Removing .mcp.json and CLAUDE.md...');
+  removeMcpJson();
+  removeClaudeMd();
+
+  console.log('');
+  info('Step 4/5: Removing scheduled consolidation...');
   removeLaunchdPlist();
 
   console.log('');
   warn('Config and database were NOT deleted:');
-  dim(`~/.mcp-memory/config.json`);
-  dim(`~/.mcp-memory/memories.db`);
+  dim('~/.mcp-memory/config.json');
+  dim('~/.mcp-memory/memory.db');
   dim('Delete these manually if you want a full cleanup.');
 
   console.log(`\n${GREEN}Uninstall complete!${RESET}\n`);

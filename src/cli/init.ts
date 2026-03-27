@@ -222,14 +222,14 @@ function createDefaultConfig(): void {
 
   const defaultConfig = {
     defaults: {
-      scope: 'global',
-      namespace: 'default',
+      scope: 'project',
+      namespace: 'auto',
     },
     projects: [],
     consolidation: {
       similarity_threshold: 0.85,
-      prune_after_days: 90,
-      min_importance_to_keep: 0.2,
+      prune_after_days: 30,
+      min_importance_to_keep: 0.1,
       max_operations: 100,
     },
     hooks: {
@@ -239,7 +239,7 @@ function createDefaultConfig(): void {
     },
     extraction: {
       categories: ['decision', 'pattern', 'error_fix', 'convention'],
-      min_confidence: 0.6,
+      min_confidence: 0.4,
     },
   };
 
@@ -318,16 +318,55 @@ function createMcpJson(): void {
   dim('Collaborators who clone this project will auto-discover the memory server');
 }
 
+const CLAUDE_MD_MARKER = '## MCP Memory Server';
+
+const CLAUDE_MD_CONTENT = `## MCP Memory Server
+
+When answering questions about architecture, patterns, conventions, incidents, or how things work:
+- Search memory first using \`memory_search\` (scope: project, namespace based on project)
+- Use \`memory_store\` to save new decisions, patterns, bug fixes, or conventions discovered during the session
+- At session end, if significant learnings were made, offer to store them via \`memory_store\`
+`;
+
+function createClaudeMd(scope: Scope): void {
+  if (scope === 'project') {
+    const claudeDir = join(process.cwd(), '.claude');
+    const claudeMdPath = join(claudeDir, 'CLAUDE.md');
+
+    if (existsSync(claudeMdPath)) {
+      const existing = readFileSync(claudeMdPath, 'utf-8');
+      if (existing.includes(CLAUDE_MD_MARKER)) {
+        dim('CLAUDE.md already contains memory server instructions');
+        return;
+      }
+      writeFileSync(claudeMdPath, existing.trimEnd() + '\n\n' + CLAUDE_MD_CONTENT, 'utf-8');
+      success('Appended memory server instructions to .claude/CLAUDE.md');
+    } else {
+      if (!existsSync(claudeDir)) {
+        mkdirSync(claudeDir, { recursive: true });
+      }
+      writeFileSync(claudeMdPath, CLAUDE_MD_CONTENT, 'utf-8');
+      success('Created .claude/CLAUDE.md with memory server instructions');
+    }
+  } else {
+    info('Add the following to your project CLAUDE.md files:');
+    console.log('');
+    console.log(CLAUDE_MD_CONTENT);
+  }
+}
+
+export { CLAUDE_MD_MARKER };
+
 export async function runInit(): Promise<void> {
   const scope = parseScope();
 
   console.log(`\n${CYAN}MCP Memory Server — Init (${scope} scope)${RESET}\n`);
 
-  info('Step 1/4: Verifying hook scripts...');
+  info('Step 1/5: Verifying hook scripts...');
   verifyHookScripts();
 
   console.log('');
-  info('Step 2/4: Merging hooks into settings.json...');
+  info('Step 2/5: Merging hooks into settings.json...');
   mergeSettingsHooks(scope);
 
   if (scope === 'project') {
@@ -337,11 +376,15 @@ export async function runInit(): Promise<void> {
   }
 
   console.log('');
-  info('Step 3/4: Creating default config...');
+  info('Step 3/5: Creating default config...');
   createDefaultConfig();
 
   console.log('');
-  info('Step 4/4: Installing scheduled consolidation...');
+  info('Step 4/5: Setting up CLAUDE.md instructions...');
+  createClaudeMd(scope);
+
+  console.log('');
+  info('Step 5/5: Installing scheduled consolidation...');
   installLaunchdPlist();
 
   console.log(`\n${GREEN}Init complete! (${scope} scope)${RESET}\n`);
