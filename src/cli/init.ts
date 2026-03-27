@@ -326,6 +326,8 @@ When answering questions about architecture, patterns, conventions, incidents, o
 - Search memory first using \`memory_search\` (scope: project, namespace based on project)
 - Use \`memory_store\` to save new decisions, patterns, bug fixes, or conventions discovered during the session
 - At session end, if significant learnings were made, offer to store them via \`memory_store\`
+
+**When in doubt** about any pattern, convention, or past decision — search the MCP memory server before proposing a solution. Past incidents and rules are stored there to prevent repeating mistakes.
 `;
 
 function createClaudeMd(scope: Scope): void {
