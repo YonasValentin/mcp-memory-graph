@@ -1,0 +1,19 @@
+services:
+  memory-server:
+    build: .
+    container_name: mcp-memory-server
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    environment:
+      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN}
+      - MCP_PORT=3100
+      - MCP_MEMORY_DB_PATH=/data/memory.db
+      - MCP_MEMORY_CONFIG_PATH=/data/config.json
+      - HF_HOME=/cache
+    volumes:
+      - mcp-data:/data
+      - mcp-cache:/cache
+volumes:
+  mcp-data:
+  mcp-cache:

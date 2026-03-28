@@ -19,6 +19,12 @@ async function main(): Promise<void> {
       await runConsolidate();
       break;
     }
+    case 'serve':
+    case 'http': {
+      const { runServe } = await import('./cli/serve.js');
+      await runServe();
+      break;
+    }
     default: {
       // Default: start MCP server on stdio
       const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js');
