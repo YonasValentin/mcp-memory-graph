@@ -68,11 +68,57 @@ Every memory supports rich metadata for cross-department use:
 | `metadata` | Domain-specific JSON | `{contract_type: "NDA", parties: ["A","B"]}` |
 | `expires_at` | Auto-expiration date | ISO 8601 timestamp |
 
+### Web dashboard
+
+The memory server includes a browser-based dashboard for viewing and managing memories outside of Claude. It runs on the same Express server as the MCP HTTP transport — no separate process needed.
+
+**5 pages:**
+
+- **Dashboard** — memory counts, content size, breakdowns by scope/department/type, and the 10 most recently updated memories
+- **Search** — hybrid vector+keyword search with confidence and match-type badges. Fuse.js provides instant fuzzy suggestions as you type (indexes titles and tags client-side)
+- **Browse** — sortable, paginated table of all memories with scope filtering and quality score indicators
+- **Memory detail** — full content view, metadata panel, version history, related memories (vector similarity), and inline edit/delete
+- **Knowledge graph** — D3 force-directed visualization of memory relationships. Nodes are sized by importance and colored by scope. Zoom, pan, drag, hover tooltips, double-click to navigate
+
+**Tech stack:** React 19, Vite, Tailwind CSS v4, shadcn/ui (21 components), Fuse.js, D3, Recharts
+
+**Running it:**
+
+```bash
+# Development (hot reload)
+npm run build && npm run serve   # Terminal 1: server on :3100
+npm run dev:web                   # Terminal 2: Vite on :5173 (proxies /api to :3100)
+
+# Production (single process)
+npm run build:all                 # Builds server + frontend
+npm run serve                     # http://localhost:3100 serves both API and UI
+```
+
+**Docker / team deployment:**
+
+The Docker image includes the built frontend. After `docker compose up`, the dashboard is available at `http://<host>:3100` alongside the MCP endpoint. Team members can browse the shared memory store from any browser — no Claude Code required.
+
+**REST API (9 endpoints):**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/stats` | Memory counts and breakdowns |
+| `GET` | `/api/search?q=...` | Hybrid search with filters |
+| `GET` | `/api/memories` | List with pagination and sorting |
+| `GET` | `/api/memories/:id` | Single memory with metadata |
+| `GET` | `/api/memories/:id/versions` | Version history |
+| `GET` | `/api/memories/:id/related` | Semantically related memories |
+| `PATCH` | `/api/memories/:id` | Update content or metadata |
+| `DELETE` | `/api/memories/:id` | Delete a memory |
+| `GET` | `/api/graph` | Nodes + edges for graph visualization |
+
+The REST endpoints call the same handler functions as the MCP tools. No business logic is duplicated.
+
 ---
 
-## Self-Improvement
+## Self-improvement
 
-The memory server is a self-improving system. Rather than being a passive store that only responds to explicit commands, it actively tracks how knowledge is used, scores its quality, learns from sessions, and consolidates itself over time.
+The memory server is a self-improving system. It tracks how knowledge is used, scores quality, learns from sessions, and consolidates itself over time.
 
 ### The Learning Loop
 
@@ -278,6 +324,7 @@ The config file at `~/.mcp-memory/config.json` controls self-improvement behavio
 | Command | Description |
 |---------|-------------|
 | `npx mcp-memory-server` | Start MCP server on stdio (default) |
+| `npx mcp-memory-server serve` | Start HTTP server with MCP transport + REST API + web dashboard |
 | `npx mcp-memory-server init` | Setup hooks, config, and nightly schedule (user scope) |
 | `npx mcp-memory-server init --scope project` | Setup for current project only (creates `.mcp.json` + `.claude/settings.json`) |
 | `npx mcp-memory-server uninstall` | Reverse init: remove hooks and schedule |
@@ -927,11 +974,12 @@ npx mcp-memory-server consolidate
 - **Backlink graph** — Use wiki-link relationships for multi-hop discovery
 - **Auto-sync on change** — Optional file watcher for real-time sync
 
-### Planned: Enhanced Features
+### Planned: Enhanced features
 
-- **Knowledge graph** — PageRank-based importance scoring and community detection across related memories
 - **Auto-tagging** — LLM-generated tags and summaries on store
 - **Multi-database** — Separate databases per project/team with cross-database search
+- **Notion sync** — Bi-directional sync between the memory server and Notion workspaces (same pattern as vault sync)
+- **Webhook system** — Outgoing webhooks on memory create/update/delete for Slack, Discord, or custom endpoints
 
 ---
 
@@ -946,6 +994,10 @@ npx mcp-memory-server consolidate
 | Validation | `zod` ^3.24.0 | Schema validation for tool inputs |
 | IDs | `uuid` ^11.1.0 | UUID v4 generation for memory IDs |
 | TypeScript | `typescript` ^5.7.2 | Strict mode, ES2022 target, Node16 modules |
+| Frontend | React 19, Vite 8, Tailwind CSS v4 | Web dashboard SPA |
+| UI components | shadcn/ui (base-ui) | 21 accessible component primitives |
+| Fuzzy search | `fuse.js` ^7 | Client-side fuzzy autocomplete suggestions |
+| Graph viz | `d3-force`, `d3-zoom`, `d3-drag` | Knowledge graph force-directed layout |
 
 ---
 

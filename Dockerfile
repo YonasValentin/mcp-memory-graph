@@ -6,6 +6,12 @@ COPY tsconfig.json ./
 COPY src/ ./src/
 RUN npm run build
 
+# Build web dashboard
+COPY web/package.json web/package-lock.json ./web/
+RUN cd web && npm ci
+COPY web/ ./web/
+RUN cd web && npm run build
+
 FROM node:20-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 make g++ && rm -rf /var/lib/apt/lists/*

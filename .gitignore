@@ -4,3 +4,5 @@ dist/
 *.db-journal
 *.db-wal
 .DS_Store
+web/node_modules/
+__pycache__/
