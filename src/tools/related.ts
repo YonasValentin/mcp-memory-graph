@@ -63,12 +63,20 @@ export async function handleRelated(
     const confidenceLevel =
       confidence >= 0.8 ? 'high' : confidence >= 0.5 ? 'medium' : 'low';
 
+    const ageDays = Math.max(0, Math.floor((Date.now() - new Date(row.updated_at).getTime()) / 86_400_000));
+
     results.push({
       memory: rowToMemory(row),
       score: similarity,
       confidence,
       confidence_level: confidenceLevel,
       match_type: 'vector',
+      age_days: ageDays,
+      freshness_warning: ageDays > 90
+        ? `This memory is ${ageDays} days old. Verify against current state before asserting as fact.`
+        : ageDays > 30
+          ? `This memory is ${ageDays} days old. Information may be outdated.`
+          : null,
     });
   }
 

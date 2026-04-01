@@ -123,6 +123,21 @@ export interface SearchResult {
   confidence: number;
   confidence_level: ConfidenceLevel;
   match_type: 'vector' | 'keyword' | 'hybrid';
+  age_days: number;
+  freshness_warning: string | null;
+}
+
+export interface ManifestEntry {
+  id: string;
+  title: string | null;
+  scope: MemoryScope;
+  namespace: string | null;
+  document_type: string | null;
+  tags: string[];
+  importance_score: number;
+  access_count: number;
+  age_days: number;
+  updated_at: string;
 }
 
 export interface ChunkingOptions {

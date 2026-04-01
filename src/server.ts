@@ -23,6 +23,7 @@ import {
   VaultSearchSchema,
   MemoryConsolidateSchema,
   MemoryExtractLearningsSchema,
+  MemoryManifestSchema,
 } from './schemas/index.js';
 import { handleStore } from './tools/store.js';
 import { handleSearch } from './tools/search.js';
@@ -41,6 +42,7 @@ import { handleVaultStatus } from './tools/vault-status.js';
 import { handleVaultSearch } from './tools/vault-search.js';
 import { handleConsolidate } from './tools/consolidate.js';
 import { handleExtractLearnings } from './tools/extract-learnings.js';
+import { handleManifest } from './tools/manifest.js';
 
 function formatResult(data: unknown): { content: Array<{ type: 'text'; text: string }> } {
   return {
@@ -366,6 +368,22 @@ export function createServer(): McpServer {
       try {
         const parsed = MemoryExtractLearningsSchema.parse(input);
         const result = await handleExtractLearnings(getDb(), await getEmbedder(), parsed);
+        return formatResult(result);
+      } catch (err) {
+        return formatError(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ── 18. memory_manifest ──────────────────────────────────────────────────
+  server.tool(
+    'memory_manifest',
+    'Get a lightweight index of all memories — titles, types, tags, and scores without content. Use this to discover what knowledge exists before running expensive searches.',
+    MemoryManifestSchema.shape,
+    async (input) => {
+      try {
+        const parsed = MemoryManifestSchema.parse(input);
+        const result = handleManifest(getDb(), parsed);
         return formatResult(result);
       } catch (err) {
         return formatError(err instanceof Error ? err.message : String(err));

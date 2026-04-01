@@ -563,6 +563,34 @@ export const MemoryConsolidateSchema = z.object({
 // 17. MemoryExtractLearningsSchema
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// 18. MemoryManifestSchema
+// ---------------------------------------------------------------------------
+
+export const MemoryManifestSchema = z.object({
+  scope: scopeField(false),
+  namespace: namespaceField(),
+  department: departmentField(),
+  document_type: documentTypeField(),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(1000)
+    .default(500)
+    .describe('Maximum entries to return (default 500)'),
+  offset: z
+    .number()
+    .int()
+    .min(0)
+    .default(0)
+    .describe('Skip this many entries for pagination'),
+});
+
+// ---------------------------------------------------------------------------
+// 19. MemoryExtractLearningsSchema
+// ---------------------------------------------------------------------------
+
 export const MemoryExtractLearningsSchema = z.object({
   transcript: z
     .string().min(1)

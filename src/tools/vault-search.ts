@@ -15,10 +15,10 @@ export async function handleVaultSearch(
     tags?: string[];
     min_confidence?: number;
   },
-): Promise<{ results: SearchResult[]; total: number }> {
+): Promise<{ results: SearchResult[]; total: number; truncated: boolean }> {
   const vaultName = path.basename(input.vault_path);
 
-  const results = await hybridSearch(db, embedder, {
+  const { results, total, truncated } = await hybridSearch(db, embedder, {
     query: input.query,
     scope: 'project' as MemoryScope,
     namespace: vaultName,
@@ -29,5 +29,5 @@ export async function handleVaultSearch(
     min_confidence: input.min_confidence,
   });
 
-  return { results, total: results.length };
+  return { results, total, truncated };
 }

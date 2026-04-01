@@ -9,6 +9,7 @@ import { handleDelete } from '../tools/delete.js';
 import { handleRelated } from '../tools/related.js';
 import { handleVersions } from '../tools/versions.js';
 import { handleStats } from '../tools/stats.js';
+import { handleManifest } from '../tools/manifest.js';
 
 type GetDb = () => Database.Database;
 type GetEmbedder = () => Promise<EmbeddingProvider>;
@@ -228,6 +229,23 @@ export function registerApiRoutes(
       }
 
       res.json({ nodes, edges, total: nodes.length });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // ── GET /api/manifest ─────────────────────────────────────────────────
+  router.get('/api/manifest', (req: Request, res: Response) => {
+    try {
+      const result = handleManifest(getDb(), {
+        scope: str(req.query.scope) as MemoryScope | undefined,
+        namespace: str(req.query.namespace),
+        department: str(req.query.department),
+        document_type: str(req.query.document_type),
+        limit: int(req.query.limit, 500),
+        offset: int(req.query.offset, 0),
+      });
+      res.json(result);
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
     }

@@ -33,7 +33,7 @@ export async function handleSearch(
   db: Database.Database,
   embedder: EmbeddingProvider,
   input: SearchInput,
-): Promise<{ results: SearchResult[]; total: number }> {
+): Promise<{ results: SearchResult[]; total: number; truncated: boolean }> {
   const options: SearchOptions = {
     query: input.query,
     scope: input.scope,
@@ -52,7 +52,7 @@ export async function handleSearch(
     min_confidence: input.min_confidence,
   };
 
-  const results = await hybridSearch(db, embedder, options);
+  const { results, total, truncated } = await hybridSearch(db, embedder, options);
 
   if (results.length > 0) {
     recordAccess(
@@ -67,5 +67,5 @@ export async function handleSearch(
     );
   }
 
-  return { results, total: results.length };
+  return { results, total, truncated };
 }

@@ -13,11 +13,27 @@ function sanitizeFtsQuery(query: string): string {
     .join(' ');
 }
 
+function memoryAgeDays(updatedAt: string): number {
+  return Math.max(0, Math.floor((Date.now() - new Date(updatedAt).getTime()) / 86_400_000));
+}
+
+function freshnessWarning(ageDays: number): string | null {
+  if (ageDays > 90) return `This memory is ${ageDays} days old. Verify against current state before asserting as fact.`;
+  if (ageDays > 30) return `This memory is ${ageDays} days old. Information may be outdated.`;
+  return null;
+}
+
+export interface HybridSearchResponse {
+  results: SearchResult[];
+  total: number;
+  truncated: boolean;
+}
+
 export async function hybridSearch(
   db: Database.Database,
   embedder: EmbeddingProvider,
   options: SearchOptions
-): Promise<SearchResult[]> {
+): Promise<HybridSearchResponse> {
   const doVector = options.search_mode === 'hybrid' || options.search_mode === 'vector';
   const doKeyword = options.search_mode === 'hybrid' || options.search_mode === 'keyword';
   const oversampleLimit = Math.min(options.limit * 3, 300);
@@ -68,7 +84,7 @@ export async function hybridSearch(
   for (const rowid of vectorResults.keys()) candidateRowids.add(rowid);
   for (const rowid of keywordResults.keys()) candidateRowids.add(rowid);
 
-  if (candidateRowids.size === 0) return [];
+  if (candidateRowids.size === 0) return { results: [], total: 0, truncated: false };
 
   // --- Fetch full records with filters ---
   const rowidsArray = Array.from(candidateRowids);
@@ -182,12 +198,16 @@ export async function hybridSearch(
       matchType = 'keyword';
     }
 
+    const ageDays = memoryAgeDays(row.updated_at);
+
     return {
       memory: rowToMemory(row),
       score: item.score,
       confidence,
       confidence_level: confidenceLabel(confidence),
       match_type: matchType,
+      age_days: ageDays,
+      freshness_warning: freshnessWarning(ageDays),
     };
   });
 
@@ -197,5 +217,11 @@ export async function hybridSearch(
     : results;
 
   // --- Paginate ---
-  return filtered.slice(options.offset, options.offset + options.limit);
+  const paginated = filtered.slice(options.offset, options.offset + options.limit);
+
+  return {
+    results: paginated,
+    total: filtered.length,
+    truncated: filtered.length > options.offset + options.limit,
+  };
 }
