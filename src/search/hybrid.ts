@@ -168,13 +168,16 @@ export async function hybridSearch(
     rrfScores.set(rowid, current + 1 / (K + rank));
   }
 
+  // Apply importance boost: RRF score * (1 + importance * 0.5)
+  // This gives high-importance memories a ranking advantage without overwhelming relevance
   let ranked = Array.from(rrfScores.entries())
-    .sort((a, b) => b[1] - a[1])
-    .map(([rowid, score], fusedRank) => ({
-      rowid,
-      score,
-      fusedRank,
-    }));
+    .map(([rowid, score]) => {
+      const row = rowMap.get(rowid)!;
+      const importanceBoost = 1 + (row.importance_score ?? 0.5) * 0.5;
+      return { rowid, score: score * importanceBoost };
+    })
+    .sort((a, b) => b.score - a.score)
+    .map((item, fusedRank) => ({ ...item, fusedRank }));
 
   // --- Temporal decay ---
   if (options.temporal_decay) {
@@ -243,18 +246,11 @@ export function toSummary(result: SearchResult): SearchResultSummary {
     id: result.memory.id,
     title: result.memory.title,
     snippet,
-    scope: result.memory.scope,
-    namespace: result.memory.namespace,
-    document_type: result.memory.document_type,
     tags: result.memory.tags,
     score: result.score,
-    confidence: result.confidence,
     confidence_level: result.confidence_level,
-    match_type: result.match_type,
-    age_days: result.age_days,
-    freshness_warning: result.freshness_warning,
     importance_score: result.memory.importance_score,
-    access_count: result.memory.access_count,
+    ...(result.freshness_warning ? { freshness_warning: result.freshness_warning } : {}),
   };
 }
 

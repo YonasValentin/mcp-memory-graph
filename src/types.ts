@@ -139,18 +139,11 @@ export interface SearchResultSummary {
   id: string;
   title: string | null;
   snippet: string;
-  scope: MemoryScope;
-  namespace: string | null;
-  document_type: string | null;
   tags: string[];
   score: number;
-  confidence: number;
   confidence_level: ConfidenceLevel;
-  match_type: 'vector' | 'keyword' | 'hybrid';
-  age_days: number;
-  freshness_warning: string | null;
   importance_score: number;
-  access_count: number;
+  freshness_warning?: string;
 }
 
 export interface SearchResultIdOnly {

@@ -26,10 +26,17 @@ export function findOrCreateEntity(
     .get(normalized);
 
   if (existing) {
+    // LLM-provided types ('person','project','tool','organization') are more specific
+    // than regex-inferred types ('concept','file','pattern') — upgrade if applicable
+    const specificTypes = new Set(['person', 'project', 'tool', 'organization']);
+    const genericTypes = new Set(['concept', 'file', 'pattern']);
+    const currentType = (db.prepare<[string], { type: string }>('SELECT type FROM entities WHERE id = ?').get(existing.id))?.type;
+    const shouldUpgrade = specificTypes.has(type) && genericTypes.has(currentType ?? '');
+
     db.prepare(`
       UPDATE entities
       SET mention_count = mention_count + 1,
-          last_seen_at = datetime('now')
+          last_seen_at = datetime('now')${shouldUpgrade ? ",\n          type = '" + type + "'" : ''}
       WHERE id = ?
     `).run(existing.id);
     return existing.id;
