@@ -9,7 +9,7 @@ import {
 
 interface EntityInput {
   name: string;
-  type: 'person' | 'project' | 'tool' | 'concept' | 'organization' | 'file' | 'package';
+  type: 'person' | 'project' | 'tool' | 'concept' | 'organization' | 'file' | 'package' | 'pattern';
   aliases?: string[];
 }
 

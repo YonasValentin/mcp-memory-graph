@@ -638,7 +638,7 @@ export const MemoryGraphSchema = z.object({
     .optional()
     .describe('Entity name to start graph traversal from'),
   entity_type: z
-    .enum(['person', 'project', 'tool', 'concept', 'organization', 'file', 'package'])
+    .enum(['person', 'project', 'tool', 'concept', 'organization', 'file', 'package', 'pattern'])
     .optional()
     .describe('Filter entities by type'),
   depth: z
@@ -663,7 +663,7 @@ export const MemoryExtractEntitiesSchema = z.object({
   entities: z
     .array(z.object({
       name: z.string().min(1).describe('Entity name'),
-      type: z.enum(['person', 'project', 'tool', 'concept', 'organization', 'file', 'package'])
+      type: z.enum(['person', 'project', 'tool', 'concept', 'organization', 'file', 'package', 'pattern'])
         .describe('Entity type'),
       aliases: z.array(z.string()).optional().describe('Alternative names for this entity'),
     }))

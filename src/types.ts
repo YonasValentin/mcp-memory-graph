@@ -16,7 +16,7 @@ export type ConfidenceLevel = 'high' | 'medium' | 'low';
 
 export type CondensationLevel = 'full' | 'summary' | 'one_liner';
 
-export type EntityType = 'person' | 'project' | 'tool' | 'concept' | 'organization' | 'file' | 'package';
+export type EntityType = 'person' | 'project' | 'tool' | 'concept' | 'organization' | 'file' | 'package' | 'pattern';
 
 export type ProvenanceType = 'manual' | 'vault_sync' | 'learning_extraction' | 'consolidation_merge' | 'import' | 'ingest';
 
