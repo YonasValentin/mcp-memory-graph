@@ -88,13 +88,81 @@ async function main(): Promise<void> {
       }
     }
 
+    // Detect git branch
+    let branch: string | null = null;
+    try {
+      const { execSync } = await import('node:child_process');
+      branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd, timeout: 2000, encoding: 'utf-8' }).trim();
+    } catch {
+      // Not a git repo
+    }
+
+    // Resolve project namespace
+    const projectName = cwd.split('/').pop() || '';
+
+    // Find branch-related memories
+    let branchContext = '';
+    if (branch && branch !== 'main' && branch !== 'master') {
+      const branchParts = branch.split('/').filter(p => !['feature', 'fix', 'chore', 'bugfix', 'hotfix'].includes(p));
+      for (const part of branchParts) {
+        if (part.length >= 3) {
+          const branchMemories = db.prepare(
+            `SELECT title FROM memories WHERE parent_id IS NULL AND superseded_at IS NULL
+             AND (content LIKE ? OR title LIKE ?) ORDER BY importance_score DESC LIMIT 2`
+          ).all(`%${part}%`, `%${part}%`) as Array<{ title: string | null }>;
+          const titles = branchMemories.filter(m => m.title).map(m => `'${m.title}'`);
+          if (titles.length > 0) {
+            branchContext = `Branch "${branch}": ${titles.join(', ')}`;
+            break;
+          }
+        }
+      }
+    }
+
+    // Top memories for this namespace
+    const topMemories = db.prepare(
+      `SELECT title FROM memories WHERE parent_id IS NULL AND superseded_at IS NULL
+       AND (namespace = ? OR namespace = ?) ORDER BY importance_score DESC LIMIT 3`
+    ).all(projectName, projectName.toLowerCase()) as Array<{ title: string | null }>;
+    const topTitles = topMemories.filter(m => m.title).map(m => `'${m.title}'`);
+
+    // Top entities for this project
+    let entityContext = '';
+    try {
+      const topEntities = db.prepare(
+        `SELECT e.name, e.mention_count FROM entities e
+         JOIN memory_entities me ON me.entity_id = e.id
+         JOIN memories m ON m.id = me.memory_id
+         WHERE m.namespace = ? OR m.namespace = ?
+         GROUP BY e.id ORDER BY e.mention_count DESC LIMIT 5`
+      ).all(projectName, projectName.toLowerCase()) as Array<{ name: string; mention_count: number }>;
+      if (topEntities.length > 0) {
+        entityContext = `Entities: ${topEntities.map(e => `${e.name}(${e.mention_count})`).join(', ')}`;
+      }
+    } catch {
+      // Entities table may not exist yet
+    }
+
+    // Unresolved conflicts
+    let conflictCount = 0;
+    try {
+      const conflicts = db.prepare('SELECT COUNT(*) as cnt FROM memory_conflicts WHERE resolved_at IS NULL').get() as { cnt: number } | undefined;
+      conflictCount = conflicts?.cnt ?? 0;
+    } catch {
+      // Table may not exist yet
+    }
+
     // Output context for Claude
     const parts: string[] = [`Memory server: ${totalCount} memories`];
+    if (branchContext) parts.push(branchContext);
+    if (topTitles.length > 0) parts.push(`Key: ${topTitles.join(', ')}`);
+    if (entityContext) parts.push(entityContext);
+    if (conflictCount > 0) parts.push(`${conflictCount} conflicts pending`);
     if (expiredCount > 0) parts.push(`${expiredCount} expired`);
     if (staleFiles > 0) parts.push(`${staleFiles} watched files need re-ingestion`);
 
     // Write to stdout (becomes Claude context)
-    process.stdout.write(parts.join(', ') + '.\n');
+    process.stdout.write(parts.join('. ') + '.\n');
   } finally {
     db.close();
   }

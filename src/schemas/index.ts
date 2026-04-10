@@ -169,6 +169,23 @@ export const MemorySearchSchema = z.object({
     .max(1)
     .optional()
     .describe('Minimum confidence score threshold (0-1)'),
+  detail_level: z
+    .enum(['summary', 'full', 'ids_only'])
+    .default('summary')
+    .describe(
+      'Controls response detail: "summary" returns titles + snippets (default, saves tokens), ' +
+      '"full" returns complete content, "ids_only" returns just IDs and titles for browsing',
+    ),
+  max_tokens: z
+    .number()
+    .int()
+    .min(100)
+    .max(50000)
+    .optional()
+    .describe(
+      'Approximate maximum response size in tokens (~4 chars per token). ' +
+      'Results are truncated to fit within budget. Applies after detail_level projection.',
+    ),
 });
 
 // ---------------------------------------------------------------------------
@@ -268,7 +285,7 @@ export const MemoryListSchema = z.object({
     .default(0)
     .describe('Skip this many results for pagination'),
   sort_by: z
-    .enum(['created_at', 'updated_at', 'title'])
+    .enum(['created_at', 'updated_at', 'title', 'importance_score', 'confidence_score', 'access_count'])
     .default('created_at')
     .describe('Field to sort results by'),
   sort_order: z
@@ -609,4 +626,84 @@ export const MemoryExtractLearningsSchema = z.object({
   auto_store: z
     .boolean().default(true)
     .describe('If true, automatically store extracted learnings as memories'),
+});
+
+// ---------------------------------------------------------------------------
+// 20. MemoryGraphSchema
+// ---------------------------------------------------------------------------
+
+export const MemoryGraphSchema = z.object({
+  entity: z
+    .string()
+    .optional()
+    .describe('Entity name to start graph traversal from'),
+  entity_type: z
+    .enum(['person', 'project', 'tool', 'concept', 'organization', 'file', 'package'])
+    .optional()
+    .describe('Filter entities by type'),
+  depth: z
+    .number().int().min(1).max(3).default(1)
+    .describe('Graph traversal depth (1-3 hops)'),
+  include_memories: z
+    .boolean().default(true)
+    .describe('Include linked memories in the response'),
+  limit: z
+    .number().int().min(1).max(200).default(20)
+    .describe('Maximum entities to return'),
+});
+
+// ---------------------------------------------------------------------------
+// 21. MemoryExtractEntitiesSchema
+// ---------------------------------------------------------------------------
+
+export const MemoryExtractEntitiesSchema = z.object({
+  memory_id: z
+    .string()
+    .describe('Memory ID to associate extracted entities with'),
+  entities: z
+    .array(z.object({
+      name: z.string().min(1).describe('Entity name'),
+      type: z.enum(['person', 'project', 'tool', 'concept', 'organization', 'file', 'package'])
+        .describe('Entity type'),
+      aliases: z.array(z.string()).optional().describe('Alternative names for this entity'),
+    }))
+    .min(1)
+    .describe('Entities extracted from the memory content'),
+  relationships: z
+    .array(z.object({
+      source: z.string().describe('Source entity name'),
+      target: z.string().describe('Target entity name'),
+      type: z.enum(['uses', 'created_by', 'depends_on', 'related_to', 'part_of', 'works_with'])
+        .describe('Relationship type'),
+    }))
+    .optional()
+    .describe('Relationships between entities'),
+});
+
+// ---------------------------------------------------------------------------
+// 22. MemoryCondenseSchema
+// ---------------------------------------------------------------------------
+
+export const MemoryCondenseSchema = z.object({
+  memories: z
+    .array(z.object({
+      id: z.string().describe('Memory ID to condense'),
+      summary: z.string().min(1).describe('Agent-generated summary of the memory'),
+      one_liner: z.string().max(200).optional().describe('Optional one-line description'),
+    }))
+    .min(1).max(50)
+    .describe('Batch of memories with agent-generated summaries'),
+  target_level: z
+    .enum(['summary', 'one_liner']).default('summary')
+    .describe('Target condensation level'),
+});
+
+// ---------------------------------------------------------------------------
+// 23. MemoryRestoreSchema
+// ---------------------------------------------------------------------------
+
+export const MemoryRestoreSchema = z.object({
+  id: z
+    .string()
+    .describe('Memory ID to restore to original full content'),
 });

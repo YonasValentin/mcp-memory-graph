@@ -3,6 +3,7 @@ import { getDatabase } from '../db/connection.js';
 import { initializeSchema } from '../db/schema.js';
 import { runMigrations } from '../db/migrations.js';
 import { TransformersEmbeddingProvider } from '../embeddings/transformers.js';
+import { CachedEmbeddingProvider } from '../embeddings/cache.js';
 import type { EmbeddingProvider } from '../types.js';
 
 let cachedEmbedder: EmbeddingProvider | null = null;
@@ -42,8 +43,8 @@ export async function getEmbedder(): Promise<EmbeddingProvider> {
     return cachedEmbedder;
   }
 
-  const provider = new TransformersEmbeddingProvider();
-  await provider.initialize();
-  cachedEmbedder = provider;
+  const inner = new TransformersEmbeddingProvider();
+  await inner.initialize();
+  cachedEmbedder = new CachedEmbeddingProvider(inner);
   return cachedEmbedder;
 }

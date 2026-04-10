@@ -11,6 +11,7 @@ import {
   deleteMemory,
   rowToMemory,
 } from '../db/repository.js';
+import { getConfig } from '../config/loader.js';
 
 const CONTENT_MERGE_SEPARATOR = '\n\n---\n\n';
 
@@ -121,6 +122,38 @@ export async function handleConsolidate(
   const limitReached = (): boolean =>
     opsPerformed >= maxOps || embeddingOps >= maxEmbeddings || Date.now() - startTime > timeBudgetMs;
 
+  // ── Stage 0: ByteRover daily importance decay ─────────────────────────
+  // importance *= 0.995^days_since_last_access (half-life ~138 days)
+  try {
+    if (!dryRun) {
+      const decayRows = db
+        .prepare<unknown[], { id: string; importance_score: number; last_accessed_at: string | null; updated_at: string }>(
+          `SELECT id, importance_score, last_accessed_at, updated_at FROM memories
+           WHERE parent_id IS NULL
+             AND (last_accessed_at IS NULL OR last_accessed_at < datetime('now', '-1 day'))${filterClause}`,
+        )
+        .all(...filterParams);
+
+      if (decayRows.length > 0) {
+        const now = Date.now();
+        const updateStmt = db.prepare('UPDATE memories SET importance_score = ? WHERE id = ?');
+        const applyDecay = db.transaction(() => {
+          for (const row of decayRows) {
+            const lastActive = row.last_accessed_at || row.updated_at;
+            const daysSince = Math.max(0, (now - new Date(lastActive).getTime()) / 86_400_000);
+            const decayed = Math.max(0.01, row.importance_score * Math.pow(0.995, daysSince));
+            if (Math.abs(decayed - row.importance_score) > 0.001) {
+              updateStmt.run(decayed, row.id);
+            }
+          }
+        });
+        applyDecay();
+      }
+    }
+  } catch (err) {
+    report.errors.push(`Decay stage failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   // ── Stage 1: Update quality scores ────────────────────────────────────
   try {
     if (!dryRun) {
@@ -165,7 +198,7 @@ export async function handleConsolidate(
   // ── Stage 3: Prune low-quality memories ───────────────────────────────
   if (input.prune_low_quality && !limitReached()) {
     try {
-      const minImportance = 0.1;
+      const minImportance = getConfig().consolidation.min_importance_to_keep;
       const lowQualityRows = db
         .prepare<unknown[], { id: string; content: string }>(
           `SELECT id, content FROM memories

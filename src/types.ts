@@ -14,6 +14,12 @@ export type SortOrder = 'asc' | 'desc';
 
 export type ConfidenceLevel = 'high' | 'medium' | 'low';
 
+export type CondensationLevel = 'full' | 'summary' | 'one_liner';
+
+export type EntityType = 'person' | 'project' | 'tool' | 'concept' | 'organization' | 'file' | 'package';
+
+export type ProvenanceType = 'manual' | 'vault_sync' | 'learning_extraction' | 'consolidation_merge' | 'import' | 'ingest';
+
 export interface Memory {
   readonly id: string;
   scope: MemoryScope;
@@ -125,6 +131,32 @@ export interface SearchResult {
   match_type: 'vector' | 'keyword' | 'hybrid';
   age_days: number;
   freshness_warning: string | null;
+}
+
+export type DetailLevel = 'summary' | 'full' | 'ids_only';
+
+export interface SearchResultSummary {
+  id: string;
+  title: string | null;
+  snippet: string;
+  scope: MemoryScope;
+  namespace: string | null;
+  document_type: string | null;
+  tags: string[];
+  score: number;
+  confidence: number;
+  confidence_level: ConfidenceLevel;
+  match_type: 'vector' | 'keyword' | 'hybrid';
+  age_days: number;
+  freshness_warning: string | null;
+  importance_score: number;
+  access_count: number;
+}
+
+export interface SearchResultIdOnly {
+  id: string;
+  title: string | null;
+  score: number;
 }
 
 export interface ManifestEntry {

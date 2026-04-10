@@ -228,7 +228,7 @@ export async function handleExtractLearnings(
         },
       });
 
-      result.memory_ids.push(stored.id);
+      result.memory_ids.push(stored.memory.id);
       result.stored_count++;
     }
   }

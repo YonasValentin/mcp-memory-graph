@@ -190,6 +190,8 @@ export interface DeleteFilter {
   namespace?: string;
   department?: string;
   document_type?: string;
+  before_date?: string;
+  expired_only?: boolean;
 }
 
 export function deleteMemoriesByFilter(
@@ -215,6 +217,13 @@ export function deleteMemoriesByFilter(
     if (filter.document_type !== undefined) {
       conditions.push('document_type = ?');
       params.push(filter.document_type);
+    }
+    if (filter.before_date !== undefined) {
+      conditions.push('created_at < ?');
+      params.push(filter.before_date);
+    }
+    if (filter.expired_only) {
+      conditions.push("expires_at IS NOT NULL AND expires_at < datetime('now')");
     }
 
     if (conditions.length === 0) {
@@ -396,7 +405,9 @@ export function recordAccess(
     `);
     const bumpAccess = db.prepare(`
       UPDATE memories
-      SET access_count = access_count + 1, last_accessed_at = datetime('now')
+      SET access_count = access_count + 1,
+          last_accessed_at = datetime('now'),
+          importance_score = MIN(1.0, importance_score + 0.03)
       WHERE id = ?
     `);
 

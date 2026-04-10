@@ -71,6 +71,100 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: 4,
+    up: (db) => {
+      const addColumn = (sql: string) => {
+        try { db.exec(sql); } catch { /* column already exists */ }
+      };
+
+      // New columns on memories
+      addColumn("ALTER TABLE memories ADD COLUMN superseded_at TEXT");
+      addColumn("ALTER TABLE memories ADD COLUMN condensation_level TEXT NOT NULL DEFAULT 'full'");
+      addColumn("ALTER TABLE memories ADD COLUMN condensed_at TEXT");
+      addColumn("ALTER TABLE memories ADD COLUMN provenance TEXT NOT NULL DEFAULT 'manual'");
+      addColumn("ALTER TABLE memories ADD COLUMN provenance_detail TEXT");
+
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_memories_superseded ON memories(superseded_at);
+        CREATE INDEX IF NOT EXISTS idx_memories_condensation ON memories(condensation_level, importance_score, access_count);
+
+        -- Entity tables
+        CREATE TABLE IF NOT EXISTS entities (
+          id TEXT PRIMARY KEY NOT NULL,
+          name TEXT NOT NULL,
+          normalized_name TEXT NOT NULL,
+          type TEXT NOT NULL DEFAULT 'concept',
+          description TEXT,
+          mention_count INTEGER NOT NULL DEFAULT 1,
+          first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+          last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+          metadata TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_entities_normalized ON entities(normalized_name);
+        CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type);
+        CREATE INDEX IF NOT EXISTS idx_entities_mention_count ON entities(mention_count DESC);
+
+        CREATE TABLE IF NOT EXISTS entity_aliases (
+          id TEXT PRIMARY KEY NOT NULL,
+          entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+          alias TEXT NOT NULL,
+          normalized_alias TEXT NOT NULL,
+          source TEXT DEFAULT 'auto'
+        );
+        CREATE INDEX IF NOT EXISTS idx_alias_entity ON entity_aliases(entity_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_alias_normalized ON entity_aliases(normalized_alias);
+
+        CREATE TABLE IF NOT EXISTS entity_relationships (
+          id TEXT PRIMARY KEY NOT NULL,
+          source_entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+          target_entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+          type TEXT NOT NULL DEFAULT 'related_to',
+          strength REAL NOT NULL DEFAULT 0.5,
+          evidence_count INTEGER NOT NULL DEFAULT 1,
+          first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+          last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+          metadata TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_rel_source ON entity_relationships(source_entity_id);
+        CREATE INDEX IF NOT EXISTS idx_rel_target ON entity_relationships(target_entity_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_rel_pair_type ON entity_relationships(source_entity_id, target_entity_id, type);
+
+        CREATE TABLE IF NOT EXISTS memory_entities (
+          memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+          entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+          role TEXT DEFAULT 'mention',
+          extracted_by TEXT DEFAULT 'regex',
+          confidence REAL NOT NULL DEFAULT 0.5,
+          PRIMARY KEY (memory_id, entity_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_me_entity ON memory_entities(entity_id);
+        CREATE INDEX IF NOT EXISTS idx_me_memory ON memory_entities(memory_id);
+
+        -- Conflict tracking
+        CREATE TABLE IF NOT EXISTS memory_conflicts (
+          id TEXT PRIMARY KEY NOT NULL,
+          old_memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+          new_memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+          conflict_type TEXT NOT NULL DEFAULT 'superseded',
+          description TEXT,
+          resolved_at TEXT,
+          resolved_by TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_conflict_old ON memory_conflicts(old_memory_id);
+        CREATE INDEX IF NOT EXISTS idx_conflict_new ON memory_conflicts(new_memory_id);
+
+        -- Original content preservation for condensation
+        CREATE TABLE IF NOT EXISTS memory_originals (
+          memory_id TEXT PRIMARY KEY NOT NULL,
+          original_content TEXT NOT NULL,
+          original_title TEXT,
+          preserved_at TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
+        );
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

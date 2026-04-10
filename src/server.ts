@@ -4,6 +4,7 @@ import { getDatabase, closeDatabase } from './db/connection.js';
 import { initializeSchema } from './db/schema.js';
 import { runMigrations } from './db/migrations.js';
 import { TransformersEmbeddingProvider } from './embeddings/transformers.js';
+import { CachedEmbeddingProvider } from './embeddings/cache.js';
 import type { EmbeddingProvider } from './types.js';
 import {
   MemoryStoreSchema,
@@ -24,6 +25,10 @@ import {
   MemoryConsolidateSchema,
   MemoryExtractLearningsSchema,
   MemoryManifestSchema,
+  MemoryGraphSchema,
+  MemoryExtractEntitiesSchema,
+  MemoryCondenseSchema,
+  MemoryRestoreSchema,
 } from './schemas/index.js';
 import { handleStore } from './tools/store.js';
 import { handleSearch } from './tools/search.js';
@@ -43,6 +48,9 @@ import { handleVaultSearch } from './tools/vault-search.js';
 import { handleConsolidate } from './tools/consolidate.js';
 import { handleExtractLearnings } from './tools/extract-learnings.js';
 import { handleManifest } from './tools/manifest.js';
+import { handleGraph } from './tools/graph.js';
+import { handleExtractEntities } from './tools/extract-entities.js';
+import { handleCondense, handleRestore } from './tools/condense.js';
 
 function formatResult(data: unknown): { content: Array<{ type: 'text'; text: string }> } {
   return {
@@ -77,8 +85,9 @@ export function createServer(): McpServer {
 
   async function getEmbedder(): Promise<EmbeddingProvider> {
     if (!embedder) {
-      embedder = new TransformersEmbeddingProvider();
-      await embedder.initialize();
+      const inner = new TransformersEmbeddingProvider();
+      await inner.initialize();
+      embedder = new CachedEmbeddingProvider(inner);
     }
     return embedder;
   }
@@ -93,7 +102,7 @@ export function createServer(): McpServer {
       try {
         const parsed = MemoryStoreSchema.parse(input);
         const result = await handleStore(getDb(), await getEmbedder(), parsed);
-        return formatResult({ stored: true, memory: result });
+        return formatResult(result);
       } catch (err) {
         return formatError(err instanceof Error ? err.message : String(err));
       }
@@ -384,6 +393,70 @@ export function createServer(): McpServer {
       try {
         const parsed = MemoryManifestSchema.parse(input);
         const result = handleManifest(getDb(), parsed);
+        return formatResult(result);
+      } catch (err) {
+        return formatError(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ── 19. memory_graph ───────────────────────────────────────────────────
+  server.tool(
+    'memory_graph',
+    'Query the knowledge graph: find entities, their relationships, and linked memories. Use entity name to start traversal, or browse all entities by type. Supports multi-hop traversal (depth 1-3).',
+    MemoryGraphSchema.shape,
+    async (input) => {
+      try {
+        const parsed = MemoryGraphSchema.parse(input);
+        const result = handleGraph(getDb(), parsed);
+        return formatResult(result);
+      } catch (err) {
+        return formatError(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ── 20. memory_extract_entities ─────────────────────────────────────────
+  server.tool(
+    'memory_extract_entities',
+    'Store LLM-extracted entities and relationships for a memory. The calling agent should analyze memory content and provide structured entity/relationship data. This enables knowledge graph queries.',
+    MemoryExtractEntitiesSchema.shape,
+    async (input) => {
+      try {
+        const parsed = MemoryExtractEntitiesSchema.parse(input);
+        const result = handleExtractEntities(getDb(), parsed);
+        return formatResult(result);
+      } catch (err) {
+        return formatError(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ── 21. memory_condense ─────────────────────────────────────────────────
+  server.tool(
+    'memory_condense',
+    'Apply agent-generated summaries to condense old memories. Preserves original content for later restoration. Use after consolidation reports flag condensation candidates.',
+    MemoryCondenseSchema.shape,
+    async (input) => {
+      try {
+        const parsed = MemoryCondenseSchema.parse(input);
+        const result = await handleCondense(getDb(), await getEmbedder(), parsed);
+        return formatResult(result);
+      } catch (err) {
+        return formatError(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // ── 22. memory_restore ──────────────────────────────────────────────────
+  server.tool(
+    'memory_restore',
+    'Restore a condensed memory to its original full content. Undoes condensation and re-embeds the original text.',
+    MemoryRestoreSchema.shape,
+    async (input) => {
+      try {
+        const parsed = MemoryRestoreSchema.parse(input);
+        const result = await handleRestore(getDb(), await getEmbedder(), parsed);
         return formatResult(result);
       } catch (err) {
         return formatError(err instanceof Error ? err.message : String(err));

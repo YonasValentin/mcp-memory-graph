@@ -7,8 +7,9 @@ import type {
   MemoryScope,
   AccessLevel,
   TemporalDecayConfig,
+  DetailLevel,
 } from '../types.js';
-import { hybridSearch } from '../search/hybrid.js';
+import { hybridSearch, toSummary, toIdOnly } from '../search/hybrid.js';
 import { recordAccess } from '../db/repository.js';
 
 interface SearchInput {
@@ -27,13 +28,15 @@ interface SearchInput {
   date_from?: string;
   date_to?: string;
   min_confidence?: number;
+  detail_level?: DetailLevel;
+  max_tokens?: number;
 }
 
 export async function handleSearch(
   db: Database.Database,
   embedder: EmbeddingProvider,
   input: SearchInput,
-): Promise<{ results: SearchResult[]; total: number; truncated: boolean }> {
+): Promise<{ results: unknown[]; total: number; truncated: boolean; detail_level: string; token_budget?: { limit: number; estimated_used: number } }> {
   const options: SearchOptions = {
     query: input.query,
     scope: input.scope,
@@ -67,5 +70,49 @@ export async function handleSearch(
     );
   }
 
-  return { results, total, truncated };
+  const detailLevel = input.detail_level ?? 'summary';
+  let projected: unknown[];
+
+  switch (detailLevel) {
+    case 'ids_only':
+      projected = results.map(toIdOnly);
+      break;
+    case 'summary':
+      projected = results.map(toSummary);
+      break;
+    case 'full':
+    default:
+      projected = results;
+      break;
+  }
+
+  // Token budgeting
+  if (input.max_tokens) {
+    const CHARS_PER_TOKEN = 3.4; // ~4 chars/token with 15% safety margin
+    const maxChars = input.max_tokens * CHARS_PER_TOKEN;
+    let totalChars = 0;
+    const budgeted: unknown[] = [];
+
+    for (const result of projected) {
+      const resultChars = JSON.stringify(result).length;
+      if (totalChars + resultChars > maxChars && budgeted.length > 0) {
+        break;
+      }
+      budgeted.push(result);
+      totalChars += resultChars;
+    }
+
+    return {
+      results: budgeted,
+      total,
+      truncated: budgeted.length < projected.length || truncated,
+      detail_level: detailLevel,
+      token_budget: {
+        limit: input.max_tokens,
+        estimated_used: Math.ceil(totalChars / CHARS_PER_TOKEN),
+      },
+    };
+  }
+
+  return { results: projected, total, truncated, detail_level: detailLevel };
 }

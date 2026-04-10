@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { EmbeddingProvider, SearchOptions, SearchResult, MemoryRow } from '../types.js';
+import type { EmbeddingProvider, SearchOptions, SearchResult, SearchResultSummary, SearchResultIdOnly, MemoryRow } from '../types.js';
 import { applyTemporalDecay } from './temporal.js';
 import { computeConfidence, confidenceLabel } from './scoring.js';
 import { rowToMemory } from '../db/repository.js';
@@ -117,6 +117,12 @@ export async function hybridSearch(
     whereClauses.push('language = ?');
     params.push(options.language);
   }
+  if (options.tags && options.tags.length > 0) {
+    for (const tag of options.tags) {
+      whereClauses.push('tags LIKE ?');
+      params.push(`%"${tag}"%`);
+    }
+  }
   if (options.date_from) {
     whereClauses.push('created_at >= ?');
     params.push(options.date_from);
@@ -127,6 +133,7 @@ export async function hybridSearch(
   }
 
   whereClauses.push("(expires_at IS NULL OR expires_at > datetime('now'))");
+  whereClauses.push('superseded_at IS NULL');
 
   const sql = `SELECT *, rowid FROM memories WHERE ${whereClauses.join(' AND ')}`;
   const rows = db.prepare(sql).all(...params) as (MemoryRow & { rowid: number })[];
@@ -175,7 +182,7 @@ export async function hybridSearch(
       const row = rowMap.get(item.rowid)!;
       return {
         ...item,
-        score: applyTemporalDecay(item.score, row.created_at, options.temporal_decay!),
+        score: applyTemporalDecay(item.score, row.created_at, options.temporal_decay!, row.access_count),
       };
     });
     ranked.sort((a, b) => b.score - a.score);
@@ -223,5 +230,38 @@ export async function hybridSearch(
     results: paginated,
     total: filtered.length,
     truncated: filtered.length > options.offset + options.limit,
+  };
+}
+
+export function toSummary(result: SearchResult): SearchResultSummary {
+  const content = result.memory.content;
+  const snippet = content.length > 150
+    ? content.slice(0, 150).replace(/\s+\S*$/, '') + '…'
+    : content;
+
+  return {
+    id: result.memory.id,
+    title: result.memory.title,
+    snippet,
+    scope: result.memory.scope,
+    namespace: result.memory.namespace,
+    document_type: result.memory.document_type,
+    tags: result.memory.tags,
+    score: result.score,
+    confidence: result.confidence,
+    confidence_level: result.confidence_level,
+    match_type: result.match_type,
+    age_days: result.age_days,
+    freshness_warning: result.freshness_warning,
+    importance_score: result.memory.importance_score,
+    access_count: result.memory.access_count,
+  };
+}
+
+export function toIdOnly(result: SearchResult): SearchResultIdOnly {
+  return {
+    id: result.memory.id,
+    title: result.memory.title,
+    score: result.score,
   };
 }

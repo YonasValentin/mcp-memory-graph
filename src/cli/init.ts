@@ -303,12 +303,13 @@ function createMcpJson(): void {
     return;
   }
 
+  const distIndexPath = join(__dirname, '..', 'index.js');
   const mcpConfig = {
     mcpServers: {
       'memory-server': {
         type: 'stdio',
         command: 'node',
-        args: ['${CLAUDE_PROJECT_DIR}/dist/index.js'],
+        args: [distIndexPath],
       },
     },
   };
