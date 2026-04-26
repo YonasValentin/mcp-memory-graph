@@ -1,0 +1,60 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: rsync + rebuild on MS-01
+    runs-on: [self-hosted, ms01, mcp-memory]
+    timeout-minutes: 20
+
+    env:
+      DEPLOY_ROOT: /opt/stacks/mcp-memory-server
+      HEALTH_URL: http://localhost:3200/health
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Sync workspace to ${{ env.DEPLOY_ROOT }}
+        run: |
+          # .env holds MCP_AUTH_TOKEN and lives only on the server.
+          rsync -a --delete \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='dist' \
+            --exclude='tmp' \
+            --exclude='.env*' \
+            "${GITHUB_WORKSPACE}/" "${DEPLOY_ROOT}/"
+
+      - name: Rebuild and restart stack
+        run: |
+          cd "${DEPLOY_ROOT}"
+          docker compose up -d --build
+
+      - name: Health check ${{ env.HEALTH_URL }}
+        run: |
+          for i in {1..45}; do
+            if curl -fsS "${HEALTH_URL}" > /dev/null; then
+              echo "mcp-memory is up at ${HEALTH_URL}"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "mcp-memory did not respond on ${HEALTH_URL} within 90s" >&2
+          exit 1
+
+      - name: Tail logs on failure
+        if: failure()
+        run: |
+          cd "${DEPLOY_ROOT}"
+          docker compose logs --tail=200 memory-server || true
