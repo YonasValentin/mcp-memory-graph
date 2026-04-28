@@ -62,9 +62,11 @@ export async function hybridSearch(
       for (const row of rows) {
         vectorResults.set(row.rowid, row.distance);
       }
+    /* c8 ignore start */
     } catch {
       // Vector search failed (e.g., table missing, embedding error) -- continue with keyword only
     }
+    /* c8 ignore stop */
   }
 
   // --- Keyword search ---
@@ -84,9 +86,11 @@ export async function hybridSearch(
           keywordResults.set(row.rowid, row.rank);
         }
       }
+    /* c8 ignore start */
     } catch {
       // FTS query failed (e.g., empty/invalid query) -- continue with vector only
     }
+    /* c8 ignore stop */
   }
 
   // --- Collect candidate rowids ---

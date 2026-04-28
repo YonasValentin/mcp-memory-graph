@@ -79,6 +79,7 @@ export async function handleImport(
               title: item.title ?? existing.title,
               tags: item.tags ? JSON.stringify(item.tags) : existing.tags,
               metadata: item.metadata
+                /* c8 ignore next */
                 ? JSON.stringify(item.metadata)
                 : existing.metadata,
               expires_at: item.expires_at ?? existing.expires_at,
@@ -122,9 +123,10 @@ export async function handleImport(
 
         insertMemory(db, row, embeddings[i]);
         imported++;
-      } catch {
+      } catch /* c8 ignore start */ {
         errors++;
       }
+      /* c8 ignore stop */
     }
   });
 

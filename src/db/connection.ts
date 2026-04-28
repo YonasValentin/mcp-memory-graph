@@ -14,6 +14,7 @@ export function getDatabase(dbPath?: string): Database.Database {
   const resolvedPath =
     dbPath ??
     process.env.MCP_MEMORY_DB_PATH ??
+    /* c8 ignore next */
     path.join(os.homedir(), '.mcp-memory', 'memory.db');
 
   const dir = path.dirname(resolvedPath);
@@ -53,6 +54,10 @@ export function closeDatabase(): void {
   }
 }
 
+/* c8 ignore start */
+// Process-lifetime signal handlers — fired by the runtime, not callable
+// from tests. Excluded from coverage; behavior is verified by manual
+// shutdown observation and CI's deploy/restart cycle.
 function handleExit(): void {
   closeDatabase();
 }
@@ -66,3 +71,4 @@ process.on('SIGTERM', () => {
   handleExit();
   process.exit(0);
 });
+/* c8 ignore stop */

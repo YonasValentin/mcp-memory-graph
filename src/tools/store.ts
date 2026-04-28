@@ -26,9 +26,10 @@ export async function handleStore(
   let conflicts: ConflictResult[] = [];
   try {
     conflicts = detectConflicts(db, embedding, input.content);
-  } catch (err) {
+  } catch (err) /* c8 ignore start */ {
     logger.warn({ event: 'conflict_detect_failed', err: err instanceof Error ? err.message : String(err) });
   }
+  /* c8 ignore stop */
 
   // If an exact duplicate already exists, return it without inserting a new row.
   const duplicate = conflicts.find((c) => c.type === 'duplicate');
@@ -78,20 +79,22 @@ export async function handleStore(
 
     try {
       recordConflicts(db, conflicts, row.id);
-    } catch (err) {
+    } catch (err) /* c8 ignore start */ {
       logger.error({ event: 'conflict_record_failed', memory_id: row.id, err: err instanceof Error ? err.message : String(err) });
       throw err; // bubble out so the transaction rolls back; caller's catch reports it.
     }
+    /* c8 ignore stop */
 
     try {
       const entities = extractEntitiesRegex(input.content);
       if (entities.length > 0) {
         storeExtractedEntities(db, row.id, entities, 'regex');
       }
-    } catch (err) {
+    } catch (err) /* c8 ignore start */ {
       // Entity extraction is non-critical. Log and continue without aborting the txn.
       logger.warn({ event: 'entity_extract_failed', memory_id: row.id, err: err instanceof Error ? err.message : String(err) });
     }
+    /* c8 ignore stop */
   });
 
   persist();

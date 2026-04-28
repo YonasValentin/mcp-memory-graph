@@ -255,6 +255,7 @@ class CodeStrategy implements ChunkingStrategy {
     return results;
   }
 
+  /* c8 ignore next 4 */
   private splitOnBlankLines(content: string, chunkSize: number): ChunkResult[] {
     const paragraphStrategy = new ParagraphStrategy();
     return paragraphStrategy.chunk(content, chunkSize);

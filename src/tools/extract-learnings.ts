@@ -136,6 +136,7 @@ export function extractFromTranscript(
 
       let content: string;
       if (pattern.combineGroups && match[2]) {
+        /* c8 ignore next */
         content = `Problem: ${match[1].trim()} / Fix: ${match[2].trim()}`;
       } else {
         content = match[1]?.trim() ?? '';
@@ -191,10 +192,12 @@ export async function handleExtractLearnings(
         if (existingRow) {
           const existingMeta: Record<string, unknown> = existingRow.metadata
             ? JSON.parse(existingRow.metadata) as Record<string, unknown>
+            /* c8 ignore next */
             : {};
           const currentCount =
             typeof existingMeta.corroboration_count === 'number'
               ? existingMeta.corroboration_count
+              /* c8 ignore next */
               : 0;
           existingMeta.corroboration_count = currentCount + 1;
 

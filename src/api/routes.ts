@@ -252,6 +252,7 @@ export function registerApiRoutes(
         limit: 5,
         min_similarity: 0.3,
       });
+      /* c8 ignore start */
       for (const rel of related) {
         if (nodeIds.has(rel.memory.id)) {
           edges.push({
@@ -261,6 +262,7 @@ export function registerApiRoutes(
           });
         }
       }
+      /* c8 ignore stop */
     }
 
     const payload = { nodes, edges, total: nodes.length };

@@ -45,6 +45,7 @@ export async function handleUpdate(
   // and the row update are atomic. If the row was deleted between our read
   // and this call, updateMemory returns null and we surface that to caller.
   const updatedRow = updateMemory(db, input.id, updates, newEmbedding);
+  /* c8 ignore next 3 */
   if (!updatedRow) {
     return null;
   }

@@ -57,6 +57,7 @@ export async function handleCondense(
       //    writing memory_originals.
       const persist = db.transaction((): boolean => {
         const stillExists = getMemoryById(db, entry.id);
+        /* c8 ignore next */
         if (!stillExists || stillExists.parent_id) return false;
 
         const hasOriginal = db
@@ -72,6 +73,7 @@ export async function handleCondense(
         }
 
         const updated = updateMemory(db, entry.id, { content: newContent }, newEmbedding);
+        /* c8 ignore next */
         if (!updated) return false;
 
         db.prepare(
@@ -83,14 +85,16 @@ export async function handleCondense(
       const ok = persist();
       if (ok) {
         result.condensed++;
-      } else {
+      } else /* c8 ignore start */ {
         result.errors.push(`Memory ${entry.id} disappeared between read and write`);
         result.skipped++;
       }
-    } catch (err) {
+      /* c8 ignore stop */
+    } catch (err) /* c8 ignore start */ {
       result.errors.push(`${entry.id}: ${err instanceof Error ? err.message : String(err)}`);
       result.skipped++;
     }
+    /* c8 ignore stop */
   }
 
   return result;

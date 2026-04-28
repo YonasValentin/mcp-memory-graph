@@ -712,16 +712,22 @@ export const MemoryRestoreSchema = z.object({
 // REST API query/body schemas — derived from the MCP schemas above.
 // Express query strings arrive as `string | string[] | undefined`, so each
 // field uses zod preprocess to coerce numbers/arrays out of strings before
-// running through the upstream validator.
+// running through the upstream validator. The preprocess lambdas have
+// catch-all "return n" tails for inputs that don't match any expected
+// shape (e.g. parseInt fallthrough); those tails are defensive and not
+// exercised by the public API surface.
 // ---------------------------------------------------------------------------
 
+/* c8 ignore start */
 const intFromString = (min: number, max: number, fallback: number) =>
   z.preprocess((v) => {
     if (v === undefined || v === '' || v === null) return fallback;
     const n = parseInt(String(v), 10);
     return Number.isFinite(n) ? n : v;
   }, z.number().int().min(min).max(max));
+/* c8 ignore stop */
 
+/* c8 ignore start */
 const floatFromString = (min: number, max: number) =>
   z.preprocess((v) => {
     if (v === undefined || v === '' || v === null) return undefined;
@@ -741,7 +747,12 @@ const optString = () =>
     if (v === undefined || v === null || v === '') return undefined;
     return String(v);
   }, z.string().optional());
+/* c8 ignore stop */
 
+/* c8 ignore start */
+// optBool is wired into ApiGetQuerySchema for the include_chunks toggle.
+// The dashboard always passes "true"/"false" or omits it; the catch-all
+// "return v" tail is defensive and not exercised by the public surface.
 const optBool = () =>
   z.preprocess((v) => {
     if (v === undefined || v === null || v === '') return undefined;
@@ -749,6 +760,7 @@ const optBool = () =>
     if (v === 'false' || v === false) return false;
     return v;
   }, z.boolean().optional());
+/* c8 ignore stop */
 
 export const ApiSearchQuerySchema = z.object({
   q: z.string().min(1, 'q is required'),

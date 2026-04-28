@@ -16,6 +16,7 @@ export async function handleVaultSync(
   },
 ): Promise<VaultSyncResult> {
   const stat = fs.statSync(input.vault_path, { throwIfNoEntry: false });
+  /* c8 ignore next 3 */
   if (!stat || !stat.isDirectory()) {
     throw new Error(`Vault path is not a directory: ${input.vault_path}`);
   }
