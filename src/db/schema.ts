@@ -1,6 +1,109 @@
 import type Database from 'better-sqlite3';
 
+/**
+ * The current schema version baked into this codebase. Updated together with
+ * a new entry in `runMigrations`.
+ */
+export const CURRENT_SCHEMA_VERSION = 4;
+
+/**
+ * The embedding dimension the memories_vec virtual table is built against.
+ * Sourced from MCP_MEMORY_DIMENSIONS or 384 (Xenova/all-MiniLM-L6-v2 default).
+ * Mismatched embeddings against an existing DB throw on init — see
+ * {@link assertDimensionConsistency}.
+ */
+export function configuredDimensions(): number {
+  const raw = process.env.MCP_MEMORY_DIMENSIONS ?? '384';
+  const parsed = parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 1 || parsed > 8192) {
+    throw new Error(
+      `Invalid MCP_MEMORY_DIMENSIONS=${raw}. Expected an integer between 1 and 8192.`,
+    );
+  }
+  return parsed;
+}
+
+interface TableInfoRow {
+  name: string;
+}
+
+function tableExists(db: Database.Database, name: string): boolean {
+  const row = db
+    .prepare<[string], TableInfoRow>("SELECT name FROM sqlite_master WHERE type='table' AND name = ?")
+    .get(name);
+  return !!row;
+}
+
+function columnExists(db: Database.Database, table: string, column: string): boolean {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  return rows.some((r) => r.name === column);
+}
+
+/**
+ * Required columns on `memories` for the v4 schema. Any partial state where
+ * the table exists but is missing one of these is treated as a legacy upgrade
+ * and refused — `runMigrations` is the migration path.
+ */
+const V4_MEMORY_COLUMNS = [
+  'id', 'scope', 'namespace', 'title', 'content', 'document_type', 'source',
+  'author', 'department', 'tags', 'access_level', 'language', 'metadata',
+  'parent_id', 'chunk_index', 'version', 'created_at', 'updated_at', 'expires_at',
+  'access_count', 'last_accessed_at', 'importance_score', 'confidence_score',
+  'superseded_at', 'condensation_level', 'condensed_at', 'provenance', 'provenance_detail',
+];
+
+function ensureV4MemoryColumns(db: Database.Database): void {
+  const missing = V4_MEMORY_COLUMNS.filter((c) => !columnExists(db, 'memories', c));
+  if (missing.length > 0) {
+    throw new Error(
+      `Database appears to be from a previous schema version: ` +
+      `'memories' table is missing columns [${missing.join(', ')}]. ` +
+      `This usually means the database was created by an older release. ` +
+      `Run 'node dist/index.js migrate' to upgrade, or back up and recreate.`,
+    );
+  }
+}
+
+/**
+ * Initializes a fresh DB or validates an existing one. Idempotent.
+ * Behavior:
+ *   - Empty DB: creates the full v4 schema and stamps schema_version=4.
+ *   - DB at v4: no-op.
+ *   - DB at any partial/legacy state: throws a clear error pointing at the
+ *     migrate command. Never silently marks a partial DB as current.
+ *   - DB with a different embedding_dim: throws (set MCP_MEMORY_DIMENSIONS to
+ *     match the value stored in schema_meta).
+ */
 export function initializeSchema(db: Database.Database): void {
+  // Always present after this call so the rest of the code can read it.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_meta (
+      key TEXT PRIMARY KEY NOT NULL,
+      value TEXT NOT NULL
+    );
+  `);
+
+  const dim = configuredDimensions();
+
+  if (tableExists(db, 'memories')) {
+    // Existing DB — validate, do not rewrite.
+    ensureV4MemoryColumns(db);
+    assertDimensionConsistency(db, dim);
+
+    const versionRow = db
+      .prepare<[string], { value: string }>('SELECT value FROM schema_meta WHERE key = ?')
+      .get('schema_version');
+    if (!versionRow) {
+      // Schema_meta is fresh on an existing DB. Stamp it from observed shape.
+      db.prepare('INSERT INTO schema_meta (key, value) VALUES (?, ?)').run(
+        'schema_version',
+        String(CURRENT_SCHEMA_VERSION),
+      );
+    }
+    return;
+  }
+
+  // Fresh DB — execute the full schema below.
   db.exec(`
     CREATE TABLE IF NOT EXISTS memories (
       id TEXT PRIMARY KEY NOT NULL,
@@ -41,6 +144,10 @@ export function initializeSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_memories_created_at ON memories(created_at);
     CREATE INDEX IF NOT EXISTS idx_memories_expires_at ON memories(expires_at);
     CREATE INDEX IF NOT EXISTS idx_memories_scope_namespace ON memories(scope, namespace);
+    CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance_score);
+    CREATE INDEX IF NOT EXISTS idx_memories_access_count ON memories(access_count);
+    CREATE INDEX IF NOT EXISTS idx_memories_superseded ON memories(superseded_at);
+    CREATE INDEX IF NOT EXISTS idx_memories_condensation ON memories(condensation_level, importance_score, access_count);
 
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
       title,
@@ -51,13 +158,18 @@ export function initializeSchema(db: Database.Database): void {
       content=memories,
       content_rowid=rowid
     );
+  `);
 
+  // memories_vec uses a parameterized dimension; can't be in the static block above.
+  db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_vec USING vec0(
-      embedding float[384],
+      embedding float[${dim}],
       scope TEXT,
       namespace TEXT
     );
+  `);
 
+  db.exec(`
     CREATE TABLE IF NOT EXISTS memory_versions (
       id TEXT PRIMARY KEY NOT NULL,
       memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
@@ -80,9 +192,6 @@ export function initializeSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_vault_sync_vault ON vault_sync_meta(vault_path);
     CREATE INDEX IF NOT EXISTS idx_vault_sync_memory ON vault_sync_meta(memory_id);
-
-    CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance_score);
-    CREATE INDEX IF NOT EXISTS idx_memories_access_count ON memories(access_count);
 
     CREATE TABLE IF NOT EXISTS memory_access_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -111,9 +220,6 @@ export function initializeSchema(db: Database.Database): void {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_source_path ON ingest_source_tracking(source_path);
     CREATE INDEX IF NOT EXISTS idx_ingest_source_memory ON ingest_source_tracking(memory_id);
-
-    CREATE INDEX IF NOT EXISTS idx_memories_superseded ON memories(superseded_at);
-    CREATE INDEX IF NOT EXISTS idx_memories_condensation ON memories(condensation_level, importance_score, access_count);
 
     CREATE TABLE IF NOT EXISTS entities (
       id TEXT PRIMARY KEY NOT NULL,
@@ -185,21 +291,48 @@ export function initializeSchema(db: Database.Database): void {
       preserved_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
     );
-
-    CREATE TABLE IF NOT EXISTS schema_meta (
-      key TEXT PRIMARY KEY NOT NULL,
-      value TEXT NOT NULL
-    );
   `);
 
-  const existing = db
+  // Stamp the schema version + embedding dimension for future opens.
+  const haveVersion = !!db
     .prepare<[string], { value: string }>('SELECT value FROM schema_meta WHERE key = ?')
     .get('schema_version');
-
-  if (!existing) {
+  if (!haveVersion) {
     db.prepare('INSERT INTO schema_meta (key, value) VALUES (?, ?)').run(
       'schema_version',
-      '4',
+      String(CURRENT_SCHEMA_VERSION),
+    );
+  }
+  const haveDim = !!db
+    .prepare<[string], { value: string }>('SELECT value FROM schema_meta WHERE key = ?')
+    .get('embedding_dim');
+  if (!haveDim) {
+    db.prepare('INSERT INTO schema_meta (key, value) VALUES (?, ?)').run(
+      'embedding_dim',
+      String(dim),
+    );
+  }
+}
+
+/**
+ * Validate that the configured embedder dimension matches what the
+ * memories_vec table was built for. Mismatches silently drop sqlite-vec
+ * inserts later — fail loudly on open instead.
+ */
+export function assertDimensionConsistency(db: Database.Database, configured: number): void {
+  const row = db
+    .prepare<[string], { value: string }>('SELECT value FROM schema_meta WHERE key = ?')
+    .get('embedding_dim');
+  if (!row) {
+    // Older DB that pre-dates the recorded dim — accept and stamp on next write.
+    return;
+  }
+  const stored = parseInt(row.value, 10);
+  if (Number.isFinite(stored) && stored !== configured) {
+    throw new Error(
+      `Embedding dimension mismatch: DB was built with float[${stored}] but ` +
+      `MCP_MEMORY_DIMENSIONS=${configured}. Set MCP_MEMORY_DIMENSIONS=${stored} ` +
+      `or rebuild the DB.`,
     );
   }
 }

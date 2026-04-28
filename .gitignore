@@ -17,3 +17,4 @@ __pycache__/
 # Volumes / local data
 data/
 cache/
+tsconfig.tsbuildinfo

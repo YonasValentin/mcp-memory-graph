@@ -5,7 +5,7 @@ import { insertMemory, rowToMemory } from '../db/repository.js';
 import { computeContentSignal } from '../search/content-signals.js';
 import { extractEntitiesRegex } from '../graph/entity-extractor.js';
 import { storeExtractedEntities } from '../graph/entity-store.js';
-import { checkConflicts, type ConflictResult } from '../graph/conflict-resolver.js';
+import { detectConflicts, recordConflicts, type ConflictResult } from '../graph/conflict-resolver.js';
 
 interface StoreResult {
   stored: boolean;
@@ -20,6 +20,30 @@ export async function handleStore(
 ): Promise<StoreResult> {
   const now = new Date().toISOString();
   const embedding = await embedder.embed(input.content);
+
+  // Read-only conflict scan BEFORE the insert so the FK target check can't fail.
+  let conflicts: ConflictResult[] = [];
+  try {
+    conflicts = detectConflicts(db, embedding, input.content);
+  } catch (err) {
+    console.error(JSON.stringify({ event: 'conflict_detect_failed', err: err instanceof Error ? err.message : String(err) }));
+  }
+
+  // If an exact duplicate already exists, return it without inserting a new row.
+  const duplicate = conflicts.find((c) => c.type === 'duplicate');
+  if (duplicate) {
+    const existingRow = db
+      .prepare<[string], MemoryRow>('SELECT * FROM memories WHERE id = ?')
+      .get(duplicate.existing_memory_id);
+    if (existingRow) {
+      return {
+        stored: false,
+        memory: rowToMemory(existingRow),
+        conflicts,
+      };
+    }
+    // Existing row vanished between detection and lookup — fall through and insert.
+  }
 
   const row: MemoryRow = {
     id: uuidv4(),
@@ -47,40 +71,29 @@ export async function handleStore(
     confidence_score: input.confidence_score ?? 0.7,
   };
 
-  // Check for conflicts before storing
-  let conflicts: ConflictResult[] = [];
-  try {
-    conflicts = checkConflicts(db, embedding, input.content, row.id);
-  } catch {
-    // Conflict check failed — store anyway
-  }
+  // Atomically: insert the memory, record conflicts (FK now valid), extract entities.
+  const persist = db.transaction(() => {
+    insertMemory(db, row, embedding);
 
-  // Skip storing exact duplicates
-  const duplicate = conflicts.find(c => c.type === 'duplicate');
-  if (duplicate) {
-    const existingRow = db
-      .prepare<[string], MemoryRow>('SELECT * FROM memories WHERE id = ?')
-      .get(duplicate.existing_memory_id);
-    if (existingRow) {
-      return {
-        stored: false,
-        memory: rowToMemory(existingRow),
-        conflicts,
-      };
+    try {
+      recordConflicts(db, conflicts, row.id);
+    } catch (err) {
+      console.error(JSON.stringify({ event: 'conflict_record_failed', memory_id: row.id, err: err instanceof Error ? err.message : String(err) }));
+      throw err; // bubble out so the transaction rolls back; caller's catch reports it.
     }
-  }
 
-  insertMemory(db, row, embedding);
-
-  // Extract and store entities (Tier 1 regex)
-  try {
-    const entities = extractEntitiesRegex(input.content);
-    if (entities.length > 0) {
-      storeExtractedEntities(db, row.id, entities, 'regex');
+    try {
+      const entities = extractEntitiesRegex(input.content);
+      if (entities.length > 0) {
+        storeExtractedEntities(db, row.id, entities, 'regex');
+      }
+    } catch (err) {
+      // Entity extraction is non-critical. Log and continue without aborting the txn.
+      console.error(JSON.stringify({ event: 'entity_extract_failed', memory_id: row.id, err: err instanceof Error ? err.message : String(err) }));
     }
-  } catch {
-    // Entity extraction failed — non-critical
-  }
+  });
+
+  persist();
 
   return {
     stored: true,

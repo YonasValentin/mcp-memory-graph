@@ -1,8 +1,10 @@
 import type Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
 
+export type ConflictType = 'superseded' | 'contradicted' | 'duplicate';
+
 export interface ConflictResult {
-  type: 'superseded' | 'contradicted' | 'refined' | 'duplicate' | 'none';
+  type: ConflictType | 'refined' | 'none';
   existing_memory_id: string;
   overlap_score: number;
   description: string;
@@ -37,11 +39,18 @@ function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
   return union === 0 ? 0 : intersection / union;
 }
 
-export function checkConflicts(
+/**
+ * Read-only conflict detection. Scans the vec index for near-matches and
+ * classifies each as duplicate / superseded / contradicted by overlap score.
+ * Does NOT write to memory_conflicts and does NOT mutate any row — that
+ * happens in {@link recordConflicts} after the new memory has been inserted
+ * (so the FK target exists).
+ */
+export function detectConflicts(
   db: Database.Database,
   newEmbedding: Float32Array,
   newContent: string,
-  newMemoryId: string,
+  excludeMemoryId?: string,
 ): ConflictResult[] {
   const candidates = db
     .prepare<[Buffer, number], { rowid: number; distance: number }>(
@@ -53,15 +62,6 @@ export function checkConflicts(
 
   const newWords = extractSignificantWords(newContent);
   const results: ConflictResult[] = [];
-
-  const insertConflict = db.prepare(`
-    INSERT INTO memory_conflicts (id, old_memory_id, new_memory_id, conflict_type, description)
-    VALUES (?, ?, ?, ?, ?)
-  `);
-
-  const supersedeMemory = db.prepare(`
-    UPDATE memories SET superseded_at = datetime('now') WHERE id = ?
-  `);
 
   for (const candidate of candidates) {
     if (candidate.distance > 0.4) break;
@@ -75,7 +75,7 @@ export function checkConflicts(
     if (!row) continue;
     if (row.parent_id !== null) continue;
     if (row.superseded_at !== null) continue;
-    if (row.id === newMemoryId) continue;
+    if (excludeMemoryId && row.id === excludeMemoryId) continue;
 
     const vectorSim = Math.max(0, 1 - candidate.distance / 2);
     const existingWords = extractSignificantWords(row.content);
@@ -83,7 +83,6 @@ export function checkConflicts(
     const overlapScore = 0.5 * vectorSim + 0.5 * keywordOverlap;
 
     if (overlapScore > 0.85) {
-      insertConflict.run(uuidv4(), row.id, newMemoryId, 'duplicate', `Duplicate detected (overlap: ${overlapScore.toFixed(3)})`);
       results.push({
         type: 'duplicate',
         existing_memory_id: row.id,
@@ -91,8 +90,6 @@ export function checkConflicts(
         description: `Duplicate detected (overlap: ${overlapScore.toFixed(3)})`,
       });
     } else if (overlapScore > 0.75) {
-      supersedeMemory.run(row.id);
-      insertConflict.run(uuidv4(), row.id, newMemoryId, 'superseded', `Superseded by newer memory (overlap: ${overlapScore.toFixed(3)})`);
       results.push({
         type: 'superseded',
         existing_memory_id: row.id,
@@ -100,7 +97,6 @@ export function checkConflicts(
         description: `Superseded by newer memory (overlap: ${overlapScore.toFixed(3)})`,
       });
     } else if (overlapScore > 0.65) {
-      insertConflict.run(uuidv4(), row.id, newMemoryId, 'contradicted', `Potential contradiction (overlap: ${overlapScore.toFixed(3)})`);
       results.push({
         type: 'contradicted',
         existing_memory_id: row.id,
@@ -111,4 +107,37 @@ export function checkConflicts(
   }
 
   return results;
+}
+
+/**
+ * Persist conflict rows for an already-inserted memory. Insert order:
+ *   1. mark superseded rows in `memories.superseded_at`
+ *   2. write the matching rows in `memory_conflicts` (FK requires the new memory to exist)
+ *
+ * Caller is responsible for wrapping this in a transaction with the matching
+ * `insertMemory(...)` so partial failures don't leak.
+ */
+export function recordConflicts(
+  db: Database.Database,
+  conflicts: ConflictResult[],
+  newMemoryId: string,
+): void {
+  if (conflicts.length === 0) return;
+
+  const supersedeStmt = db.prepare(
+    `UPDATE memories SET superseded_at = datetime('now') WHERE id = ?`,
+  );
+  const insertStmt = db.prepare(`
+    INSERT INTO memory_conflicts (id, old_memory_id, new_memory_id, conflict_type, description)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+
+  for (const c of conflicts) {
+    if (c.type === 'superseded') {
+      supersedeStmt.run(c.existing_memory_id);
+    }
+    if (c.type === 'duplicate' || c.type === 'superseded' || c.type === 'contradicted') {
+      insertStmt.run(uuidv4(), c.existing_memory_id, newMemoryId, c.type, c.description);
+    }
+  }
 }

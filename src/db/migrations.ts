@@ -1,9 +1,12 @@
 import type Database from 'better-sqlite3';
+import { CURRENT_SCHEMA_VERSION } from './schema.js';
 
 interface Migration {
   version: number;
   up: (db: Database.Database) => void;
 }
+
+export { CURRENT_SCHEMA_VERSION };
 
 const migrations: Migration[] = [
   {

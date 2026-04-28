@@ -438,21 +438,30 @@ describe('Phase 7: Conflict Resolution', () => {
     expect(conflicts.cnt).toBeGreaterThanOrEqual(0);
   });
 
-  it('store returns conflict info when conflicts are detected', async () => {
-    // The mock embedder produces deterministic vectors from content
-    // Store the first memory
-    const result1 = await handleStore(db, embedder, {
-      content: 'We use PostgreSQL for our primary database in production environments.',
-    });
-    expect(result1.stored).toBe(true);
+  it('store rejects duplicates and reports the existing memory (regression: C1)', async () => {
+    // The mock embedder produces deterministic vectors, so identical content
+    // collides at distance 0 — well inside the duplicate threshold.
+    const content = 'We use PostgreSQL for our primary database in production environments.';
 
-    // Store identical content — should detect conflict
-    const result2 = await handleStore(db, embedder, {
-      content: 'We use PostgreSQL for our primary database in production environments.',
-    });
-    // With mock embeddings, conflict detection depends on distance threshold
-    // At minimum, both should store successfully
-    expect(result2.memory).toBeDefined();
+    const result1 = await handleStore(db, embedder, { content });
+    expect(result1.stored).toBe(true);
+    expect(result1.memory.id).toBeDefined();
+
+    const beforeMemCount = (db.prepare('SELECT COUNT(*) as c FROM memories').get() as { c: number }).c;
+
+    const result2 = await handleStore(db, embedder, { content });
+
+    // Bug C1 (pre-fix): duplicate detection silently failed because the FK
+    // insert into memory_conflicts targeted a memory that hadn't been inserted
+    // yet. The exception was swallowed and the duplicate was stored anyway.
+    // Post-fix: detect-then-decide; the second store short-circuits.
+    expect(result2.stored).toBe(false);
+    expect(result2.memory.id).toBe(result1.memory.id);
+    expect(result2.conflicts).toBeDefined();
+    expect(result2.conflicts!.some((c) => c.type === 'duplicate')).toBe(true);
+
+    const afterMemCount = (db.prepare('SELECT COUNT(*) as c FROM memories').get() as { c: number }).c;
+    expect(afterMemCount).toBe(beforeMemCount); // no new row written
   });
 });
 
