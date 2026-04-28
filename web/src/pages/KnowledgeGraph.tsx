@@ -7,6 +7,7 @@ import * as d3Selection from "d3-selection"
 import * as d3Zoom from "d3-zoom"
 import * as d3Drag from "d3-drag"
 import { getGraphData } from "@/api/client"
+import { toastError } from "@/lib/toast-error"
 import type { GraphData, Memory } from "@/types"
 
 interface GraphNode extends d3Force.SimulationNodeDatum {
@@ -46,6 +47,7 @@ export function KnowledgeGraph() {
     setLoading(true)
     getGraphData({ limit: 150, min_importance: minImportance })
       .then(setData)
+      .catch((err) => toastError(err, "Couldn't load knowledge graph"))
       .finally(() => setLoading(false))
   }, [minImportance])
 

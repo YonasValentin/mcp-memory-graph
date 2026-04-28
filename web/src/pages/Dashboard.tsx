@@ -5,12 +5,14 @@ import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Database, FileText, Clock, AlertTriangle } from "lucide-react"
 import { getStats, listMemories } from "@/api/client"
+import { toastError } from "@/lib/toast-error"
 import type { MemoryStats, Memory } from "@/types"
 
 export function Dashboard() {
   const [stats, setStats] = useState<MemoryStats | null>(null)
   const [recent, setRecent] = useState<Memory[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<unknown>(null)
 
   useEffect(() => {
     Promise.all([
@@ -20,6 +22,10 @@ export function Dashboard() {
       .then(([s, r]) => {
         setStats(s)
         setRecent(r.items)
+      })
+      .catch((err) => {
+        toastError(err, "Couldn't load dashboard")
+        setError(err)
       })
       .finally(() => setLoading(false))
   }, [])
@@ -37,7 +43,17 @@ export function Dashboard() {
     )
   }
 
-  if (!stats) return null
+  if (!stats) {
+    return (
+      <div className="space-y-3 p-6">
+        <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+        <p className="text-sm text-muted-foreground">
+          Couldn't load dashboard stats
+          {error instanceof Error ? `: ${error.message}` : ""}.
+        </p>
+      </div>
+    )
+  }
 
   const statCards = [
     {

@@ -13,11 +13,72 @@ import type {
 
 const BASE = "/api"
 
-async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init)
+const TOKEN_STORAGE_KEY = "mcp.token"
+
+/**
+ * Returns the bearer token to use for API requests.
+ *   1. localStorage["mcp.token"] (persistent — set via the dashboard's login UI)
+ *   2. import.meta.env.VITE_MCP_TOKEN (dev fallback for `npm run dev`)
+ */
+export function getAuthToken(): string | null {
+  try {
+    const stored = window.localStorage.getItem(TOKEN_STORAGE_KEY)
+    if (stored) return stored
+  } catch {
+    // localStorage unavailable (SSR, sandbox, private mode) — fall through.
+  }
+  // VITE_MCP_TOKEN is statically replaced at build time by Vite.
+  const env = import.meta.env.VITE_MCP_TOKEN
+  return typeof env === "string" && env.length > 0 ? env : null
+}
+
+export function setAuthToken(token: string | null): void {
+  try {
+    if (token === null) {
+      window.localStorage.removeItem(TOKEN_STORAGE_KEY)
+    } else {
+      window.localStorage.setItem(TOKEN_STORAGE_KEY, token)
+    }
+  } catch {
+    // Best effort — caller should treat this as a no-op.
+  }
+}
+
+export class ApiError extends Error {
+  readonly status: number
+  readonly code: string | undefined
+  readonly requestId: string | undefined
+
+  constructor(status: number, code: string | undefined, message: string, requestId?: string) {
+    super(message)
+    this.name = "ApiError"
+    this.status = status
+    this.code = code
+    this.requestId = requestId
+  }
+}
+
+async function fetchJson<T>(url: string, init: RequestInit = {}): Promise<T> {
+  const token = getAuthToken()
+  const headers = new Headers(init.headers)
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`)
+  }
+  if (init.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json")
+  }
+
+  const res = await fetch(url, { ...init, headers })
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(body.error ?? `HTTP ${res.status}`)
+    const body = await res
+      .json()
+      .catch(() => ({ error: res.statusText, code: undefined, requestId: undefined }))
+    throw new ApiError(
+      res.status,
+      body.code,
+      body.error ?? `HTTP ${res.status}`,
+      body.requestId,
+    )
   }
   return res.json()
 }
