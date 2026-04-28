@@ -30,44 +30,63 @@ export async function handleCondense(
   for (const entry of input.memories) {
     result.processed++;
     try {
+      // 1. Pre-flight read: skip missing or chunked memories before doing
+      //    any work (especially the expensive embed call).
       const existing = getMemoryById(db, entry.id);
       if (!existing) {
         result.errors.push(`Memory ${entry.id} not found`);
         result.skipped++;
         continue;
       }
-
-      // Don't condense chunks
       if (existing.parent_id) {
         result.skipped++;
         continue;
-      }
-
-      // Preserve original content before first condensation
-      const hasOriginal = db
-        .prepare<[string], { memory_id: string }>('SELECT memory_id FROM memory_originals WHERE memory_id = ?')
-        .get(entry.id);
-
-      if (!hasOriginal) {
-        db.prepare(
-          "INSERT INTO memory_originals (memory_id, original_content, original_title, preserved_at) VALUES (?, ?, ?, datetime('now'))",
-        ).run(entry.id, existing.content, existing.title);
       }
 
       const newContent = input.target_level === 'one_liner' && entry.one_liner
         ? entry.one_liner
         : entry.summary;
 
+      // 2. Compute the new embedding outside any transaction (better-sqlite3
+      //    transactions are sync and we need to await the embed).
       const newEmbedding = await embedder.embed(newContent);
 
-      updateMemory(db, entry.id, { content: newContent }, newEmbedding);
+      // 3. All writes for this memory happen atomically. If the memory was
+      //    deleted between (1) and here, the inner re-read in updateMemory
+      //    returns null and we record a clear error rather than partially
+      //    writing memory_originals.
+      const persist = db.transaction((): boolean => {
+        const stillExists = getMemoryById(db, entry.id);
+        if (!stillExists || stillExists.parent_id) return false;
 
-      // Update condensation metadata directly
-      db.prepare(
-        "UPDATE memories SET condensation_level = ?, condensed_at = datetime('now') WHERE id = ?",
-      ).run(input.target_level, entry.id);
+        const hasOriginal = db
+          .prepare<[string], { memory_id: string }>(
+            'SELECT memory_id FROM memory_originals WHERE memory_id = ?',
+          )
+          .get(entry.id);
 
-      result.condensed++;
+        if (!hasOriginal) {
+          db.prepare(
+            "INSERT INTO memory_originals (memory_id, original_content, original_title, preserved_at) VALUES (?, ?, ?, datetime('now'))",
+          ).run(entry.id, stillExists.content, stillExists.title);
+        }
+
+        const updated = updateMemory(db, entry.id, { content: newContent }, newEmbedding);
+        if (!updated) return false;
+
+        db.prepare(
+          "UPDATE memories SET condensation_level = ?, condensed_at = datetime('now') WHERE id = ?",
+        ).run(input.target_level, entry.id);
+        return true;
+      });
+
+      const ok = persist();
+      if (ok) {
+        result.condensed++;
+      } else {
+        result.errors.push(`Memory ${entry.id} disappeared between read and write`);
+        result.skipped++;
+      }
     } catch (err) {
       result.errors.push(`${entry.id}: ${err instanceof Error ? err.message : String(err)}`);
       result.skipped++;

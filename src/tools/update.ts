@@ -7,6 +7,9 @@ export async function handleUpdate(
   embedder: EmbeddingProvider,
   input: MemoryUpdate & { id: string },
 ): Promise<Memory | null> {
+  // Read existing OUTSIDE any transaction so we can take an async embed call
+  // without holding a write lock. The actual update is then done inside a
+  // single transaction in `updateMemory`, which re-checks existence.
   const existing = getMemoryById(db, input.id);
   if (!existing) {
     return null;
@@ -38,6 +41,9 @@ export async function handleUpdate(
     newEmbedding = await embedder.embed(input.content);
   }
 
+  // updateMemory itself wraps in db.transaction — so the version-log insert
+  // and the row update are atomic. If the row was deleted between our read
+  // and this call, updateMemory returns null and we surface that to caller.
   const updatedRow = updateMemory(db, input.id, updates, newEmbedding);
   if (!updatedRow) {
     return null;

@@ -4,12 +4,22 @@ import { applyTemporalDecay } from './temporal.js';
 import { computeConfidence, confidenceLabel } from './scoring.js';
 import { rowToMemory } from '../db/repository.js';
 
-function sanitizeFtsQuery(query: string): string {
+// Smart/curly quotes that FTS5 can't parse and that users frequently paste.
+const SMART_QUOTES_RE = /[‘’‚‛“”„‟«»]/g;
+// Zero-width chars that look invisible but break tokenization.
+const ZERO_WIDTH_RE = /[​-‍⁠﻿]/g;
+// Pictographic emoji that FTS5 may tokenize as exotic terms (we drop them).
+const EMOJI_RE = /\p{Extended_Pictographic}/gu;
+
+export function sanitizeFtsQuery(query: string): string {
   return query
+    .replace(SMART_QUOTES_RE, '"')
+    .replace(ZERO_WIDTH_RE, '')
+    .replace(EMOJI_RE, ' ')
     .replace(/[*"(){}[\]^~\\:]/g, ' ')
     .split(/\s+/)
-    .filter(w => w.length > 0)
-    .map(w => `"${w}"`)
+    .filter((w) => w.length > 0)
+    .map((w) => `"${w}"`)
     .join(' ');
 }
 

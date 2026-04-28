@@ -103,6 +103,7 @@ export async function handleConsolidate(
     low_quality_pruned: 0,
     scores_updated: 0,
     errors: [],
+    knowledge_gaps: [],
     duration_ms: 0,
   };
 
@@ -289,8 +290,10 @@ export async function handleConsolidate(
   }
 
   // ── Stage 5: Knowledge gaps ───────────────────────────────────────────
-  const gaps = readKnowledgeGaps();
-  report.errors.push(...gaps);
+  // Tracked separately from `errors` so callers can distinguish "the dream
+  // cycle worked but there are zero-result queries to investigate" from
+  // "the dream cycle hit a real failure".
+  report.knowledge_gaps = readKnowledgeGaps();
 
   // ── Rotate old access log entries ─────────────────────────────────────
   if (!dryRun) {

@@ -707,3 +707,116 @@ export const MemoryRestoreSchema = z.object({
     .string()
     .describe('Memory ID to restore to original full content'),
 });
+
+// ---------------------------------------------------------------------------
+// REST API query/body schemas — derived from the MCP schemas above.
+// Express query strings arrive as `string | string[] | undefined`, so each
+// field uses zod preprocess to coerce numbers/arrays out of strings before
+// running through the upstream validator.
+// ---------------------------------------------------------------------------
+
+const intFromString = (min: number, max: number, fallback: number) =>
+  z.preprocess((v) => {
+    if (v === undefined || v === '' || v === null) return fallback;
+    const n = parseInt(String(v), 10);
+    return Number.isFinite(n) ? n : v;
+  }, z.number().int().min(min).max(max));
+
+const floatFromString = (min: number, max: number) =>
+  z.preprocess((v) => {
+    if (v === undefined || v === '' || v === null) return undefined;
+    const n = parseFloat(String(v));
+    return Number.isFinite(n) ? n : v;
+  }, z.number().min(min).max(max).optional());
+
+const csvList = () =>
+  z.preprocess((v) => {
+    if (v === undefined || v === null || v === '') return undefined;
+    if (Array.isArray(v)) return v;
+    return String(v).split(',').map((s) => s.trim()).filter(Boolean);
+  }, z.array(z.string()).optional());
+
+const optString = () =>
+  z.preprocess((v) => {
+    if (v === undefined || v === null || v === '') return undefined;
+    return String(v);
+  }, z.string().optional());
+
+const optBool = () =>
+  z.preprocess((v) => {
+    if (v === undefined || v === null || v === '') return undefined;
+    if (v === 'true' || v === true) return true;
+    if (v === 'false' || v === false) return false;
+    return v;
+  }, z.boolean().optional());
+
+export const ApiSearchQuerySchema = z.object({
+  q: z.string().min(1, 'q is required'),
+  scope: z.enum(['global', 'project', 'user', 'team', 'department']).optional(),
+  namespace: optString(),
+  department: optString(),
+  document_type: optString(),
+  tags: csvList(),
+  language: optString(),
+  mode: z.enum(['hybrid', 'vector', 'keyword']).default('hybrid'),
+  limit: intFromString(1, 100, 20),
+  offset: intFromString(0, 100000, 0),
+  min_confidence: floatFromString(0, 1),
+  date_from: optString(),
+  date_to: optString(),
+});
+
+export const ApiListQuerySchema = z.object({
+  scope: z.enum(['global', 'project', 'user', 'team', 'department']).optional(),
+  namespace: optString(),
+  department: optString(),
+  document_type: optString(),
+  limit: intFromString(1, 100, 20),
+  offset: intFromString(0, 100000, 0),
+  sort_by: z
+    .enum(['created_at', 'updated_at', 'title', 'importance_score', 'confidence_score', 'access_count'])
+    .default('created_at'),
+  sort_order: z.enum(['asc', 'desc']).default('desc'),
+});
+
+export const ApiManifestQuerySchema = z.object({
+  scope: z.enum(['global', 'project', 'user', 'team', 'department']).optional(),
+  namespace: optString(),
+  department: optString(),
+  document_type: optString(),
+  limit: intFromString(1, 1000, 500),
+  offset: intFromString(0, 100000, 0),
+});
+
+export const ApiGraphQuerySchema = z.object({
+  limit: intFromString(1, 500, 200),
+  min_importance: floatFromString(0, 1),
+});
+
+export const ApiStatsQuerySchema = z.object({
+  scope: optString(),
+  namespace: optString(),
+  department: optString(),
+});
+
+export const ApiGetQuerySchema = z.object({
+  include_chunks: optBool(),
+});
+
+export const ApiVersionsQuerySchema = z.object({
+  limit: intFromString(1, 200, 50),
+});
+
+export const ApiRelatedQuerySchema = z.object({
+  limit: intFromString(1, 50, 10),
+  min_similarity: floatFromString(0, 1),
+});
+
+export const ApiPatchBodySchema = z.object({
+  content: z.string().optional(),
+  title: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  metadata: z.record(z.unknown()).optional(),
+  expires_at: z.string().nullable().optional(),
+  changed_by: z.string().optional(),
+});

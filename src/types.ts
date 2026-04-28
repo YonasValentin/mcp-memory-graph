@@ -338,7 +338,10 @@ export interface ConsolidationReport {
   expired_pruned: number;
   low_quality_pruned: number;
   scores_updated: number;
+  /** True execution failures only — see `knowledge_gaps` for missing-knowledge signals. */
   errors: string[];
+  /** Repeated zero-result searches surfaced from the search log. */
+  knowledge_gaps: string[];
   duration_ms: number;
 }
 

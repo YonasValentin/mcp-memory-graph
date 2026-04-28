@@ -17,7 +17,11 @@ export async function runConsolidate(): Promise<void> {
   console.error(`  Duplicates merged: ${report.duplicates_merged}`);
   console.error(`  Duration: ${report.duration_ms}ms`);
   if (report.errors.length > 0) {
-    console.error(`  Errors/Gaps: ${report.errors.length}`);
+    console.error(`  Errors: ${report.errors.length}`);
     for (const err of report.errors) console.error(`    - ${err}`);
+  }
+  if (report.knowledge_gaps.length > 0) {
+    console.error(`  Knowledge gaps: ${report.knowledge_gaps.length}`);
+    for (const gap of report.knowledge_gaps) console.error(`    - ${gap}`);
   }
 }
