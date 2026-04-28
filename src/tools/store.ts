@@ -6,6 +6,7 @@ import { computeContentSignal } from '../search/content-signals.js';
 import { extractEntitiesRegex } from '../graph/entity-extractor.js';
 import { storeExtractedEntities } from '../graph/entity-store.js';
 import { detectConflicts, recordConflicts, type ConflictResult } from '../graph/conflict-resolver.js';
+import { logger } from '../lib/logger.js';
 
 interface StoreResult {
   stored: boolean;
@@ -26,7 +27,7 @@ export async function handleStore(
   try {
     conflicts = detectConflicts(db, embedding, input.content);
   } catch (err) {
-    console.error(JSON.stringify({ event: 'conflict_detect_failed', err: err instanceof Error ? err.message : String(err) }));
+    logger.warn({ event: 'conflict_detect_failed', err: err instanceof Error ? err.message : String(err) });
   }
 
   // If an exact duplicate already exists, return it without inserting a new row.
@@ -78,7 +79,7 @@ export async function handleStore(
     try {
       recordConflicts(db, conflicts, row.id);
     } catch (err) {
-      console.error(JSON.stringify({ event: 'conflict_record_failed', memory_id: row.id, err: err instanceof Error ? err.message : String(err) }));
+      logger.error({ event: 'conflict_record_failed', memory_id: row.id, err: err instanceof Error ? err.message : String(err) });
       throw err; // bubble out so the transaction rolls back; caller's catch reports it.
     }
 
@@ -89,7 +90,7 @@ export async function handleStore(
       }
     } catch (err) {
       // Entity extraction is non-critical. Log and continue without aborting the txn.
-      console.error(JSON.stringify({ event: 'entity_extract_failed', memory_id: row.id, err: err instanceof Error ? err.message : String(err) }));
+      logger.warn({ event: 'entity_extract_failed', memory_id: row.id, err: err instanceof Error ? err.message : String(err) });
     }
   });
 

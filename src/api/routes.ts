@@ -22,6 +22,8 @@ import {
   ApiRelatedQuerySchema,
   ApiPatchBodySchema,
 } from '../schemas/index.js';
+import { logger } from '../lib/logger.js';
+import { metrics } from './metrics.js';
 
 type GetDb = () => Database.Database;
 type GetEmbedder = () => Promise<EmbeddingProvider>;
@@ -71,16 +73,32 @@ function sendError(res: Response, err: unknown): void {
 }
 
 function asyncHandler(
+  routeName: string,
   fn: (req: Request, res: Response, next: NextFunction) => Promise<void> | void,
 ): (req: Request, res: Response, next: NextFunction) => Promise<void> {
   // Use async/try-catch so synchronous throws (e.g. zod parse failures from
   // parseOrThrow) are also routed to sendError. Promise.resolve(fn()) misses
   // sync throws because fn is invoked before resolve wraps it.
   return async (req, res, next) => {
+    const startNs = process.hrtime.bigint();
     try {
       await fn(req, res, next);
     } catch (err) {
       sendError(res, err);
+    } finally {
+      const durationMs = Number(process.hrtime.bigint() - startNs) / 1e6;
+      const status = res.statusCode;
+      const statusClass = `${Math.floor(status / 100)}xx`;
+      metrics.apiRequests.inc({ route: routeName, method: req.method, status: statusClass });
+      metrics.apiLatency.observe({ route: routeName }, durationMs / 1000);
+      logger.info({
+        event: 'http_request',
+        requestId: res.locals.requestId,
+        route: routeName,
+        method: req.method,
+        status,
+        duration_ms: Math.round(durationMs),
+      });
     }
   };
 }
@@ -91,14 +109,14 @@ export function registerApiRoutes(
   getEmbedder: GetEmbedder,
 ): void {
   // ── GET /api/stats ──────────────────────────────────────────────────────
-  router.get('/api/stats', asyncHandler((req, res) => {
+  router.get('/api/stats', asyncHandler('GET /api/stats', (req, res) => {
     const q = parseOrThrow(ApiStatsQuerySchema, req.query);
     const result = handleStats(getDb(), q);
     res.json(result);
   }));
 
   // ── GET /api/search ─────────────────────────────────────────────────────
-  router.get('/api/search', asyncHandler(async (req, res) => {
+  router.get('/api/search', asyncHandler('GET /api/search', async (req, res) => {
     const q = parseOrThrow(ApiSearchQuerySchema, req.query);
     const result = await handleSearch(getDb(), await getEmbedder(), {
       query: q.q,
@@ -119,14 +137,14 @@ export function registerApiRoutes(
   }));
 
   // ── GET /api/memories ───────────────────────────────────────────────────
-  router.get('/api/memories', asyncHandler((req, res) => {
+  router.get('/api/memories', asyncHandler('GET /api/memories', (req, res) => {
     const q = parseOrThrow(ApiListQuerySchema, req.query);
     const result = handleList(getDb(), q);
     res.json(result);
   }));
 
   // ── GET /api/memories/:id ───────────────────────────────────────────────
-  router.get('/api/memories/:id', asyncHandler((req, res) => {
+  router.get('/api/memories/:id', asyncHandler('GET /api/memories/:id', (req, res) => {
     const q = parseOrThrow(ApiGetQuerySchema, req.query);
     const result = handleGet(getDb(), {
       id: param(req, 'id'),
@@ -139,7 +157,7 @@ export function registerApiRoutes(
   }));
 
   // ── GET /api/memories/:id/versions ──────────────────────────────────────
-  router.get('/api/memories/:id/versions', asyncHandler((req, res) => {
+  router.get('/api/memories/:id/versions', asyncHandler('GET /api/memories/:id/versions', (req, res) => {
     const q = parseOrThrow(ApiVersionsQuerySchema, req.query);
     const result = handleVersions(getDb(), {
       id: param(req, 'id'),
@@ -149,7 +167,7 @@ export function registerApiRoutes(
   }));
 
   // ── GET /api/memories/:id/related ───────────────────────────────────────
-  router.get('/api/memories/:id/related', asyncHandler(async (req, res) => {
+  router.get('/api/memories/:id/related', asyncHandler('GET /api/memories/:id/related', async (req, res) => {
     const q = parseOrThrow(ApiRelatedQuerySchema, req.query);
     const result = await handleRelated(getDb(), await getEmbedder(), {
       id: param(req, 'id'),
@@ -160,7 +178,7 @@ export function registerApiRoutes(
   }));
 
   // ── PATCH /api/memories/:id ─────────────────────────────────────────────
-  router.patch('/api/memories/:id', asyncHandler(async (req, res) => {
+  router.patch('/api/memories/:id', asyncHandler('PATCH /api/memories/:id', async (req, res) => {
     const body = parseOrThrow(ApiPatchBodySchema, req.body);
     const result = await handleUpdate(getDb(), await getEmbedder(), {
       id: param(req, 'id'),
@@ -178,7 +196,7 @@ export function registerApiRoutes(
   }));
 
   // ── DELETE /api/memories/:id ────────────────────────────────────────────
-  router.delete('/api/memories/:id', asyncHandler((req, res) => {
+  router.delete('/api/memories/:id', asyncHandler('DELETE /api/memories/:id', (req, res) => {
     const result = handleDelete(getDb(), { id: param(req, 'id') });
     if (result.deleted === 0) {
       throw new HttpError(404, 'NOT_FOUND', 'Memory not found');
@@ -187,7 +205,7 @@ export function registerApiRoutes(
   }));
 
   // ── GET /api/graph ──────────────────────────────────────────────────────
-  router.get('/api/graph', asyncHandler(async (req, res) => {
+  router.get('/api/graph', asyncHandler('GET /api/graph', async (req, res) => {
     const q = parseOrThrow(ApiGraphQuerySchema, req.query);
     const db = getDb();
     const embedder = await getEmbedder();
@@ -228,7 +246,7 @@ export function registerApiRoutes(
   }));
 
   // ── GET /api/manifest ─────────────────────────────────────────────────
-  router.get('/api/manifest', asyncHandler((req, res) => {
+  router.get('/api/manifest', asyncHandler('GET /api/manifest', (req, res) => {
     const q = parseOrThrow(ApiManifestQuerySchema, req.query);
     const result = handleManifest(getDb(), q);
     res.json(result);

@@ -10,6 +10,8 @@ import { closeDatabase } from '../db/connection.js';
 import { getReadWriteDb, getEmbedder } from '../lib/direct-access.js';
 import { registerApiRoutes } from '../api/routes.js';
 import { rateLimitMiddleware, RateLimiter, defaultConfig as rateLimitDefaultConfig } from '../api/rate-limit.js';
+import { renderMetrics, METRICS_CONTENT_TYPE } from '../api/metrics.js';
+import { logger } from '../lib/logger.js';
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Application, Request, Response, NextFunction } from 'express';
@@ -167,14 +169,17 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
 
   const transports: Record<string, StreamableHTTPServerTransport> = {};
   const servers: Record<string, McpServer> = {};
+  let embedderWarm = false;
 
   // Health endpoint: cheap probe (no DB hit) for liveness.
   app.get('/live', (_req, res) => {
     res.json({ status: 'ok', uptime_s: Math.round(process.uptime()) });
   });
 
-  // Health: deeper probe (DB SELECT 1, schema_version). Used by
-  // load balancers to drop unhealthy replicas.
+  // Health: deeper probe (DB SELECT 1, schema_version, embedder warm-state).
+  // Used by load balancers to drop unhealthy replicas. Embedder warm-state is
+  // a cached "have we ever produced an embedding successfully" flag — set by
+  // /ready when warming up. Set MCP_HEALTH_REQUIRE_EMBEDDER=1 to require it.
   app.get('/health', (_req: Request, res: Response) => {
     let dbOk = false;
     let schemaVersion: string | null = null;
@@ -189,13 +194,54 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
     } catch {
       dbOk = false;
     }
-    const status = dbOk ? 'ok' : 'degraded';
-    res.status(dbOk ? 200 : 503).json({
-      status,
+    const embedderOk = embedderWarm;
+    const requireEmbedder = process.env.MCP_HEALTH_REQUIRE_EMBEDDER === '1';
+    const ok = dbOk && (embedderOk || !requireEmbedder);
+    res.status(ok ? 200 : 503).json({
+      status: ok ? 'ok' : 'degraded',
       db_ok: dbOk,
+      embedder_ok: embedderOk,
       schema_version: schemaVersion,
       uptime_s: Math.round(process.uptime()),
     });
+  });
+
+  // Readiness: like /health but actually loads the embedder if it isn't
+  // warm yet. Returns 503 until the model is loaded. Use this for one-shot
+  // pre-warm probes; use /health for continuous load-balancer checks.
+  app.get('/ready', async (_req: Request, res: Response) => {
+    try {
+      const e = await deps.getEmbedder();
+      if (!e.isReady()) await e.initialize();
+      embedderWarm = e.isReady();
+    } catch (err) {
+      logger.error({ event: 'embedder_init_failed', err: err instanceof Error ? err.message : String(err) });
+      embedderWarm = false;
+    }
+    res.status(embedderWarm ? 200 : 503).json({
+      status: embedderWarm ? 'ready' : 'not-ready',
+      embedder_ok: embedderWarm,
+    });
+  });
+
+  // /metrics — Prometheus exposition. Gated behind MCP_METRICS_ENABLED to
+  // avoid leaking traffic patterns by default. Bearer auth from the /api
+  // / /mcp prefixes does NOT cover this path; we attach an explicit guard.
+  app.get('/metrics', (req: Request, res: Response) => {
+    if (process.env.MCP_METRICS_ENABLED !== '1') {
+      res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
+      return;
+    }
+    const tok = bearerToken();
+    if (tok) {
+      const expected = `Bearer ${tok}`;
+      if ((req.header('authorization') ?? '') !== expected) {
+        res.status(401).json({ error: 'Unauthorized', code: 'UNAUTHORIZED' });
+        return;
+      }
+    }
+    res.setHeader('Content-Type', METRICS_CONTENT_TYPE);
+    res.send(renderMetrics());
   });
 
   // Rate-limit applies to /api and /mcp; /health and /live are exempt so probes don't burn tokens.
@@ -298,7 +344,14 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
     app.use(express.static(webDir));
 
     app.get('{*path}', (req: Request, res: Response, next: NextFunction) => {
-      if (req.path.startsWith('/api') || req.path.startsWith('/mcp') || req.path === '/health' || req.path === '/live') {
+      if (
+        req.path.startsWith('/api') ||
+        req.path.startsWith('/mcp') ||
+        req.path === '/health' ||
+        req.path === '/live' ||
+        req.path === '/ready' ||
+        req.path === '/metrics'
+      ) {
         return next();
       }
       const indexPath = path.join(webDir, 'index.html');
@@ -320,12 +373,13 @@ export async function runServe(): Promise<void> {
   const { app, transports } = buildApp({ getDb: getReadWriteDb, getEmbedder });
 
   const shutdown = async () => {
-    console.error('Shutting down MCP HTTP server...');
+    logger.info({ event: 'shutdown_start' });
     for (const sid of Object.keys(transports)) {
       await transports[sid].close();
       delete transports[sid];
     }
     closeDatabase();
+    logger.info({ event: 'shutdown_complete' });
     process.exit(0);
   };
 
@@ -333,10 +387,17 @@ export async function runServe(): Promise<void> {
   process.on('SIGTERM', shutdown);
 
   const server = app.listen(port, host, () => {
-    console.error(`MCP Memory Server running on http://${host}:${port}`);
-    console.error(`Health check: http://${host}:${port}/health`);
+    logger.info({
+      event: 'server_listening',
+      host,
+      port,
+      auth: bearerToken() ? 'bearer' : 'none',
+    });
     if (!bearerToken()) {
-      console.error('WARNING: MCP_AUTH_TOKEN is not set — server is unauthenticated.');
+      logger.warn({
+        event: 'auth_disabled',
+        msg: 'MCP_AUTH_TOKEN is not set — server is unauthenticated.',
+      });
     }
   });
 
