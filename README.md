@@ -37,7 +37,7 @@ AI assistants lose context between sessions. Your decisions, patterns, and insti
 
 - **Access tracking** — Every search, get, and related-memory call records which memories were accessed, building a usage profile over time
 - **Quality scoring** — Automatic `importance_score` and `confidence_score` (0-1) on every memory, combining access frequency, recency, and content signals
-- **Learning extraction** — Agent-based session review uses Claude's own judgment to identify and store significant decisions, patterns, and fixes at session end
+- **Learning extraction** — Headless `claude -p` invoked at session end uses Claude's own judgment to identify and store significant decisions, patterns, and fixes (replaces the old `type: "agent"` Stop hook, which is silently broken on macOS — see anthropics/claude-code#39184)
 - **Dream cycle consolidation** — Scheduled or on-demand deduplication, scoring, pruning, expiration enforcement, and knowledge gap detection
 - **Knowledge gap detection** — Tracks zero-result searches to identify missing knowledge areas
 
@@ -48,7 +48,7 @@ Four opt-in hooks that integrate with Claude Code's lifecycle:
 - **SessionStart** — Fast status check (memory count, expired, stale docs)
 - **PostToolUse** — Tracks search hits and misses to `search-log.jsonl`
 - **PreCompact** — Triggers learning extraction before context compression (disabled by default)
-- **Stop** — Agent hook that uses Claude's judgment to review the session and store 0-5 curated learnings via `memory_store` (replaces the old regex-based extraction)
+- **Stop** — Command hook that spawns headless `claude -p --allowedTools mcp__memory-server__memory_store` to review the session and store 0-5 curated learnings. Detached, ~30ms hook overhead, ~10–60s background review. Opt out via `review_on_stop: false` in `~/.mcp-memory/config.json`. Requires Claude Code CLI installed and authenticated on the same machine (the hook resolves `claude` from `$PATH` or `$CLAUDE_BIN`).
 
 ### Enterprise Metadata
 
@@ -132,9 +132,10 @@ The memory server is a self-improving system. It tracks how knowledge is used, s
                │
                ▼
  ┌──────────────────────────────────────────────────────────┐
- │               SESSION END (agent hook)                    │
- │  Claude reviews session → identifies significant learnings│
- │  Stores 0-5 curated entries via memory_store              │
+ │            SESSION END (Stop command hook)                │
+ │  Hook spawns detached `claude -p` headless review         │
+ │  --allowedTools restricts to memory_store only            │
+ │  Claude judges → 0-5 curated entries via memory_store     │
  │  Deduplicates against existing memories                   │
  └─────────────┬────────────────────────────────────────────┘
                │
@@ -178,7 +179,7 @@ When a search returns zero results, the query is logged. During the dream cycle'
 ### Prerequisites
 
 - **Node.js 20+** (required)
-- **Claude Code** installed ([docs](https://docs.anthropic.com/en/docs/claude-code))
+- **Claude Code** installed and authenticated ([docs](https://docs.anthropic.com/en/docs/claude-code)). The Stop hook spawns `claude -p` in headless mode, so the binary must be on `$PATH` (or pointed at via `$CLAUDE_BIN`) and authenticated without prompting.
 
 ### Build from Source
 
@@ -314,6 +315,7 @@ The config file at `~/.mcp-memory/config.json` controls self-improvement behavio
 | `hooks` | `extract_on_compact` | `false` | Mine transcript before context compression (regex-based, disabled by default) |
 | `hooks` | `extract_on_session_end` | `false` | Extract learnings when session ends (regex-based, disabled by default) |
 | `hooks` | `track_searches` | `true` | Log search hits/misses to `search-log.jsonl` |
+| `hooks` | `review_on_stop` | `true` | Spawn headless `claude -p` at session end to review transcript and call `memory_store`. Set `false` to disable per-session-end review without removing the hook from `settings.json`. |
 | `extraction` | `categories` | `["decision", "pattern", "error_fix", "convention"]` | Learning categories to extract |
 | `extraction` | `min_confidence` | `0.4` | Minimum confidence for extracted learnings |
 
@@ -682,8 +684,11 @@ Claude Code Hooks (opt-in)
     │
     ├── SessionStart ──> memory_stats (status check)
     ├── PostToolUse ───> search-log.jsonl (hit/miss tracking)
-    ├── PreCompact ────> (reserved, disabled by default)
-    └── Stop ──────────> agent hook (curated learnings via memory_store)
+    ├── PreCompact ────> learning extraction (disabled by default)
+    └── Stop ──────────> spawn detached `claude -p` headless review
+                              │
+                              └─> --allowedTools mcp__memory-server__memory_store
+                                  Claude reviews transcript → memory_store calls
 
 Nightly Schedule (opt-in)
     └── 3:00 AM ───────> memory_consolidate (dream cycle)

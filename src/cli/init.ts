@@ -35,6 +35,7 @@ const HOOK_NAMES = [
   'memory-session-start.js',
   'memory-post-search.js',
   'memory-pre-compact.js',
+  'memory-stop.js',
 ];
 
 interface CommandHookEntry {
@@ -79,28 +80,7 @@ function buildHooksToAdd(): Record<string, HookGroup[]> {
       { hooks: [{ type: 'command', command: q('memory-pre-compact.js') }] },
     ],
     Stop: [
-      {
-        hooks: [{
-          type: 'agent' as const,
-          prompt: [
-            'You are the MCP memory server session-end learning extractor.',
-            '',
-            'Check $ARGUMENTS — if stop_hook_active is true, respond with {"ok": true} immediately (prevents loops).',
-            '',
-            'Otherwise, briefly review what happened this session. If there were significant technical decisions, bug fixes with root causes, discovered patterns, or conventions established, store each via memory_store (scope: \'project\', namespace based on the working directory).',
-            '',
-            'Rules:',
-            '- Only store genuinely useful project knowledge',
-            '- NOT code snippets, NOT meta-commentary about tools, NOT fragments',
-            '- Each entry needs a clear, descriptive title',
-            '- Maximum 5 entries per session',
-            '- If nothing significant happened, store nothing',
-            '',
-            'After storing (or deciding not to), respond with {"ok": true}.',
-          ].join('\n'),
-          timeout: 120,
-        }],
-      },
+      { hooks: [{ type: 'command', command: q('memory-stop.js'), timeout: 10 }] },
     ],
   };
 }
@@ -172,17 +152,30 @@ function mergeSettingsHooks(scope: Scope): void {
     settings.hooks = {};
   }
 
-  // Upgrade: remove old command-type memory-session-end hook (replaced by agent hook)
+  // Upgrade: remove broken legacy Stop hooks so the new command-type memory-stop.js can take over.
+  // Reasons for removal:
+  //   1. type: "agent" Stop hooks silently fail on macOS (anthropics/claude-code#39184) — the
+  //      whole reason this hook was rewritten to spawn `claude -p` headless instead.
+  //   2. Old command-type memory-session-end.js hook is superseded by memory-stop.js.
   if (settings.hooks['Stop']) {
     const before = settings.hooks['Stop'].length;
     settings.hooks['Stop'] = settings.hooks['Stop'].filter((group) =>
-      !group.hooks.some((h) =>
-        h.type === 'command' && 'command' in h && typeof h.command === 'string' && h.command.includes('memory-session-end'),
-      ),
+      !group.hooks.some((h) => {
+        if (h.type === 'agent') return true;
+        if (
+          h.type === 'command' &&
+          'command' in h &&
+          typeof h.command === 'string' &&
+          h.command.includes('memory-session-end')
+        ) {
+          return true;
+        }
+        return false;
+      }),
     );
     const removed = before - settings.hooks['Stop'].length;
     if (removed > 0) {
-      dim(`Removed ${removed} old command-type Stop hook(s) (replaced by agent hook)`);
+      dim(`Removed ${removed} legacy Stop hook(s) (agent-type or memory-session-end) — replaced by memory-stop command hook`);
     }
   }
 
