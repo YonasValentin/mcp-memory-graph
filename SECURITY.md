@@ -93,3 +93,16 @@ export MCP_RATELIMIT_REFILL_PER_SEC=12
 # Cap request bodies (importer is the largest consumer; raise as needed).
 export MCP_BODY_LIMIT=512kb
 ```
+
+## Trust Boundaries
+
+```mermaid
+graph LR
+  U[Operator / Team Member] -->|TLS| P[Reverse Proxy]
+  P -->|Bearer Auth| S[MCP Memory Server]
+  S --> D[(SQLite + sqlite-vec)]
+  S --> E[Local Embedder]
+  C[Claude Code] -->|stdio or HTTPS+Bearer| S
+```
+
+The network-edge boundary sits at the reverse proxy, where TLS terminates. The auth boundary sits at the API, where the bearer token is checked in constant time. The data plane is local-only — SQLite and the embedder run inside the container alongside the server.
