@@ -196,3 +196,14 @@ Codes:
 - DB volume: `mcp-data` (named volume; data at `/var/lib/docker/volumes/mcp-data/_data`)
 - Cache volume: `mcp-cache` (HF model cache)
 - Cloudflare tunnel config: `/etc/cloudflared/config.yml`
+
+## Bearer Token Rotation
+
+1. Generate a new token: `openssl rand -hex 32`
+2. Update `MCP_AUTH_TOKEN` in `/opt/stacks/mcp-memory-server/.env` on MS-01
+3. `docker compose up -d --force-recreate memory-server`
+4. Verify: `curl -fs -H "Authorization: Bearer $NEW" http://127.0.0.1:3200/health`
+5. Update the token in Claude Code MCP config (`~/.claude/settings.json`) and propagate to team members
+6. The previous token is invalidated on container restart — single-token design, no revocation list needed
+
+Recommended cadence: every 90 days, or immediately on suspected exposure.
