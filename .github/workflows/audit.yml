@@ -1,0 +1,39 @@
+name: audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Daily at 06:00 UTC. Catches new advisories on freshly released CVEs.
+    - cron: '0 6 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  npm-audit:
+    name: npm audit (${{ matrix.workspace }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: ['root', 'web']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+
+      - name: Audit (root)
+        if: matrix.workspace == 'root'
+        run: npm audit --audit-level=high
+
+      - name: Audit (web)
+        if: matrix.workspace == 'web'
+        working-directory: web
+        run: npm audit --audit-level=high

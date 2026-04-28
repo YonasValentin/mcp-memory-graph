@@ -17,6 +17,7 @@
     "serve": "node dist/index.js serve",
     "test": "vitest run",
     "test:watch": "vitest",
+    "lint": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },
   "engines": {

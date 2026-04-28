@@ -1,0 +1,65 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Europe/Copenhagen
+    open-pull-requests-limit: 5
+    groups:
+      types:
+        patterns:
+          - '@types/*'
+      dev-dependencies:
+        dependency-type: development
+        update-types:
+          - 'minor'
+          - 'patch'
+    ignore:
+      # Major bumps go through manual review.
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Europe/Copenhagen
+    open-pull-requests-limit: 5
+    groups:
+      types:
+        patterns:
+          - '@types/*'
+      ui-libs:
+        patterns:
+          - '@base-ui/*'
+          - 'lucide-react'
+          - 'tailwind*'
+          - 'class-variance-authority'
+          - 'clsx'
+          - 'tailwind-merge'
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Europe/Copenhagen
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Europe/Copenhagen
+    open-pull-requests-limit: 3
