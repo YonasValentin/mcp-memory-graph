@@ -1,0 +1,534 @@
+openapi: 3.1.0
+info:
+  title: MCP Memory Server REST API
+  version: 1.0.0
+  description: |
+    REST surface for the MCP Memory Server dashboard. The MCP JSON-RPC
+    surface (`/mcp`) is documented separately by the MCP TypeScript SDK and
+    is not described here.
+
+    All endpoints under `/api` require a bearer token when `MCP_AUTH_TOKEN`
+    is set (recommended for any non-loopback deployment). Unauthenticated
+    access requires either a loopback bind or `MCP_AUTH_OPTIONAL=1`.
+  license:
+    name: MIT
+servers:
+  - url: http://127.0.0.1:3100
+    description: Local development
+  - url: https://mcp.yonasvalentin.dk
+    description: Reference deployment (Cloudflare Access fronted)
+
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  parameters:
+    Scope:
+      in: query
+      name: scope
+      schema:
+        type: string
+        enum: [global, project, user, team, department]
+    Namespace:
+      in: query
+      name: namespace
+      schema: { type: string }
+    Department:
+      in: query
+      name: department
+      schema: { type: string }
+    DocumentType:
+      in: query
+      name: document_type
+      schema: { type: string }
+    Limit:
+      in: query
+      name: limit
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    Offset:
+      in: query
+      name: offset
+      schema: { type: integer, minimum: 0, default: 0 }
+
+  schemas:
+    Memory:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        scope: { type: string, enum: [global, project, user, team, department] }
+        namespace: { type: string, nullable: true }
+        title: { type: string, nullable: true }
+        content: { type: string }
+        document_type: { type: string, nullable: true }
+        source: { type: string, nullable: true }
+        author: { type: string, nullable: true }
+        department: { type: string, nullable: true }
+        tags:
+          type: array
+          items: { type: string }
+        access_level: { type: string, enum: [public, internal, confidential, restricted] }
+        language: { type: string }
+        metadata:
+          type: object
+          additionalProperties: true
+          nullable: true
+        parent_id: { type: string, nullable: true }
+        chunk_index: { type: integer, nullable: true }
+        version: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time, nullable: true }
+        access_count: { type: integer }
+        importance_score: { type: number, format: float }
+        confidence_score: { type: number, format: float }
+      required: [id, scope, content, version, created_at, updated_at, importance_score, confidence_score]
+
+    SearchResult:
+      type: object
+      properties:
+        memory: { $ref: '#/components/schemas/Memory' }
+        score: { type: number }
+        confidence: { type: number }
+        confidence_level: { type: string, enum: [high, medium, low] }
+        match_type: { type: string, enum: [vector, keyword, hybrid] }
+        age_days: { type: integer }
+        freshness_warning: { type: string, nullable: true }
+
+    PaginatedMemoryList:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Memory' }
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+        has_more: { type: boolean }
+
+    Stats:
+      type: object
+      properties:
+        total_memories: { type: integer }
+        total_chunks: { type: integer }
+        total_documents: { type: integer }
+        by_scope: { type: object, additionalProperties: { type: integer } }
+        by_department: { type: object, additionalProperties: { type: integer } }
+        by_document_type: { type: object, additionalProperties: { type: integer } }
+        total_content_bytes: { type: integer }
+        database_size_bytes: { type: integer }
+        expired_count: { type: integer }
+
+    GraphData:
+      type: object
+      properties:
+        nodes:
+          type: array
+          items: { $ref: '#/components/schemas/Memory' }
+        edges:
+          type: array
+          items:
+            type: object
+            properties:
+              source: { type: string }
+              target: { type: string }
+              similarity: { type: number }
+        total: { type: integer }
+
+    ManifestEntry:
+      type: object
+      properties:
+        id: { type: string }
+        title: { type: string, nullable: true }
+        scope: { type: string }
+        namespace: { type: string, nullable: true }
+        document_type: { type: string, nullable: true }
+        tags: { type: array, items: { type: string } }
+        importance_score: { type: number }
+        access_count: { type: integer }
+        age_days: { type: integer }
+        updated_at: { type: string, format: date-time }
+
+    VersionRecord:
+      type: object
+      properties:
+        id: { type: string }
+        memory_id: { type: string }
+        content: { type: string }
+        title: { type: string, nullable: true }
+        metadata: { type: string, nullable: true }
+        version: { type: integer }
+        changed_by: { type: string, nullable: true }
+        changed_at: { type: string, format: date-time }
+
+    HealthStatus:
+      type: object
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        db_ok: { type: boolean }
+        embedder_ok: { type: boolean }
+        schema_version: { type: string, nullable: true }
+        uptime_s: { type: integer }
+
+    Error:
+      type: object
+      required: [error, code]
+      properties:
+        error: { type: string }
+        code:
+          type: string
+          enum: [UNAUTHORIZED, RATE_LIMITED, INVALID_INPUT, NOT_FOUND, BAD_HOST, INTERNAL]
+        requestId: { type: string }
+        issues: { type: object, additionalProperties: true }
+        retry_after_seconds: { type: integer }
+
+  responses:
+    Unauthorized:
+      description: Missing or wrong bearer token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: Token bucket exhausted
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    BadRequest:
+      description: Validation failed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+paths:
+  /live:
+    get:
+      summary: Liveness probe
+      security: []
+      responses:
+        '200':
+          description: Process is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok] }
+                  uptime_s: { type: integer }
+
+  /health:
+    get:
+      summary: Deep health probe (DB + schema_version + embedder warm-state)
+      security: []
+      responses:
+        '200':
+          description: Healthy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthStatus' }
+        '503':
+          description: Degraded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthStatus' }
+
+  /ready:
+    get:
+      summary: Warm the embedder and report readiness
+      security: []
+      responses:
+        '200': { description: Ready }
+        '503': { description: Not ready }
+
+  /metrics:
+    get:
+      summary: Prometheus exposition (gated behind MCP_METRICS_ENABLED=1)
+      responses:
+        '200':
+          description: Prometheus exposition body
+          content:
+            text/plain:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Disabled }
+
+  /api/stats:
+    get:
+      summary: Aggregated counts
+      parameters:
+        - $ref: '#/components/parameters/Scope'
+        - $ref: '#/components/parameters/Namespace'
+        - $ref: '#/components/parameters/Department'
+      responses:
+        '200':
+          description: Stats
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Stats' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/search:
+    get:
+      summary: Hybrid search
+      parameters:
+        - in: query
+          name: q
+          required: true
+          schema: { type: string, minLength: 1 }
+        - $ref: '#/components/parameters/Scope'
+        - $ref: '#/components/parameters/Namespace'
+        - $ref: '#/components/parameters/Department'
+        - $ref: '#/components/parameters/DocumentType'
+        - in: query
+          name: tags
+          description: Comma-separated tag list
+          schema: { type: string }
+        - in: query
+          name: language
+          schema: { type: string }
+        - in: query
+          name: mode
+          schema: { type: string, enum: [hybrid, vector, keyword], default: hybrid }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+        - in: query
+          name: min_confidence
+          schema: { type: number, minimum: 0, maximum: 1 }
+        - in: query
+          name: date_from
+          schema: { type: string, format: date-time }
+        - in: query
+          name: date_to
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items: { $ref: '#/components/schemas/SearchResult' }
+                  total: { type: integer }
+                  truncated: { type: boolean }
+                  detail_level: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/memories:
+    get:
+      summary: List memories
+      parameters:
+        - $ref: '#/components/parameters/Scope'
+        - $ref: '#/components/parameters/Namespace'
+        - $ref: '#/components/parameters/Department'
+        - $ref: '#/components/parameters/DocumentType'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+        - in: query
+          name: sort_by
+          schema:
+            type: string
+            enum: [created_at, updated_at, title, importance_score, confidence_score, access_count]
+            default: created_at
+        - in: query
+          name: sort_order
+          schema: { type: string, enum: [asc, desc], default: desc }
+      responses:
+        '200':
+          description: A page of memories
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaginatedMemoryList' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/memories/{id}:
+    get:
+      summary: Get memory by id
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: include_chunks
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Memory + optional chunks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  memory: { $ref: '#/components/schemas/Memory' }
+                  chunks:
+                    type: array
+                    items: { $ref: '#/components/schemas/Memory' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+    patch:
+      summary: Update a memory
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                content: { type: string }
+                title: { type: string }
+                tags: { type: array, items: { type: string } }
+                metadata: { type: object, additionalProperties: true }
+                expires_at: { type: string, nullable: true, format: date-time }
+                changed_by: { type: string }
+      responses:
+        '200':
+          description: Updated memory
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updated: { type: boolean }
+                  memory: { $ref: '#/components/schemas/Memory' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413':
+          description: Body exceeds MCP_BODY_LIMIT
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+    delete:
+      summary: Delete a memory
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Deletion result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: integer }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/memories/{id}/versions:
+    get:
+      summary: Version history for a memory
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: Version list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  current_version: { type: integer }
+                  history:
+                    type: array
+                    items: { $ref: '#/components/schemas/VersionRecord' }
+
+  /api/memories/{id}/related:
+    get:
+      summary: Find memories related to this one
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
+        - in: query
+          name: min_similarity
+          schema: { type: number, minimum: 0, maximum: 1 }
+      responses:
+        '200':
+          description: Related memories
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  related:
+                    type: array
+                    items: { $ref: '#/components/schemas/SearchResult' }
+                  count: { type: integer }
+
+  /api/graph:
+    get:
+      summary: Knowledge graph (top-N nodes by importance + similarity edges)
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+        - in: query
+          name: min_importance
+          schema: { type: number, minimum: 0, maximum: 1 }
+      responses:
+        '200':
+          description: Nodes and edges
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GraphData' }
+
+  /api/manifest:
+    get:
+      summary: Lightweight index of all memories
+      parameters:
+        - $ref: '#/components/parameters/Scope'
+        - $ref: '#/components/parameters/Namespace'
+        - $ref: '#/components/parameters/Department'
+        - $ref: '#/components/parameters/DocumentType'
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 500 }
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Manifest entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries:
+                    type: array
+                    items: { $ref: '#/components/schemas/ManifestEntry' }
+                  total: { type: integer }
+                  has_more: { type: boolean }
