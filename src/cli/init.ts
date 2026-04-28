@@ -44,10 +44,14 @@ interface CommandHookEntry {
   timeout?: number;
 }
 
+// Note: agent-type hooks were removed in commit 92bf9bc (the type:"agent"
+// Stop hook was silently broken on macOS — see anthropics/claude-code#39184).
+// We still tolerate a stray agent-type entry in user settings.json so we can
+// strip it during upgrade, but the union doesn't ship one anymore.
 interface AgentHookEntry {
   type: 'agent';
-  prompt: string;
-  model?: string;
+  prompt?: string;
+  command?: string;
   timeout?: number;
 }
 

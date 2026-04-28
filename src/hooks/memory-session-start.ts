@@ -5,6 +5,7 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type BetterSqlite3 from 'better-sqlite3';
+import { resolveNamespace } from '../config/loader.js';
 
 async function main(): Promise<void> {
   // Safety timeout - hooks must never hang
@@ -97,8 +98,15 @@ async function main(): Promise<void> {
       // Not a git repo
     }
 
-    // Resolve project namespace
-    const projectName = cwd.split('/').pop() || '';
+    // Resolve project namespace via the same logic the rest of the codebase
+    // uses (config.projects[].namespace with `auto` → basename, fallback to
+    // path.basename(cwd)). Single source of truth at src/config/loader.ts.
+    let namespace: string;
+    try {
+      namespace = resolveNamespace(cwd);
+    } catch {
+      namespace = cwd.split('/').pop() || '';
+    }
 
     // Find branch-related memories
     let branchContext = '';
@@ -122,8 +130,8 @@ async function main(): Promise<void> {
     // Top memories for this namespace
     const topMemories = db.prepare(
       `SELECT title FROM memories WHERE parent_id IS NULL AND superseded_at IS NULL
-       AND (namespace = ? OR namespace = ?) ORDER BY importance_score DESC LIMIT 3`
-    ).all(projectName, projectName.toLowerCase()) as Array<{ title: string | null }>;
+       AND namespace = ? ORDER BY importance_score DESC LIMIT 3`
+    ).all(namespace) as Array<{ title: string | null }>;
     const topTitles = topMemories.filter(m => m.title).map(m => `'${m.title}'`);
 
     // Top entities for this project
@@ -133,9 +141,9 @@ async function main(): Promise<void> {
         `SELECT e.name, e.mention_count FROM entities e
          JOIN memory_entities me ON me.entity_id = e.id
          JOIN memories m ON m.id = me.memory_id
-         WHERE m.namespace = ? OR m.namespace = ?
+         WHERE m.namespace = ?
          GROUP BY e.id ORDER BY e.mention_count DESC LIMIT 5`
-      ).all(projectName, projectName.toLowerCase()) as Array<{ name: string; mention_count: number }>;
+      ).all(namespace) as Array<{ name: string; mention_count: number }>;
       if (topEntities.length > 0) {
         entityContext = `Entities: ${topEntities.map(e => `${e.name}(${e.mention_count})`).join(', ')}`;
       }

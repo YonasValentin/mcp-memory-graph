@@ -28,6 +28,13 @@ import { metrics } from './metrics.js';
 type GetDb = () => Database.Database;
 type GetEmbedder = () => Promise<EmbeddingProvider>;
 
+// Per-process cache for /api/graph. Recomputing the graph runs N embedder
+// calls + N vec queries — typical dashboard refresh patterns slam this on
+// every slider change, so a small TTL gives us idempotent re-renders for
+// free.
+const GRAPH_CACHE_TTL_MS = 60_000;
+const graphCache = new Map<string, { ts: number; payload: unknown }>();
+
 class HttpError extends Error {
   constructor(
     public readonly status: number,
@@ -205,8 +212,22 @@ export function registerApiRoutes(
   }));
 
   // ── GET /api/graph ──────────────────────────────────────────────────────
+  // The graph endpoint is structurally O(N) embeddings + O(N) vec queries
+  // per request (handleRelated re-embeds each node's content). For dashboard
+  // refreshes we cache the assembled nodes+edges for GRAPH_CACHE_TTL_MS keyed
+  // on (limit, min_importance). Pass ?refresh=1 to bypass.
   router.get('/api/graph', asyncHandler('GET /api/graph', async (req, res) => {
     const q = parseOrThrow(ApiGraphQuerySchema, req.query);
+    const refresh = req.query.refresh === '1' || req.query.refresh === 'true';
+    const cacheKey = `${q.limit}|${q.min_importance ?? 0}`;
+    const now = Date.now();
+
+    const cached = !refresh ? graphCache.get(cacheKey) : undefined;
+    if (cached && now - cached.ts < GRAPH_CACHE_TTL_MS) {
+      res.json(cached.payload);
+      return;
+    }
+
     const db = getDb();
     const embedder = await getEmbedder();
     const minImportance = q.min_importance ?? 0;
@@ -242,7 +263,9 @@ export function registerApiRoutes(
       }
     }
 
-    res.json({ nodes, edges, total: nodes.length });
+    const payload = { nodes, edges, total: nodes.length };
+    graphCache.set(cacheKey, { ts: now, payload });
+    res.json(payload);
   }));
 
   // ── GET /api/manifest ─────────────────────────────────────────────────
