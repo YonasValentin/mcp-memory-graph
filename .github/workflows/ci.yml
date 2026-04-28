@@ -37,7 +37,14 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Test
+      - name: Test (with coverage on Node 22)
+        if: matrix.node == '22.x'
+        run: npx vitest run --coverage
+        env:
+          MCP_LOG_LEVEL: error
+
+      - name: Test (Node 20)
+        if: matrix.node != '22.x'
         run: npm test
         env:
           MCP_LOG_LEVEL: error
