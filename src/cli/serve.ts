@@ -11,6 +11,7 @@ import { getReadWriteDb, getEmbedder } from '../lib/direct-access.js';
 import { registerApiRoutes } from '../api/routes.js';
 import { rateLimitMiddleware, RateLimiter, defaultConfig as rateLimitDefaultConfig } from '../api/rate-limit.js';
 import { renderMetrics, METRICS_CONTENT_TYPE } from '../api/metrics.js';
+import { securityHeadersMiddleware } from '../api/security-headers.js';
 import { logger } from '../lib/logger.js';
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -155,13 +156,16 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
   const allowed = parseAllowedOrigins();
   const limiter = deps.rateLimiter ?? new RateLimiter(rateLimitDefaultConfig());
 
+  const isRemote = host !== '127.0.0.1' && host !== 'localhost' && host !== '::1';
+
   // Trust the first proxy hop so req.ip reflects X-Forwarded-For when behind
   // Cloudflare/NGINX. Ignored when bound to loopback only.
-  if (host !== '127.0.0.1' && host !== 'localhost' && host !== '::1') {
+  if (isRemote) {
     app.set('trust proxy', 1);
   }
 
   app.use(requestIdMiddleware);
+  app.use(securityHeadersMiddleware({ isRemote }));
   app.use(localhostHostValidation(host));
   app.use(express.json({ limit: bodyLimit() }));
   app.use(express.urlencoded({ extended: false, limit: '64kb' }));
@@ -256,7 +260,7 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
   if (token) {
     app.use('/api', bearerMiddleware(token));
     app.use('/mcp', bearerMiddleware(token));
-  } else if (process.env.MCP_AUTH_OPTIONAL !== '1' && host !== '127.0.0.1' && host !== 'localhost' && host !== '::1') {
+  } else if (process.env.MCP_AUTH_OPTIONAL !== '1' && isRemote) {
     throw new Error(
       'MCP_AUTH_TOKEN is not set and MCP_BIND is not loopback. ' +
       'Set MCP_AUTH_TOKEN, bind to 127.0.0.1, or set MCP_AUTH_OPTIONAL=1 to allow unauthenticated access.',

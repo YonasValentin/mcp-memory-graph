@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import type { EmbeddingProvider, Memory, MemoryInput, MemoryRow } from '../types.js';
 import { insertMemory, rowToMemory } from '../db/repository.js';
 import { computeContentSignal } from '../search/content-signals.js';
@@ -48,7 +48,7 @@ export async function handleStore(
   }
 
   const row: MemoryRow = {
-    id: uuidv4(),
+    id: randomUUID(),
     scope: input.scope ?? 'global',
     namespace: input.namespace ?? null,
     title: input.title ?? null,

@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import path from 'node:path';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import type {
   EmbeddingProvider,
   VaultSyncMeta,
@@ -264,7 +264,7 @@ function buildMemoryRow(
 ): MemoryRow {
   const now = new Date().toISOString();
   return {
-    id: uuidv4(),
+    id: randomUUID(),
     scope: 'project',
     namespace: vaultName,
     title: parsed.title,
@@ -331,7 +331,7 @@ async function ingestLargeFile(
     for (let i = 0; i < chunks.length; i++) {
       const chunkRow: MemoryRow = {
         ...parentRow,
-        id: uuidv4(),
+        id: randomUUID(),
         content: chunks[i].content,
         parent_id: parentRow.id,
         chunk_index: chunks[i].chunk_index,

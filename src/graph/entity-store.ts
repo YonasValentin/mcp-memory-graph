@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import type { ExtractedEntity } from './entity-extractor.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -54,7 +54,7 @@ export function findOrCreateEntity(
     return existing.id;
   }
 
-  const id = uuidv4();
+  const id = randomUUID();
   db.prepare(`
     INSERT INTO entities (id, name, normalized_name, type)
     VALUES (?, ?, ?, ?)
@@ -121,7 +121,7 @@ export function findOrCreateRelationship(
     return existing.id;
   }
 
-  const id = uuidv4();
+  const id = randomUUID();
   db.prepare(`
     INSERT INTO entity_relationships (id, source_entity_id, target_entity_id, type)
     VALUES (?, ?, ?, ?)

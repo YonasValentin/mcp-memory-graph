@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import type { EmbeddingProvider, IngestResult, MemoryRow, ContentType, MemoryScope } from '../types.js';
 import { insertMemory } from '../db/repository.js';
 import { chunkContent } from '../chunking/chunker.js';
@@ -26,7 +26,7 @@ export async function handleIngest(
   input: IngestInput,
 ): Promise<IngestResult> {
   const now = new Date().toISOString();
-  const parentId = uuidv4();
+  const parentId = randomUUID();
   const tagsJson = input.tags ? JSON.stringify(input.tags) : null;
   const metadataJson = input.metadata ? JSON.stringify(input.metadata) : null;
   const scope = input.scope ?? 'global';
@@ -76,7 +76,7 @@ export async function handleIngest(
     insertMemory(db, parentRow, parentEmbedding);
 
     for (let i = 0; i < chunks.length; i++) {
-      const chunkId = uuidv4();
+      const chunkId = randomUUID();
       chunkIds.push(chunkId);
 
       const chunkRow: MemoryRow = {

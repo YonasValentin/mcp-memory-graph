@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 
 export type ConflictType = 'superseded' | 'contradicted' | 'duplicate';
 
@@ -144,7 +144,7 @@ export function recordConflicts(
       supersedeStmt.run(c.existing_memory_id);
     }
     if (c.type === 'duplicate' || c.type === 'superseded' || c.type === 'contradicted') {
-      insertStmt.run(uuidv4(), c.existing_memory_id, newMemoryId, c.type, c.description);
+      insertStmt.run(randomUUID(), c.existing_memory_id, newMemoryId, c.type, c.description);
     }
   }
 }
