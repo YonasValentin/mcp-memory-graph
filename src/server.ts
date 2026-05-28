@@ -29,6 +29,7 @@ import {
   MemoryExtractEntitiesSchema,
   MemoryCondenseSchema,
   MemoryRestoreSchema,
+  MemoryQuerySchema,
 } from './schemas/index.js';
 import { handleStore } from './tools/store.js';
 import { handleSearch } from './tools/search.js';
@@ -51,6 +52,7 @@ import { handleManifest } from './tools/manifest.js';
 import { handleGraph } from './tools/graph.js';
 import { handleExtractEntities } from './tools/extract-entities.js';
 import { handleCondense, handleRestore } from './tools/condense.js';
+import { handleQuery } from './tools/query.js';
 
 import { metrics } from './api/metrics.js';
 import { logger } from './lib/logger.js';
@@ -371,6 +373,17 @@ export function createServer(): McpServer {
     instrument('memory_restore', async (input) => {
       const parsed = MemoryRestoreSchema.parse(input);
       return handleRestore(getDb(), await getEmbedder(), parsed);
+    }),
+  );
+
+  // ── 23. memory_query ────────────────────────────────────────────────────
+  server.tool(
+    'memory_query',
+    'Answer a question with a TIGHT, relevant subgraph instead of flooding context. Seeds from hybrid search, walks the memory graph (hub-avoiding) up to max_hops, and returns a token-budgeted "context" string plus structured nodes — with an actionable hint when truncated.',
+    MemoryQuerySchema.shape,
+    instrument('memory_query', async (input) => {
+      const parsed = MemoryQuerySchema.parse(input);
+      return handleQuery(getDb(), await getEmbedder(), parsed);
     }),
   );
 

@@ -751,6 +751,49 @@ export const MemoryRestoreSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// 24. MemoryQuerySchema
+// ---------------------------------------------------------------------------
+
+export const MemoryQuerySchema = z.object({
+  query: z
+    .string()
+    .min(1)
+    .describe(
+      'The question to answer. Seeds from hybrid search, then walks the memory ' +
+      'graph to return a tight, relevant subgraph instead of flooding context.',
+    ),
+  max_tokens: z
+    .number()
+    .int()
+    .min(100)
+    .max(50000)
+    .default(1500)
+    .describe(
+      'Approximate token budget for the rendered context (~4 chars per token). ' +
+      'Nodes are rendered until the budget is hit, then truncated with a hint.',
+    ),
+  max_hops: z
+    .number()
+    .int()
+    .min(1)
+    .max(4)
+    .default(2)
+    .describe('How many hops to walk out from the seed memories (1-4).'),
+  seed_limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(20)
+    .default(5)
+    .describe(
+      'Maximum seed memories from the initial search. A gap cutoff drops seeds ' +
+      'scoring below 20% of the top seed to keep the traversal focused.',
+    ),
+  scope: scopeField(false),
+  namespace: namespaceField(),
+});
+
+// ---------------------------------------------------------------------------
 // REST API query/body schemas — derived from the MCP schemas above.
 // Express query strings arrive as `string | string[] | undefined`, so each
 // field uses zod preprocess to coerce numbers/arrays out of strings before
