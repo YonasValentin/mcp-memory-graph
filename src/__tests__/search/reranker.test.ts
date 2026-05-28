@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { createTestDb } from '../../testing/test-db.js';
 import { MockEmbeddingProvider } from '../../testing/mock-embedder.js';
 import { handleStore } from '../../tools/store.js';
@@ -116,15 +116,14 @@ describe('cross-encoder reranking stage (Pillar 3, T6)', () => {
     });
     expect(baseline.results.length).toBeGreaterThan(0); // sanity: candidates exist
 
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // The reranker throws; hybridSearch must swallow it (logging via logger.warn
+    // to stderr) and fall back to the fused baseline order — never fail.
     const { results } = await hybridSearch(
       db,
       embedder,
       { query: 'deploy', search_mode: 'keyword', limit: 10, offset: 0, rerank: true },
       new ThrowingReranker(),
     );
-    expect(warnSpy).toHaveBeenCalledOnce(); // logged the fallback
-    warnSpy.mockRestore();
 
     expect(results.map((r) => r.memory.id)).toEqual(
       baseline.results.map((r) => r.memory.id),

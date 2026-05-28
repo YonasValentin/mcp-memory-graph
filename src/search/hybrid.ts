@@ -7,6 +7,7 @@ import { extractEntitiesRegex } from '../graph/entity-extractor.js';
 import { normalizeName } from '../graph/entity-store.js';
 import { rankMemoriesByPPR } from '../graph/pagerank.js';
 import type { Reranker } from './reranker.js';
+import { logger } from '../lib/logger.js';
 
 // Smart/curly quotes that FTS5 can't parse and that users frequently paste.
 const SMART_QUOTES_RE = /[‘’‚‛“”„‟«»]/g;
@@ -314,7 +315,7 @@ export async function hybridSearch(
       ranked = [...reordered, ...tail];
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.warn(`Reranking failed, falling back to fused order: ${message}`);
+      logger.warn({ event: 'rerank_failed', error: message });
     }
   }
 
