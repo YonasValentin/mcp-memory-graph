@@ -169,6 +169,13 @@ export const MemorySearchSchema = z.object({
     .max(1)
     .optional()
     .describe('Minimum confidence score threshold (0-1)'),
+  as_of: z
+    .string()
+    .optional()
+    .describe(
+      'ISO 8601 point-in-time: return memories that were valid at this instant ' +
+      '(bi-temporal). Defaults to currently-valid memories when omitted.',
+    ),
   detail_level: z
     .enum(['summary', 'full', 'ids_only'])
     .default('summary')
@@ -292,6 +299,13 @@ export const MemoryListSchema = z.object({
     .enum(['asc', 'desc'])
     .default('desc')
     .describe('Sort direction'),
+  as_of: z
+    .string()
+    .optional()
+    .describe(
+      'ISO 8601 point-in-time: return memories that were valid at this instant ' +
+      '(bi-temporal). Defaults to currently-valid memories when omitted.',
+    ),
 });
 
 // ---------------------------------------------------------------------------

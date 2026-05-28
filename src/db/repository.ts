@@ -315,6 +315,16 @@ export function listMemories(
     params.push(options.document_type);
   }
 
+  // Bi-temporal: currently-valid by default; point-in-time when `as_of` is set.
+  if (options.as_of) {
+    conditions.push('valid_from <= ?');
+    conditions.push('(valid_to IS NULL OR valid_to > ?)');
+    conditions.push('(tx_expired IS NULL OR tx_expired > ?)');
+    params.push(options.as_of, options.as_of, options.as_of);
+  } else {
+    conditions.push('valid_to IS NULL AND tx_expired IS NULL');
+  }
+
   const whereClause =
     conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 

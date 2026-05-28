@@ -115,6 +115,8 @@ export interface SearchOptions {
   date_from?: string;
   date_to?: string;
   min_confidence?: number;
+  /** ISO-8601 instant: return what was valid at this point in time instead of currently-valid. */
+  as_of?: string;
 }
 
 export interface TemporalDecayConfig {
@@ -219,6 +221,8 @@ export interface ListOptions {
   offset: number;
   sort_by: SortField;
   sort_order: SortOrder;
+  /** ISO-8601 instant: return what was valid at this point in time instead of currently-valid. */
+  as_of?: string;
 }
 
 export interface PaginatedResult<T> {

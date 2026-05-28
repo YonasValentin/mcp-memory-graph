@@ -18,6 +18,7 @@ interface ListInput {
   offset?: number;
   sort_by?: SortField;
   sort_order?: SortOrder;
+  as_of?: string;
 }
 
 export function handleList(
@@ -33,6 +34,7 @@ export function handleList(
     offset: input.offset ?? 0,
     sort_by: input.sort_by ?? 'created_at',
     sort_order: input.sort_order ?? 'desc',
+    as_of: input.as_of,
   };
 
   const { memories, total } = listMemories(db, options);

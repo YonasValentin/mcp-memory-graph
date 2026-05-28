@@ -149,6 +149,16 @@ export async function hybridSearch(
   whereClauses.push("(expires_at IS NULL OR expires_at > datetime('now'))");
   whereClauses.push('superseded_at IS NULL');
 
+  // Bi-temporal: currently-valid by default; point-in-time when `as_of` is set.
+  if (options.as_of) {
+    whereClauses.push('valid_from <= ?');
+    whereClauses.push('(valid_to IS NULL OR valid_to > ?)');
+    whereClauses.push('(tx_expired IS NULL OR tx_expired > ?)');
+    params.push(options.as_of, options.as_of, options.as_of);
+  } else {
+    whereClauses.push('valid_to IS NULL AND tx_expired IS NULL');
+  }
+
   const sql = `SELECT *, rowid FROM memories WHERE ${whereClauses.join(' AND ')}`;
   const rows = db.prepare(sql).all(...params) as (MemoryRow & { rowid: number })[];
 

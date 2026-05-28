@@ -28,6 +28,7 @@ interface SearchInput {
   date_from?: string;
   date_to?: string;
   min_confidence?: number;
+  as_of?: string;
   detail_level?: DetailLevel;
   max_tokens?: number;
 }
@@ -53,6 +54,7 @@ export async function handleSearch(
     date_from: input.date_from,
     date_to: input.date_to,
     min_confidence: input.min_confidence,
+    as_of: input.as_of,
   };
 
   const { results, total, truncated } = await hybridSearch(db, embedder, options);
