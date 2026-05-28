@@ -94,3 +94,21 @@ export function getBacklinks(db: Database.Database, memoryId: string): MemoryLin
     )
     .all(memoryId);
 }
+
+/**
+ * All edges whose BOTH endpoints fall within `memoryIds` — the edge set for a
+ * subgraph of the given nodes (e.g. the dashboard graph view). Edges pointing
+ * outside the set are excluded so the rendered graph stays internally consistent.
+ */
+export function getLinksAmong(db: Database.Database, memoryIds: string[]): MemoryLinkRow[] {
+  if (memoryIds.length === 0) return [];
+  const placeholders = memoryIds.map(() => '?').join(',');
+  return db
+    .prepare<string[], MemoryLinkRow>(
+      `SELECT * FROM memory_links
+        WHERE source_memory_id IN (${placeholders})
+          AND target_memory_id IN (${placeholders})
+        ORDER BY confidence_score DESC, evidence_count DESC`,
+    )
+    .all(...memoryIds, ...memoryIds);
+}

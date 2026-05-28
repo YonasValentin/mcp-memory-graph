@@ -6,6 +6,7 @@ import {
   createMemoryLink,
   getOutgoingLinks,
   getBacklinks,
+  getLinksAmong,
 } from '../../graph/memory-links.js';
 
 async function store(db: ReturnType<typeof createTestDb>, content: string) {
@@ -62,5 +63,22 @@ describe('memory_links storage (Pillar 1, slice 2)', () => {
     const rows = getOutgoingLinks(db, a.id);
     expect(rows.length).toBe(1);
     expect(rows[0].evidence_count).toBe(2);
+  });
+
+  it('getLinksAmong returns only edges whose both endpoints are in the node set', async () => {
+    const db = createTestDb();
+    const a = await store(db, 'Node A');
+    const b = await store(db, 'Node B');
+    const c = await store(db, 'Node C');
+
+    createMemoryLink(db, { sourceId: a.id, targetId: b.id, relation: 'links_to', confidence: 'EXTRACTED', confidenceScore: 1, sourceKind: 'wikilink' });
+    createMemoryLink(db, { sourceId: a.id, targetId: c.id, relation: 'links_to', confidence: 'INFERRED', confidenceScore: 0.5, sourceKind: 'similarity' });
+
+    const among = getLinksAmong(db, [a.id, b.id]);
+    expect(among.length).toBe(1);
+    expect(among[0].source_memory_id).toBe(a.id);
+    expect(among[0].target_memory_id).toBe(b.id);
+
+    expect(getLinksAmong(db, [])).toEqual([]);
   });
 });

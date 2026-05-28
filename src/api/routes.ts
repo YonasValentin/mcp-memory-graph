@@ -11,6 +11,7 @@ import { handleRelated } from '../tools/related.js';
 import { handleVersions } from '../tools/versions.js';
 import { handleStats } from '../tools/stats.js';
 import { handleManifest } from '../tools/manifest.js';
+import { getLinksAmong } from '../graph/memory-links.js';
 import {
   ApiSearchQuerySchema,
   ApiListQuerySchema,
@@ -229,7 +230,6 @@ export function registerApiRoutes(
     }
 
     const db = getDb();
-    const embedder = await getEmbedder();
     const minImportance = q.min_importance ?? 0;
 
     const listResult = handleList(db, {
@@ -243,27 +243,19 @@ export function registerApiRoutes(
       (m) => m.parent_id === null && m.importance_score >= minImportance,
     );
 
-    const edges: Array<{ source: string; target: string; similarity: number }> = [];
-    const nodeIds = new Set(nodes.map((n) => n.id));
-
-    for (const node of nodes) {
-      const related = await handleRelated(db, embedder, {
-        id: node.id,
-        limit: 5,
-        min_similarity: 0.3,
-      });
-      /* c8 ignore start */
-      for (const rel of related) {
-        if (nodeIds.has(rel.memory.id)) {
-          edges.push({
-            source: node.id,
-            target: rel.memory.id,
-            similarity: rel.score,
-          });
-        }
-      }
-      /* c8 ignore stop */
-    }
+    // Edges come from the persistent multi-signal edge store (wikilink +
+    // co-occurrence + similarity), not from per-node re-embedding. Each edge
+    // carries its relation, source_kind, and confidence tag. `similarity` is
+    // kept (= confidence_score) for backward compatibility with the D3 view.
+    const links = getLinksAmong(db, nodes.map((n) => n.id));
+    const edges = links.map((l) => ({
+      source: l.source_memory_id,
+      target: l.target_memory_id,
+      similarity: l.confidence_score,
+      relation: l.relation,
+      kind: l.source_kind,
+      confidence: l.confidence,
+    }));
 
     const payload = { nodes, edges, total: nodes.length };
     graphCache.set(cacheKey, { ts: now, payload });
