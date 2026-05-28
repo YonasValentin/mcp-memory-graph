@@ -185,6 +185,25 @@ export const MemorySearchSchema = z.object({
       'connected through entities (associative recall) that pure vector+keyword ' +
       'search misses. Default false.',
     ),
+  rerank: z
+    .boolean()
+    .default(false)
+    .describe(
+      'Enable local cross-encoder reranking: reorder the top candidates by joint ' +
+      '(query, document) relevance using a cross-encoder model — the biggest ' +
+      'precision win over the bi-encoder base embedder. Slower (runs a model per ' +
+      'candidate) and lazy-loads the model on first use. Default false.',
+    ),
+  rerank_top_n: z
+    .number()
+    .int()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      'How many top candidates to rerank when "rerank" is true (default 50). ' +
+      'Higher = better recall coverage but slower.',
+    ),
   detail_level: z
     .enum(['summary', 'full', 'ids_only'])
     .default('summary')

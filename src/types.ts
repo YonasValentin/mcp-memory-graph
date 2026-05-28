@@ -124,6 +124,16 @@ export interface SearchOptions {
    * unchanged.
    */
   use_graph?: boolean;
+  /**
+   * Opt-in local cross-encoder reranking of the top-N candidates. When true and
+   * a reranker is supplied to {@link hybridSearch}, the top `rerank_top_n`
+   * results are reordered by joint (query, doc) relevance — the biggest
+   * precision win for a weak bi-encoder. Default false — leaves fused order
+   * unchanged.
+   */
+  rerank?: boolean;
+  /** How many top candidates to rerank (default 50). Ignored unless `rerank`. */
+  rerank_top_n?: number;
 }
 
 export interface TemporalDecayConfig {

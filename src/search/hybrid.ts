@@ -6,6 +6,7 @@ import { rowToMemory } from '../db/repository.js';
 import { extractEntitiesRegex } from '../graph/entity-extractor.js';
 import { normalizeName } from '../graph/entity-store.js';
 import { rankMemoriesByPPR } from '../graph/pagerank.js';
+import type { Reranker } from './reranker.js';
 
 // Smart/curly quotes that FTS5 can't parse and that users frequently paste.
 const SMART_QUOTES_RE = /[‘’‚‛“”„‟«»]/g;
@@ -79,7 +80,8 @@ function linkQueryEntities(db: Database.Database, query: string): string[] {
 export async function hybridSearch(
   db: Database.Database,
   embedder: EmbeddingProvider,
-  options: SearchOptions
+  options: SearchOptions,
+  reranker?: Reranker,
 ): Promise<HybridSearchResponse> {
   const doVector = options.search_mode === 'hybrid' || options.search_mode === 'vector';
   const doKeyword = options.search_mode === 'hybrid' || options.search_mode === 'keyword';
@@ -284,6 +286,36 @@ export async function hybridSearch(
       };
     });
     ranked.sort((a, b) => b.score - a.score);
+  }
+
+  // --- Cross-encoder reranking (opt-in, pluggable) ---
+  // Rerank only the top-N candidates by joint (query, doc) relevance — the
+  // biggest precision win for a weak bi-encoder base. The reranker reorders
+  // those N in place; remaining candidates keep their fused order behind them.
+  // Robust by design: any failure logs a warn and falls back to fused order, so
+  // a missing/broken model never fails the search. Default path (no reranker /
+  // rerank!=true) is byte-identical to the prior behavior.
+  if (reranker && options.rerank) {
+    const topN = Math.min(options.rerank_top_n ?? 50, ranked.length);
+    const head = ranked.slice(0, topN);
+    const tail = ranked.slice(topN);
+    try {
+      const docs = head.map((item) => {
+        const row = rowMap.get(item.rowid)!;
+        return { id: row.id, text: row.content };
+      });
+      const scored = await reranker.rerank(options.query, docs);
+      const scoreById = new Map(scored.map((s) => [s.id, s.score]));
+      const reordered = [...head].sort((a, b) => {
+        const sa = scoreById.get(rowMap.get(a.rowid)!.id) ?? -Infinity;
+        const sb = scoreById.get(rowMap.get(b.rowid)!.id) ?? -Infinity;
+        return sb - sa;
+      });
+      ranked = [...reordered, ...tail];
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`Reranking failed, falling back to fused order: ${message}`);
+    }
   }
 
   // --- Confidence scoring ---
