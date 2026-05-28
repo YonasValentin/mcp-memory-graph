@@ -6,6 +6,7 @@ import { computeContentSignal } from '../search/content-signals.js';
 import { extractEntitiesRegex } from '../graph/entity-extractor.js';
 import { storeExtractedEntities } from '../graph/entity-store.js';
 import { detectConflicts, recordConflicts, type ConflictResult } from '../graph/conflict-resolver.js';
+import { buildSimilarityEdges } from '../graph/similarity-edges.js';
 import { logger } from '../lib/logger.js';
 
 interface StoreResult {
@@ -98,6 +99,16 @@ export async function handleStore(
   });
 
   persist();
+
+  // Automated "unlinked mentions": link this memory to its near vector
+  // neighbors. Runs after the insert transaction so the new row is indexed
+  // and we don't nest transactions. Non-critical — never block a store.
+  try {
+    buildSimilarityEdges(db, row.id, embedding);
+  } catch (err) /* c8 ignore start */ {
+    logger.warn({ event: 'similarity_edge_failed', memory_id: row.id, err: err instanceof Error ? err.message : String(err) });
+  }
+  /* c8 ignore stop */
 
   return {
     stored: true,
