@@ -18,6 +18,7 @@ import { createTestDb } from '../../testing/test-db.js';
 import { MockEmbeddingProvider } from '../../testing/mock-embedder.js';
 import { CachedEmbeddingProvider } from '../../embeddings/cache.js';
 import { RateLimiter } from '../../api/rate-limit.js';
+import { CURRENT_SCHEMA_VERSION } from '../../db/schema.js';
 
 interface Response {
   status: number;
@@ -266,6 +267,6 @@ describe('health endpoints', () => {
     expect(res.status).toBe(200);
     const body = JSON.parse(res.body);
     expect(body.db_ok).toBe(true);
-    expect(body.schema_version).toBe('4');
+    expect(body.schema_version).toBe(String(CURRENT_SCHEMA_VERSION));
   });
 });

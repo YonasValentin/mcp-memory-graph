@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { CURRENT_SCHEMA_VERSION } from './schema.js';
+import { CURRENT_SCHEMA_VERSION, MEMORY_LINKS_DDL } from './schema.js';
 
 interface Migration {
   version: number;
@@ -166,6 +166,13 @@ const migrations: Migration[] = [
           FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
         );
       `);
+    },
+  },
+  {
+    version: 5,
+    up: (db) => {
+      // Pillar 1: persistent memory-to-memory edge store.
+      db.exec(MEMORY_LINKS_DDL);
     },
   },
 ];

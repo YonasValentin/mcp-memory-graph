@@ -18,6 +18,7 @@ import { sanitizePath } from '../lib/path-validation.js';
 import { CachedEmbeddingProvider } from '../embeddings/cache.js';
 import { MockEmbeddingProvider } from '../testing/mock-embedder.js';
 import { metrics, renderMetrics } from '../api/metrics.js';
+import { CURRENT_SCHEMA_VERSION } from '../db/schema.js';
 import { RateLimiter, defaultConfig as rlDefault, rateLimitMiddleware } from '../api/rate-limit.js';
 import { createTestDb } from '../testing/test-db.js';
 import { handleStore } from '../tools/store.js';
@@ -158,7 +159,7 @@ describe('connection / direct-access', () => {
     const versionRow = ro
       .prepare<[string], { value: string }>('SELECT value FROM schema_meta WHERE key = ?')
       .get('schema_version');
-    expect(versionRow?.value).toBe('4');
+    expect(versionRow?.value).toBe(String(CURRENT_SCHEMA_VERSION));
   });
 
   it('createDatabase returns an uncached fresh connection', () => {

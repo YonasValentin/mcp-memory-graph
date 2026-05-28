@@ -4,7 +4,33 @@ import type Database from 'better-sqlite3';
  * The current schema version baked into this codebase. Updated together with
  * a new entry in `runMigrations`.
  */
-export const CURRENT_SCHEMA_VERSION = 4;
+export const CURRENT_SCHEMA_VERSION = 5;
+
+/**
+ * Persistent memory-to-memory edge store (Pillar 1). Edges carry a confidence
+ * tag (EXTRACTED | INFERRED | AMBIGUOUS) and a source_kind (wikilink |
+ * co_occurrence | similarity | typed). Shared verbatim by {@link initializeSchema}
+ * (fresh DBs) and migration v5 (existing DBs) so the two paths never diverge.
+ */
+export const MEMORY_LINKS_DDL = `
+  CREATE TABLE IF NOT EXISTS memory_links (
+    id TEXT PRIMARY KEY NOT NULL,
+    source_memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    target_memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    relation TEXT NOT NULL DEFAULT 'links_to',
+    confidence TEXT NOT NULL DEFAULT 'INFERRED',
+    confidence_score REAL NOT NULL DEFAULT 0.5,
+    source_kind TEXT NOT NULL DEFAULT 'wikilink',
+    evidence_count INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+    metadata TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_mlinks_source ON memory_links(source_memory_id);
+  CREATE INDEX IF NOT EXISTS idx_mlinks_target ON memory_links(target_memory_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_mlinks_pair
+    ON memory_links(source_memory_id, target_memory_id, relation);
+`;
 
 /**
  * The embedding dimension the memories_vec virtual table is built against.
@@ -292,6 +318,9 @@ export function initializeSchema(db: Database.Database): void {
       FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
     );
   `);
+
+  // Memory-to-memory edge store (Pillar 1).
+  db.exec(MEMORY_LINKS_DDL);
 
   // Stamp the schema version + embedding dimension for future opens.
   const haveVersion = !!db
