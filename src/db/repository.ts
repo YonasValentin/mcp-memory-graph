@@ -276,6 +276,11 @@ export function deleteMemoriesByFilter(
  * The row stays in `memories` (content untouched) and remains queryable via
  * `as_of`. COALESCE keeps the first invalidation instant, so re-invalidation is
  * idempotent and never pushes `valid_to` later. Returns rows changed.
+ *
+ * The default-now branch emits ISO-8601 with millis + Z (matching JS
+ * toISOString() used for valid_from/created_at) so default `valid_to` collates
+ * correctly against same-instant ISO timestamps in lexicographic `as_of`
+ * comparisons — `datetime('now')`'s space separator would sort before `T`.
  */
 export function invalidateMemory(
   db: Database.Database,
@@ -284,7 +289,7 @@ export function invalidateMemory(
 ): number {
   const result = db
     .prepare(
-      `UPDATE memories SET valid_to = COALESCE(valid_to, COALESCE(?, datetime('now'))) WHERE id = ?`,
+      `UPDATE memories SET valid_to = COALESCE(valid_to, COALESCE(?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))) WHERE id = ?`,
     )
     .run(validTo ?? null, id);
   return result.changes;

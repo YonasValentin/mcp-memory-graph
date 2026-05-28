@@ -103,6 +103,31 @@ describe('invalidateMemory — invalidate, do not delete', () => {
     expect(afterCut.results.some((r) => r.memory.id === memory.id)).toBe(false);
   });
 
+  it('default-now valid_to is ISO-8601 (millis + Z) so it collates with valid_from/created_at', async () => {
+    const content = 'The default region for new deployments is eu-west-1.';
+    const { memory } = await handleStore(db, embedder, { content });
+
+    // Push valid_from well into the past so an as_of before now is sensible.
+    db.prepare("UPDATE memories SET valid_from = '2020-01-01T00:00:00.000Z' WHERE id = ?").run(memory.id);
+
+    invalidateMemory(db, memory.id); // no explicit validTo → default-now
+
+    const row = getRow(memory.id);
+    expect(row!.valid_to).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+
+    // Default search (currently-valid) now excludes it.
+    const now = await hybridSearch(db, embedder, searchOptions(content));
+    expect(now.results.some((r) => r.memory.id === memory.id)).toBe(false);
+
+    // Point-in-time well before now → still returned.
+    const past = await hybridSearch(
+      db,
+      embedder,
+      searchOptions(content, { as_of: '2021-01-01T00:00:00.000Z' }),
+    );
+    expect(past.results.some((r) => r.memory.id === memory.id)).toBe(true);
+  });
+
   it('is idempotent — re-invalidation keeps the first valid_to (COALESCE)', async () => {
     const { memory } = await handleStore(db, embedder, { content: 'A fact that gets invalidated twice.' });
 
