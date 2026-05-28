@@ -131,8 +131,13 @@ export function recordConflicts(
 ): void {
   if (conflicts.length === 0) return;
 
+  // Stamp the legacy flag AND invalidate point-in-time: the superseded fact
+  // stops being true the moment the superseding fact became true (the new
+  // memory's valid_from). COALESCE keeps any earlier valid_to already set.
   const supersedeStmt = db.prepare(
-    `UPDATE memories SET superseded_at = datetime('now') WHERE id = ?`,
+    `UPDATE memories SET superseded_at = datetime('now'),
+       valid_to = COALESCE(valid_to, (SELECT valid_from FROM memories WHERE id = ?))
+     WHERE id = ?`,
   );
   const insertStmt = db.prepare(`
     INSERT INTO memory_conflicts (id, old_memory_id, new_memory_id, conflict_type, description)
@@ -141,7 +146,7 @@ export function recordConflicts(
 
   for (const c of conflicts) {
     if (c.type === 'superseded') {
-      supersedeStmt.run(c.existing_memory_id);
+      supersedeStmt.run(newMemoryId, c.existing_memory_id);
     }
     if (c.type === 'duplicate' || c.type === 'superseded' || c.type === 'contradicted') {
       insertStmt.run(randomUUID(), c.existing_memory_id, newMemoryId, c.type, c.description);

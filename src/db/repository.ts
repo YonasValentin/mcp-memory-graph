@@ -271,6 +271,25 @@ export function deleteMemoriesByFilter(
   return remove();
 }
 
+/**
+ * Invalidate a memory point-in-time: stamp `valid_to` instead of deleting it.
+ * The row stays in `memories` (content untouched) and remains queryable via
+ * `as_of`. COALESCE keeps the first invalidation instant, so re-invalidation is
+ * idempotent and never pushes `valid_to` later. Returns rows changed.
+ */
+export function invalidateMemory(
+  db: Database.Database,
+  id: string,
+  validTo?: string,
+): number {
+  const result = db
+    .prepare(
+      `UPDATE memories SET valid_to = COALESCE(valid_to, COALESCE(?, datetime('now'))) WHERE id = ?`,
+    )
+    .run(validTo ?? null, id);
+  return result.changes;
+}
+
 export function getMemoryById(
   db: Database.Database,
   id: string,
