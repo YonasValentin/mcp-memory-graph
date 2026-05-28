@@ -105,6 +105,9 @@ function buildGraph(
     return i;
   };
 
+  // ORDER BY id (a random UUID) is NOT a meaningful order — it exists only to
+  // pin the row-processing order, and hence the floating-point summation order,
+  // so identical DBs always produce byte-identical scores (determinism).
   const relationships = db
     .prepare<[], RelationshipRow>(
       `SELECT source_entity_id, target_entity_id, evidence_count
@@ -255,6 +258,20 @@ export function personalizedPageRank(
       iterations++;
       break;
     }
+  }
+
+  // Specificity also down-weights the FINAL scores, not just the teleport:
+  // a hub entity that accumulated mass purely through its many edges still gets
+  // damped so it can't swallow the ranking. Re-normalize afterwards so the
+  // distribution sums back to ~1 over the reachable nodes. (No-op when
+  // specificity is disabled — every weight is 1.)
+  let scoreTotal = 0;
+  for (let i = 0; i < n; i++) {
+    score[i] *= graph.specificity[i];
+    scoreTotal += score[i];
+  }
+  if (scoreTotal > 0) {
+    for (let i = 0; i < n; i++) score[i] /= scoreTotal;
   }
 
   for (let i = 0; i < n; i++) {

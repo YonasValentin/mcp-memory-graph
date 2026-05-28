@@ -146,6 +146,35 @@ describe('Personalized PageRank over the entity graph (Pillar 3, T4)', () => {
     expect(ids).not.toContain(m3);
   });
 
+  it('specificity tilt down-weights a high-mention hub vs. a rare node', () => {
+    const db = createTestDb();
+    // Symmetric graph: seed S links to two structurally identical leaves H and
+    // R (same edge weight, both leaves, both one hop from S). The ONLY thing
+    // distinguishing them is mention_count, so any score difference is purely
+    // the specificity tilt.
+    const S = findOrCreateEntity(db, 'SeedRoot', 'concept');
+    const H = findOrCreateEntity(db, 'HubLeaf', 'concept'); // common → low specificity
+    const R = findOrCreateEntity(db, 'RareLeaf', 'concept'); // rare → high specificity
+
+    addEdge(db, S, H);
+    addEdge(db, S, R);
+
+    // Make H a hub (high mention_count) and R rare. Direct SQL so the counts are
+    // deterministic and not perturbed by findOrCreateEntity's per-call bumps.
+    db.prepare('UPDATE entities SET mention_count = ? WHERE id = ?').run(1000, H);
+    db.prepare('UPDATE entities SET mention_count = ? WHERE id = ?').run(0, R);
+
+    // Without specificity the graph is symmetric → H and R score identically.
+    const flat = personalizedPageRank(db, [S], { useSpecificity: false });
+    expect(flat.get(H)).toBeCloseTo(flat.get(R)!, 10);
+
+    // With specificity the rare leaf out-ranks the hub, and the hub is measurably
+    // down-weighted relative to the flat (symmetric) baseline.
+    const tilted = personalizedPageRank(db, [S], { useSpecificity: true });
+    expect(tilted.get(R)!).toBeGreaterThan(tilted.get(H)!);
+    expect(tilted.get(H)!).toBeLessThan(flat.get(H)!);
+  });
+
   it('respects the limit option', () => {
     const db = createTestDb();
     const A = findOrCreateEntity(db, 'Hub', 'concept');
