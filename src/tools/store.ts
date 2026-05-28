@@ -7,6 +7,7 @@ import { extractEntitiesRegex } from '../graph/entity-extractor.js';
 import { storeExtractedEntities } from '../graph/entity-store.js';
 import { detectConflicts, recordConflicts, type ConflictResult } from '../graph/conflict-resolver.js';
 import { buildSimilarityEdges } from '../graph/similarity-edges.js';
+import { contextualizeForEmbedding } from '../search/contextual.js';
 import { logger } from '../lib/logger.js';
 
 interface StoreResult {
@@ -21,7 +22,18 @@ export async function handleStore(
   input: MemoryInput,
 ): Promise<StoreResult> {
   const now = new Date().toISOString();
-  const embedding = await embedder.embed(input.content);
+  // Contextual indexing: embed the content with a deterministic context prefix
+  // (title / document_type / namespace) so the vector captures context the bare
+  // chunk loses. No-ops to bare content when there is no meaningful context.
+  // The RAW content (input.content) is what gets stored — the prefix is
+  // embed-time only. (TODO: extend to ingest.ts / vault sync chunk paths.)
+  const embedding = await embedder.embed(
+    contextualizeForEmbedding(input.content, {
+      title: input.title,
+      document_type: input.document_type,
+      namespace: input.namespace,
+    }),
+  );
 
   // Read-only conflict scan BEFORE the insert so the FK target check can't fail.
   let conflicts: ConflictResult[] = [];
