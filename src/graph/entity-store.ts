@@ -88,13 +88,42 @@ export function storeExtractedEntities(
   extractedBy: string,
 ): void {
   const store = db.transaction(() => {
+    const entityIds: string[] = [];
     for (const entity of entities) {
       const entityId = findOrCreateEntity(db, entity.name, entity.type);
       linkEntityToMemory(db, memoryId, entityId, 'mention', extractedBy, entity.confidence);
+      entityIds.push(entityId);
     }
+    // Entities mentioned together in one memory co-occur — materialize that as
+    // graph edges so the knowledge graph actually has edges (not just nodes).
+    buildCooccurrenceEdges(db, entityIds);
   });
 
   store();
+}
+
+// Cap pair-building so a memory mentioning many entities can't explode into an
+// O(n^2) edge storm. Entities arrive confidence-sorted, so the cap keeps the
+// strongest signals.
+const MAX_COOCCURRENCE_ENTITIES = 12;
+
+/**
+ * Creates `co_occurs` edges between every unique pair of entities that appeared
+ * in the same memory. Pairs are ordered canonically (by id) so (A,B) and (B,A)
+ * collapse onto one edge whose `evidence_count` grows each time the pair recurs.
+ */
+export function buildCooccurrenceEdges(
+  db: Database.Database,
+  entityIds: string[],
+): void {
+  const unique = [...new Set(entityIds)].slice(0, MAX_COOCCURRENCE_ENTITIES);
+  for (let i = 0; i < unique.length; i++) {
+    for (let j = i + 1; j < unique.length; j++) {
+      const [source, target] =
+        unique[i] < unique[j] ? [unique[i], unique[j]] : [unique[j], unique[i]];
+      findOrCreateRelationship(db, source, target, 'co_occurs');
+    }
+  }
 }
 
 // ── Relationships ───────────────────────────────────────────────────────
