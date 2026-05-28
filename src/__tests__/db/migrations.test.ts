@@ -14,6 +14,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import { initializeSchema, configuredDimensions, CURRENT_SCHEMA_VERSION } from '../../db/schema.js';
+import { runMigrations } from '../../db/migrations.js';
 
 function freshDb(): Database.Database {
   const db = new Database(':memory:');
@@ -91,6 +92,57 @@ describe('initializeSchema — legacy DB (E1 regression)', () => {
     db.prepare("DELETE FROM schema_meta WHERE key = 'schema_version'").run();
 
     expect(() => initializeSchema(db)).not.toThrow();
+    const version = db
+      .prepare<[string], { value: string }>('SELECT value FROM schema_meta WHERE key = ?')
+      .get('schema_version');
+    expect(version?.value).toBe(String(CURRENT_SCHEMA_VERSION));
+  });
+});
+
+describe('migration v6 — bi-temporal backfill (pre-v6 upgrade path)', () => {
+  it('populates valid_from from created_at for rows that predate v6', () => {
+    const db = freshDb();
+    initializeSchema(db); // current shape — v6 columns already exist
+
+    // Seed a memory + an edge that point at each other, then simulate a
+    // pre-v6 row: NULL out valid_from (the migration backfill must repopulate
+    // it from created_at) while valid_to / tx_expired stay NULL throughout.
+    db.prepare(
+      "INSERT INTO memories (id, content, created_at) VALUES ('m1', 'first', '2024-01-01T00:00:00.000Z')",
+    ).run();
+    db.prepare(
+      "INSERT INTO memories (id, content, created_at) VALUES ('m2', 'second', '2024-01-02T00:00:00.000Z')",
+    ).run();
+    db.prepare(
+      `INSERT INTO memory_links (id, source_memory_id, target_memory_id, created_at)
+       VALUES ('e1', 'm1', 'm2', '2024-01-03T00:00:00.000Z')`,
+    ).run();
+    db.prepare('UPDATE memories SET valid_from = NULL').run();
+    db.prepare('UPDATE memory_links SET valid_from = NULL').run();
+
+    // Re-run migrations from v5 so the v6 ALTER (no-op here) + backfill execute.
+    db.prepare("UPDATE schema_meta SET value = '5' WHERE key = 'schema_version'").run();
+    runMigrations(db);
+
+    const mem = db
+      .prepare<[string], { created_at: string; valid_from: string | null; valid_to: string | null; tx_expired: string | null }>(
+        'SELECT created_at, valid_from, valid_to, tx_expired FROM memories WHERE id = ?',
+      )
+      .get('m1');
+    expect(mem?.valid_from).toBe(mem?.created_at);
+    expect(mem?.valid_to).toBeNull();
+    expect(mem?.tx_expired).toBeNull();
+
+    const edge = db
+      .prepare<[string], { created_at: string; valid_from: string | null; valid_to: string | null; tx_expired: string | null }>(
+        'SELECT created_at, valid_from, valid_to, tx_expired FROM memory_links WHERE id = ?',
+      )
+      .get('e1');
+    expect(edge?.valid_from).toBe(edge?.created_at);
+    expect(edge?.valid_to).toBeNull();
+    expect(edge?.tx_expired).toBeNull();
+
+    // The whole DB is now stamped at the current version.
     const version = db
       .prepare<[string], { value: string }>('SELECT value FROM schema_meta WHERE key = ?')
       .get('schema_version');
