@@ -175,6 +175,34 @@ const migrations: Migration[] = [
       db.exec(MEMORY_LINKS_DDL);
     },
   },
+  {
+    version: 6,
+    up: (db) => {
+      // Bi-temporal substrate: facts are invalidated, not deleted, so they can
+      // be queried point-in-time (Zep/Graphiti model). `valid_from` is when the
+      // fact became true, `valid_to` when it stopped (NULL = still valid), and
+      // `tx_expired` when the row was retracted (NULL = not retracted). The
+      // existing `created_at` is the transaction-created time (tx_created).
+      const addColumn = (sql: string) => {
+        try { db.exec(sql); } catch { /* column already exists */ }
+      };
+
+      addColumn('ALTER TABLE memories ADD COLUMN valid_from TEXT');
+      addColumn('ALTER TABLE memories ADD COLUMN valid_to TEXT');
+      addColumn('ALTER TABLE memories ADD COLUMN tx_expired TEXT');
+
+      addColumn('ALTER TABLE memory_links ADD COLUMN valid_from TEXT');
+      addColumn('ALTER TABLE memory_links ADD COLUMN valid_to TEXT');
+      addColumn('ALTER TABLE memory_links ADD COLUMN tx_expired TEXT');
+
+      // SQLite can't add a column with a non-constant default, so backfill the
+      // validity start from each row's transaction-created time after the fact.
+      db.exec(`
+        UPDATE memories SET valid_from = created_at WHERE valid_from IS NULL;
+        UPDATE memory_links SET valid_from = created_at WHERE valid_from IS NULL;
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

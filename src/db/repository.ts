@@ -12,12 +12,14 @@ export function insertMemory(
         id, scope, namespace, title, content, document_type, source,
         author, department, tags, access_level, language, metadata,
         parent_id, chunk_index, version, created_at, updated_at, expires_at,
-        access_count, last_accessed_at, importance_score, confidence_score
+        access_count, last_accessed_at, importance_score, confidence_score,
+        valid_from, valid_to, tx_expired
       ) VALUES (
         @id, @scope, @namespace, @title, @content, @document_type, @source,
         @author, @department, @tags, @access_level, @language, @metadata,
         @parent_id, @chunk_index, @version, @created_at, @updated_at, @expires_at,
-        @access_count, @last_accessed_at, @importance_score, @confidence_score
+        @access_count, @last_accessed_at, @importance_score, @confidence_score,
+        @created_at, NULL, NULL
       )
     `);
 
