@@ -13,6 +13,7 @@ import { insertMemory, deleteMemory } from '../db/repository.js';
 import { parseVaultFile } from './parser.js';
 import { scanVault } from './scanner.js';
 import { chunkContent } from '../chunking/chunker.js';
+import { createMemoryLink } from '../graph/memory-links.js';
 
 const BATCH_SIZE = 50;
 
@@ -192,6 +193,16 @@ export async function syncVault(
     }
   }
 
+  // Resolve [[wikilinks]] into real memory→memory edges now that every target
+  // memory in this vault exists (handles forward references). Unresolved targets
+  // are left as gaps — no ghost edges.
+  try {
+    resolveVaultWikilinks(db, options.vaultPath, vaultName);
+  } catch (err) /* c8 ignore start */ {
+    errors.push(`Wikilink resolution failed: ${errorMessage(err)}`);
+  }
+  /* c8 ignore stop */
+
   return {
     vault_path: options.vaultPath,
     vault_name: vaultName,
@@ -343,6 +354,79 @@ async function ingestLargeFile(
   insertAll();
 
   return { parentId: parentRow.id, count: 1 + chunks.length };
+}
+
+/** Normalizes a title / filename / wikilink target to a comparable key. */
+function normalizeLinkKey(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+interface VaultLinkRow {
+  id: string;
+  title: string | null;
+  source: string | null;
+  metadata: string | null;
+}
+
+/**
+ * Resolves each note's `[[wikilinks]]` (captured in metadata.links by the
+ * parser) into EXTRACTED `links_to` memory edges. Targets are matched against
+ * note titles and filenames within the same vault. Unresolved targets create
+ * no edge (they are knowledge gaps / ghost nodes).
+ */
+function resolveVaultWikilinks(
+  db: Database.Database,
+  vaultPath: string,
+  vaultName: string,
+): void {
+  const rows = db
+    .prepare<[string], VaultLinkRow>(
+      'SELECT id, title, source, metadata FROM memories WHERE parent_id IS NULL AND namespace = ?',
+    )
+    .all(vaultName);
+
+  const index = new Map<string, string>();
+  const sources: Array<{ id: string; links: string[] }> = [];
+
+  for (const row of rows) {
+    let meta: { vault_path?: string; links?: unknown } | null = null;
+    try {
+      meta = row.metadata ? JSON.parse(row.metadata) : null;
+    } catch {
+      meta = null;
+    }
+    if (!meta || meta.vault_path !== vaultPath) continue;
+
+    if (row.title) index.set(normalizeLinkKey(row.title), row.id);
+    if (typeof row.source === 'string') {
+      const base = row.source.replace(/\.md$/i, '').split('/').pop() ?? row.source;
+      index.set(normalizeLinkKey(base), row.id);
+    }
+
+    const links = Array.isArray(meta.links)
+      ? (meta.links.filter((l): l is string => typeof l === 'string'))
+      : [];
+    sources.push({ id: row.id, links });
+  }
+
+  const apply = db.transaction(() => {
+    for (const { id, links } of sources) {
+      for (const target of links) {
+        const targetId = index.get(normalizeLinkKey(target));
+        if (targetId && targetId !== id) {
+          createMemoryLink(db, {
+            sourceId: id,
+            targetId,
+            relation: 'links_to',
+            confidence: 'EXTRACTED',
+            confidenceScore: 1,
+            sourceKind: 'wikilink',
+          });
+        }
+      }
+    }
+  });
+  apply();
 }
 
 /* c8 ignore start */
