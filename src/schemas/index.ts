@@ -176,6 +176,15 @@ export const MemorySearchSchema = z.object({
       'ISO 8601 point-in-time: return memories that were valid at this instant ' +
       '(bi-temporal). Defaults to currently-valid memories when omitted.',
     ),
+  use_graph: z
+    .boolean()
+    .default(false)
+    .describe(
+      'Enable HippoRAG multi-hop recall: seed the entity graph from the query ' +
+      'and fuse Personalized PageRank as a third ranker, surfacing memories ' +
+      'connected through entities (associative recall) that pure vector+keyword ' +
+      'search misses. Default false.',
+    ),
   detail_level: z
     .enum(['summary', 'full', 'ids_only'])
     .default('summary')

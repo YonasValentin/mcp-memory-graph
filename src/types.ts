@@ -117,6 +117,13 @@ export interface SearchOptions {
   min_confidence?: number;
   /** ISO-8601 instant: return what was valid at this point in time instead of currently-valid. */
   as_of?: string;
+  /**
+   * Opt-in HippoRAG multi-hop recall. When true, seed entities are linked from
+   * the query and Personalized PageRank fuses graph-reachable memories into the
+   * results as a third ranker. Default false — leaves the vector+keyword path
+   * unchanged.
+   */
+  use_graph?: boolean;
 }
 
 export interface TemporalDecayConfig {

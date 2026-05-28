@@ -3,6 +3,9 @@ import type { EmbeddingProvider, SearchOptions, SearchResult, SearchResultSummar
 import { applyTemporalDecay } from './temporal.js';
 import { computeConfidence, confidenceLabel } from './scoring.js';
 import { rowToMemory } from '../db/repository.js';
+import { extractEntitiesRegex } from '../graph/entity-extractor.js';
+import { normalizeName } from '../graph/entity-store.js';
+import { rankMemoriesByPPR } from '../graph/pagerank.js';
 
 // Smart/curly quotes that FTS5 can't parse and that users frequently paste.
 const SMART_QUOTES_RE = /[‘’‚‛“”„‟«»]/g;
@@ -37,6 +40,40 @@ export interface HybridSearchResponse {
   results: SearchResult[];
   total: number;
   truncated: boolean;
+}
+
+/**
+ * Query → seed entity ids for HippoRAG PPR (T5).
+ *
+ * Two complementary candidate sources, both normalized via {@link normalizeName}
+ * and matched exactly against `entities.normalized_name`:
+ *   1. raw query tokens (so a bare "ReactService" links even though the regex
+ *      only fires on 2+ humps, which it does here, but tokens also cover
+ *      single-word tool/concept names already present as entities), and
+ *   2. {@link extractEntitiesRegex} candidates (PascalCase, tools, patterns…).
+ * Returns deduped entity ids; empty when nothing links (caller then skips PPR).
+ */
+function linkQueryEntities(db: Database.Database, query: string): string[] {
+  const candidates = new Set<string>();
+  for (const token of query.split(/\s+/)) {
+    const n = normalizeName(token);
+    if (n.length > 0) candidates.add(n);
+  }
+  for (const entity of extractEntitiesRegex(query)) {
+    const n = normalizeName(entity.name);
+    if (n.length > 0) candidates.add(n);
+  }
+  if (candidates.size === 0) return [];
+
+  const names = [...candidates];
+  const placeholders = names.map(() => '?').join(',');
+  const rows = db
+    .prepare<string[], { id: string }>(
+      `SELECT id FROM entities WHERE normalized_name IN (${placeholders})`,
+    )
+    .all(...names);
+
+  return [...new Set(rows.map((r) => r.id))];
 }
 
 export async function hybridSearch(
@@ -93,10 +130,36 @@ export async function hybridSearch(
     /* c8 ignore stop */
   }
 
+  // --- Graph search (HippoRAG Personalized PageRank) ---
+  // Opt-in via use_graph. Seeds the entity graph from the query's entities and
+  // ranks memories by PPR relevance — surfacing graph-reachable memories that
+  // vector/keyword missed (true multi-hop recall). pprRanking maps memory_id →
+  // rank (0-based) for the third RRF list; pprRowids carries the rowids to fold
+  // into the candidate set so those memories get fetched (subject to filters).
+  const pprRanking = new Map<number, number>();
+  const pprRowids: number[] = [];
+  if (options.use_graph) {
+    const seeds = linkQueryEntities(db, options.query);
+    if (seeds.length > 0) {
+      const memoryIdToRowid = db.prepare<[string], { rowid: number }>(
+        'SELECT rowid FROM memories WHERE id = ?',
+      );
+      const ranked = rankMemoriesByPPR(db, seeds, { limit: oversampleLimit });
+      let rank = 0;
+      for (const { memory_id } of ranked) {
+        const row = memoryIdToRowid.get(memory_id);
+        if (!row) continue;
+        pprRanking.set(row.rowid, rank++);
+        pprRowids.push(row.rowid);
+      }
+    }
+  }
+
   // --- Collect candidate rowids ---
   const candidateRowids = new Set<number>();
   for (const rowid of vectorResults.keys()) candidateRowids.add(rowid);
   for (const rowid of keywordResults.keys()) candidateRowids.add(rowid);
+  for (const rowid of pprRowids) candidateRowids.add(rowid);
 
   if (candidateRowids.size === 0) return { results: [], total: 0, truncated: false };
 
@@ -187,6 +250,14 @@ export async function hybridSearch(
   }
 
   for (const { rowid, rank } of keywordRanking) {
+    if (!rowMap.has(rowid)) continue;
+    const current = rrfScores.get(rowid) ?? 0;
+    rrfScores.set(rowid, current + 1 / (K + rank));
+  }
+
+  // Third RRF list: HippoRAG PPR. Same K=60 fusion as vector/keyword above, so
+  // graph-reachable memories blend into the ranking instead of overriding it.
+  for (const [rowid, rank] of pprRanking) {
     if (!rowMap.has(rowid)) continue;
     const current = rrfScores.get(rowid) ?? 0;
     rrfScores.set(rowid, current + 1 / (K + rank));
