@@ -12,6 +12,7 @@ import {
   rowToMemory,
 } from '../db/repository.js';
 import { getConfig } from '../config/loader.js';
+import { contextualizeForEmbedding } from '../search/contextual.js';
 
 const CONTENT_MERGE_SEPARATOR = '\n\n---\n\n';
 
@@ -210,8 +211,8 @@ export async function handleConsolidate(
     try {
       const minImportance = getConfig().consolidation.min_importance_to_keep;
       const lowQualityRows = db
-        .prepare<unknown[], { id: string; content: string }>(
-          `SELECT id, content FROM memories
+        .prepare<unknown[], { id: string; content: string; title: string | null; namespace: string | null; document_type: string | null }>(
+          `SELECT id, content, title, namespace, document_type FROM memories
            WHERE importance_score < ?
              AND confidence_score < 0.3
              AND access_count = 0
@@ -222,7 +223,14 @@ export async function handleConsolidate(
 
       for (const row of lowQualityRows) {
         if (limitReached()) break;
-        const embedding = await embedder.embed(row.content);
+        // Probe in the same vector space handleStore wrote — contextualized.
+        const embedding = await embedder.embed(
+          contextualizeForEmbedding(row.content, {
+            title: row.title,
+            document_type: row.document_type,
+            namespace: row.namespace,
+          }),
+        );
         embeddingOps++;
         const duplicates = findNearDuplicates(db, embedding, distanceThreshold, 5);
         const hasNearDuplicate = duplicates.some((d) => d.id !== row.id);
@@ -244,8 +252,8 @@ export async function handleConsolidate(
   if (!limitReached()) {
     try {
       const allMemories = db
-        .prepare<unknown[], { id: string; content: string; importance_score: number }>(
-          `SELECT id, content, importance_score FROM memories
+        .prepare<unknown[], { id: string; content: string; importance_score: number; title: string | null; namespace: string | null; document_type: string | null }>(
+          `SELECT id, content, importance_score, title, namespace, document_type FROM memories
            WHERE parent_id IS NULL${filterClause}
            ORDER BY importance_score DESC`,
         )
@@ -257,7 +265,14 @@ export async function handleConsolidate(
         if (limitReached()) break;
         if (mergedIds.has(mem.id)) continue;
 
-        const embedding = await embedder.embed(mem.content);
+        // Probe in the same vector space handleStore wrote — contextualized.
+        const embedding = await embedder.embed(
+          contextualizeForEmbedding(mem.content, {
+            title: mem.title,
+            document_type: mem.document_type,
+            namespace: mem.namespace,
+          }),
+        );
         embeddingOps++;
         const duplicates = findNearDuplicates(db, embedding, distanceThreshold, 10);
         const candidates = duplicates.filter((d) => d.id !== mem.id && !mergedIds.has(d.id));
@@ -281,7 +296,16 @@ export async function handleConsolidate(
           if (!dryRun) {
             let newEmbedding: Float32Array | undefined;
             if (merged !== primaryRow.content) {
-              newEmbedding = await embedder.embed(merged);
+              // Re-embed in the same vector space using the surviving PRIMARY
+              // row's metadata (merging differing titles is ambiguous; the
+              // kept record's context is the correct choice).
+              newEmbedding = await embedder.embed(
+                contextualizeForEmbedding(merged, {
+                  title: primaryRow.title,
+                  document_type: primaryRow.document_type,
+                  namespace: primaryRow.namespace,
+                }),
+              );
               embeddingOps++;
             }
 
