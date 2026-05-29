@@ -420,4 +420,24 @@ export interface ServerConfig {
     categories: ExtractedLearning['type'][];
     min_confidence: number;
   };
+  /** Where the memory database lives (set by `memory init`). */
+  storage: {
+    db_path?: string;
+  };
+  /** Solo-vs-team sharing config written by the interactive init wizard. */
+  sharing: {
+    mode: 'solo' | 'team';
+    /** Commit the graph artifact to git so teammates share recall. */
+    commit_graph: boolean;
+    /** Optional remote MCP endpoint for team-shared memory. */
+    remote_endpoint?: string;
+  };
+  /** Optional Markdown vault for round-tripping memories to/from files. */
+  vault: {
+    path?: string;
+  };
+  /** Auto-capture (Claude Code hooks) preference from the init wizard. */
+  capture: {
+    auto_capture: boolean;
+  };
 }

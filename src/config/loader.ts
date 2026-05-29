@@ -45,6 +45,29 @@ const ServerConfigSchema = z.object({
       min_confidence: z.number().min(0).max(1).default(0.4),
     })
     .default({}),
+  // ── Init-wizard sections (additive — all optional with defaults) ────────
+  storage: z
+    .object({
+      db_path: z.string().optional(),
+    })
+    .default({}),
+  sharing: z
+    .object({
+      mode: z.enum(['solo', 'team']).default('solo'),
+      commit_graph: z.boolean().default(false),
+      remote_endpoint: z.string().optional(),
+    })
+    .default({}),
+  vault: z
+    .object({
+      path: z.string().optional(),
+    })
+    .default({}),
+  capture: z
+    .object({
+      auto_capture: z.boolean().default(true),
+    })
+    .default({}),
 });
 
 // ── Singleton Cache ─────────────────────────────────────────────────────
