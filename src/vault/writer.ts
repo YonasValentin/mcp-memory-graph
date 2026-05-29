@@ -12,9 +12,11 @@ import { rowToMemory } from '../db/repository.js';
  * and edit. Output is lossless — every written file parses back via
  * `parseVaultFile` to an equivalent title / tags / content / metadata.
  *
- * Path safety is the critical concern: memory titles are untrusted (a title like
- * `../../etc/passwd` must never escape the vault dir). Filenames are sanitized
- * and every write is confined under the resolved real vault path.
+ * Path safety is the critical concern: memory titles and namespaces are
+ * untrusted (a title like `../../etc/passwd` must never escape the vault dir).
+ * Filenames/namespaces are sanitized, and every write is confined under the
+ * resolved real vault path — confineToVault rejects both lexical `..` traversal
+ * AND a target whose existing parent is a symlink escaping the vault (TOCTOU).
  */
 
 /** Characters that are unsafe in a filename across platforms, plus control chars. */
@@ -28,12 +30,36 @@ const MAX_FILENAME_STEM = 80;
  * Single source of truth for path confinement: every vault write (markdown
  * export, JSON Canvas) routes through this so an untrusted, traversal-bearing
  * input can never escape the vault dir.
+ *
+ * Two layers of defence:
+ *   1. Lexical: the resolved target must stay under `vaultRoot` (kills `..`).
+ *   2. Symlink (TOCTOU): a lexically-safe target can still escape if an
+ *      intermediate directory is a symlink pointing outside the vault (e.g. a
+ *      pre-planted `<vault>/notes -> /etc`). So we realpath the deepest EXISTING
+ *      ancestor of the target and re-verify it stays under `vaultRoot`. This
+ *      catches a symlinked namespace subdir before `writeFileSync` follows it.
  */
 export function confineToVault(vaultRoot: string, relPath: string): string | null {
   const absTarget = path.resolve(vaultRoot, relPath);
   if (absTarget !== vaultRoot && !absTarget.startsWith(vaultRoot + path.sep)) {
     return null;
   }
+
+  // Walk up to the deepest ancestor that already exists on disk and resolve its
+  // real path. If any existing component is a symlink that escapes the vault,
+  // the realpath will fall outside `vaultRoot` and we reject.
+  let probe = absTarget;
+  while (probe !== vaultRoot && !fs.existsSync(probe)) {
+    const parent = path.dirname(probe);
+    /* c8 ignore next */
+    if (parent === probe) break; // filesystem root reached (defensive)
+    probe = parent;
+  }
+  const realExisting = fs.realpathSync(probe);
+  if (realExisting !== vaultRoot && !realExisting.startsWith(vaultRoot + path.sep)) {
+    return null;
+  }
+
   return absTarget;
 }
 
@@ -50,7 +76,10 @@ export function memoryToMarkdown(memory: Memory): string {
   front.scope = memory.scope;
   if (memory.namespace) front.namespace = memory.namespace;
   if (memory.document_type) front.document_type = memory.document_type;
-  if (memory.tags.length > 0) front.tags = memory.tags;
+  // Emit tags lowercased so the round-trip is lossless: parseVaultFile ->
+  // normalizeFrontmatterTags lowercases every tag, so emitting mixed-case here
+  // (e.g. 'Infra') would parse back as 'infra' and break equivalence.
+  if (memory.tags.length > 0) front.tags = memory.tags.map((t) => t.toLowerCase());
   front.access_level = memory.access_level;
   front.language = memory.language;
   front.created_at = memory.created_at;
@@ -68,15 +97,16 @@ export function memoryToMarkdown(memory: Memory): string {
  * its id when the title yields nothing safe). Path separators, `..`, and unsafe
  * characters are stripped — a malicious title can never escape the vault dir.
  *
- * The filename is suffixed with a short slice of the (unique) memory id, which
- * makes it both deterministic and collision-safe: two memories sharing a title
- * still map to distinct files.
+ * The filename is suffixed with the FULL sanitized memory id (UUID with hyphens
+ * stripped → 32 hex chars), which makes it both deterministic and collision-safe.
+ * A short 8-char slice (~32 bits) risked a silent overwrite for two same-title
+ * memories sharing an id prefix; the full id removes that birthday-bound hazard.
  */
 export function safeVaultFilename(memory: Memory): string {
-  // memory.id is a UUID, so the alnum-only slice is always non-empty; the
+  // memory.id is a UUID, so the alnum-only id is always non-empty; the
   // `|| 'memory'` tail is purely defensive.
   /* c8 ignore next */
-  const idSlice = memory.id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8) || 'memory';
+  const idSlice = memory.id.replace(/[^a-zA-Z0-9]/g, '') || 'memory';
 
   const raw = memory.title ?? '';
   const stem = raw
@@ -93,8 +123,8 @@ export function safeVaultFilename(memory: Memory): string {
     return `${idSlice}.md`;
   }
 
-  // Title-derived stem is non-unique by nature → suffix the id slice so two
-  // same-title memories never collide and the result stays deterministic.
+  // Title-derived stem is non-unique by nature → suffix the full sanitized id so
+  // two same-title memories never collide and the result stays deterministic.
   return `${stem}-${idSlice}.md`;
 }
 
@@ -151,12 +181,12 @@ export function exportMemoriesToVault(
     const subdir = memory.namespace ? safeSubdir(memory.namespace) : '';
     const relPath = subdir ? path.join(subdir, filename) : filename;
 
-    // Confine the write under the real vault root. Defence in depth:
-    // sanitization above already prevents escape, so this guard never trips in
-    // practice.
-    /* c8 ignore next */
+    // Confine the write under the REAL vault root. Lexical sanitization above
+    // prevents `..` traversal; confineToVault additionally rejects a target
+    // whose existing parent is a symlink escaping the vault (TOCTOU), so a
+    // pre-planted `<vault>/<namespace> -> /outside` symlink is skipped, never
+    // written through.
     const absTarget = confineToVault(vaultRoot, relPath);
-    /* c8 ignore next */
     if (absTarget === null) continue;
 
     fs.mkdirSync(path.dirname(absTarget), { recursive: true });
