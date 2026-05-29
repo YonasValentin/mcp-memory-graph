@@ -1,11 +1,12 @@
 import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import type { EmbeddingProvider, Memory, MemoryInput, MemoryRow } from '../types.js';
-import { insertMemory, invalidateMemory, getMemoryById, updateMemory, rowToMemory } from '../db/repository.js';
+import { insertMemory, invalidateMemory, getMemoryById, updateMemory, rowToMemory, findNearDuplicates } from '../db/repository.js';
 import { computeContentSignal } from '../search/content-signals.js';
 import { extractEntitiesRegex } from '../graph/entity-extractor.js';
 import { storeExtractedEntities } from '../graph/entity-store.js';
 import { detectConflicts, recordConflicts, type ConflictResult } from '../graph/conflict-resolver.js';
+import { detectContradictions, type NliClassifier } from '../graph/contradiction.js';
 import { buildSimilarityEdges } from '../graph/similarity-edges.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
 import { decideWriteOperation, type WriteOp } from '../graph/write-gate.js';
@@ -25,6 +26,7 @@ export async function handleStore(
   db: Database.Database,
   embedder: EmbeddingProvider,
   input: MemoryInput,
+  nli?: NliClassifier,
 ): Promise<StoreResult> {
   const now = new Date().toISOString();
   // Contextual indexing: embed the content with a deterministic context prefix
@@ -54,8 +56,41 @@ export async function handleStore(
   const decision = decideWriteOperation(conflicts, input.on_conflict ?? 'add');
   const conflictsOut = conflicts.length > 0 ? conflicts : undefined;
 
+  // ── T10: opt-in NLI contradiction check (self-correcting memory). ──
+  // Only runs when a classifier is injected AND the caller asked to supersede.
+  // It reads each near neighbor as a premise vs. the new content as hypothesis,
+  // catching real logical contradictions (negations) the overlap heuristic above
+  // is blind to. Any contradicted memory is invalidated (bi-temporal retire) and
+  // the new memory is added anew — operation reported as DELETE. When `nli` is
+  // undefined this whole block is skipped, so the default path is unchanged.
+  const nliInvalidated: string[] = [];
+  if (nli && (input.on_conflict ?? 'add') === 'supersede') {
+    const shortlist = findNearDuplicates(db, embedding, 0.5, 5);
+    const candidates: { id: string; content: string }[] = [];
+    for (const hit of shortlist) {
+      // Only consider still-valid facts as contradiction candidates.
+      const row = db
+        .prepare<[string], { content: string; valid_to: string | null }>(
+          'SELECT content, valid_to FROM memories WHERE id = ?',
+        )
+        .get(hit.id);
+      if (row && row.valid_to === null) {
+        candidates.push({ id: hit.id, content: row.content });
+      }
+    }
+    const contradicted = await detectContradictions(nli, input.content, candidates);
+    for (const c of contradicted) {
+      invalidateMemory(db, c.id);
+      nliInvalidated.push(c.id);
+    }
+  }
+
+  // When NLI retired a contradicted fact, the new memory always supersedes it:
+  // bypass the heuristic NOOP/UPDATE/DELETE short-circuits and insert anew.
+  const nliContradiction = nliInvalidated.length > 0;
+
   // ── NOOP: exact duplicate already present — return it without inserting. ──
-  if (decision.op === 'NOOP') {
+  if (!nliContradiction && decision.op === 'NOOP') {
     const existingRow = decision.targetId ? getMemoryById(db, decision.targetId) : null;
     if (existingRow) {
       return {
@@ -70,7 +105,7 @@ export async function handleStore(
   }
 
   // ── UPDATE: merge into the existing target via the standard update path. ──
-  if (decision.op === 'UPDATE' && decision.targetId) {
+  if (!nliContradiction && decision.op === 'UPDATE' && decision.targetId) {
     const existing = getMemoryById(db, decision.targetId);
     if (existing) {
       const mergedContent = `${existing.content}\n\n${input.content}`;
@@ -103,7 +138,7 @@ export async function handleStore(
   }
 
   // ── DELETE: invalidate (retire) the conflicting target, then ADD anew. ──
-  if (decision.op === 'DELETE' && decision.targetId) {
+  if (!nliContradiction && decision.op === 'DELETE' && decision.targetId) {
     invalidateMemory(db, decision.targetId);
     // new row goes through the normal ADD post-steps below.
   }
@@ -174,8 +209,10 @@ export async function handleStore(
   return {
     stored: true,
     memory: rowToMemory(row),
-    operation: decision.op === 'DELETE' ? 'DELETE' : 'ADD',
-    operation_reason: decision.reason,
+    operation: nliContradiction || decision.op === 'DELETE' ? 'DELETE' : 'ADD',
+    operation_reason: nliContradiction
+      ? `NLI contradiction — retired ${nliInvalidated.join(', ')} (on_conflict=supersede)`
+      : decision.reason,
     conflicts: conflictsOut,
   };
 }
