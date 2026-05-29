@@ -3,7 +3,11 @@ import { createTestDb } from '../../testing/test-db.js';
 import { MockEmbeddingProvider } from '../../testing/mock-embedder.js';
 import { handleStore } from '../../tools/store.js';
 import { hybridSearch } from '../../search/hybrid.js';
-import { CrossEncoderReranker, type Reranker } from '../../search/reranker.js';
+import {
+  CrossEncoderReranker,
+  extractRelevanceScore,
+  type Reranker,
+} from '../../search/reranker.js';
 
 /**
  * Pillar 3, T6 — optional local cross-encoder reranking stage.
@@ -44,6 +48,27 @@ async function seed(db: ReturnType<typeof createTestDb>, embedder: MockEmbedding
   const c = await handleStore(db, embedder, { content: 'deploy gamma TARGETTOKEN notes' });
   return { a: a.memory.id, b: b.memory.id, c: c.memory.id };
 }
+
+describe('extractRelevanceScore (pure)', () => {
+  it('returns the single relevance logit (logits[0]) of a ms-marco cross-encoder', () => {
+    // ms-marco-MiniLM is a single-logit relevance regressor: higher = more
+    // relevant. The raw logit IS the score (no softmax — that would collapse a
+    // 1-element vector to a constant 1.0, the bug this fix removes).
+    expect(extractRelevanceScore([6.543])).toBe(6.543); // relevant doc
+    expect(extractRelevanceScore([-11.251])).toBe(-11.251); // irrelevant doc
+  });
+
+  it('preserves ordering so a relevant doc out-scores an irrelevant one', () => {
+    // The whole point of the reranker: distinct inputs → distinct scores so the
+    // caller can reorder. (The old softmax-over-one-logit path returned 1.0 for
+    // both, destroying the signal.)
+    expect(extractRelevanceScore([6.543])).toBeGreaterThan(extractRelevanceScore([-11.251]));
+  });
+
+  it('ignores any trailing logits — only the relevance head matters', () => {
+    expect(extractRelevanceScore([2.5, 9.9, -1])).toBe(2.5);
+  });
+});
 
 describe('cross-encoder reranking stage (Pillar 3, T6)', () => {
   it('without a reranker, hybridSearch order is the deterministic baseline', async () => {

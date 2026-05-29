@@ -12,6 +12,21 @@
  * download a model; the real implementation lazy-loads on first use.
  */
 
+/**
+ * Reads the relevance score out of a ms-marco cross-encoder's raw logits.
+ *
+ * `Xenova/ms-marco-MiniLM-L-6-v2` is a SINGLE-logit relevance regressor: it
+ * emits one number per (query, doc) pair, higher = more relevant. The raw logit
+ * IS the score — we deliberately do NOT softmax it. (Running the model through
+ * the text-classification pipeline applies softmax over that 1-element vector,
+ * which is always [1.0], so every doc scored a constant 1.0 and the reranker
+ * could never reorder anything.) Pure & testable, so the only genuinely
+ * untestable code in {@link CrossEncoderReranker} is the model load/inference.
+ */
+export function extractRelevanceScore(logits: number[]): number {
+  return logits[0];
+}
+
 /** Reorders candidate docs for a query by joint relevance. */
 export interface Reranker {
   /** Returns one {id, score} per input doc (higher = more relevant). Order need
@@ -31,7 +46,8 @@ export interface Reranker {
 export class CrossEncoderReranker implements Reranker {
   readonly modelName: string;
 
-  private pipeline: any = null;
+  private tokenizer: any = null;
+  private model: any = null;
   private ready: boolean = false;
 
   constructor(modelName?: string) {
@@ -51,13 +67,18 @@ export class CrossEncoderReranker implements Reranker {
 
     const results: Array<{ id: string; score: number }> = [];
     for (const doc of docs) {
-      // ms-marco cross-encoders are single-logit relevance regressors; the
-      // text-classification pipeline surfaces that logit as `score`.
-      const output = await this.pipeline!(
-        { text: _query, text_pair: doc.text },
-        { top_k: 1 },
-      );
-      const score = Array.isArray(output) ? (output[0]?.score ?? 0) : (output?.score ?? 0);
+      // Feed the (query, doc) pair as a sentence pair via the tokenizer's
+      // text_pair, then run the model directly — the text-classification
+      // pipeline ignores text_pair and softmaxes the single logit to a constant
+      // 1.0, destroying the ranking signal. extractRelevanceScore reads the raw
+      // relevance logit (higher = more relevant).
+      const inputs = await this.tokenizer!(_query, {
+        text_pair: doc.text,
+        padding: true,
+        truncation: true,
+      });
+      const { logits } = await this.model!(inputs);
+      const score = extractRelevanceScore(Array.from(logits.data as Float32Array));
       results.push({ id: doc.id, score });
     }
     return results;
@@ -75,8 +96,11 @@ export class CrossEncoderReranker implements Reranker {
 
     console.error('Loading reranker model (first time may take a few seconds)...');
     try {
-      const { pipeline } = await import('@huggingface/transformers');
-      this.pipeline = await pipeline('text-classification', this.modelName, {
+      const { AutoTokenizer, AutoModelForSequenceClassification } = await import(
+        '@huggingface/transformers'
+      );
+      this.tokenizer = await AutoTokenizer.from_pretrained(this.modelName);
+      this.model = await AutoModelForSequenceClassification.from_pretrained(this.modelName, {
         dtype: 'fp32' as const,
         device: 'cpu' as const,
       });
