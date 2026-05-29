@@ -3,7 +3,12 @@ import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { createTestDb } from '../../testing/test-db.js';
 import { findOrCreateEntity, findOrCreateRelationship } from '../../graph/entity-store.js';
-import { detectCommunities, summarizeCommunities } from '../../graph/communities.js';
+import {
+  detectCommunities,
+  summarizeCommunities,
+  chunkIds,
+  SQLITE_MAX_VARIABLES,
+} from '../../graph/communities.js';
 import { handleCommunities } from '../../tools/communities.js';
 
 /**
@@ -63,6 +68,36 @@ function buildTwoClusters(db: Database.Database): {
 
   return { A, B, C, X, Y, Z };
 }
+
+describe('chunkIds — batches ids under the SQLite bound-parameter limit', () => {
+  it('keeps every batch at or below the chunk size and preserves all ids in order', () => {
+    const ids = Array.from({ length: 2050 }, (_, i) => `id-${i}`);
+    const batches = chunkIds(ids, 900);
+
+    // Every batch respects the cap.
+    for (const batch of batches) expect(batch.length).toBeLessThanOrEqual(900);
+    // 2050 / 900 → 3 batches (900, 900, 250).
+    expect(batches.map((b) => b.length)).toEqual([900, 900, 250]);
+    // Flattening reproduces the original list exactly (no loss, no reorder).
+    expect(batches.flat()).toEqual(ids);
+  });
+
+  it('returns no batches for an empty list', () => {
+    expect(chunkIds([], 900)).toEqual([]);
+  });
+
+  it('uses a default chunk size strictly below the SQLite 32766-variable limit', () => {
+    // The default must be small enough that a single IN-clause batch can never
+    // overflow the SQLite bound-parameter ceiling.
+    expect(SQLITE_MAX_VARIABLES).toBe(32766);
+    const huge = Array.from({ length: SQLITE_MAX_VARIABLES + 5000 }, (_, i) => `e${i}`);
+    const batches = chunkIds(huge);
+    for (const batch of batches) {
+      expect(batch.length).toBeLessThan(SQLITE_MAX_VARIABLES);
+    }
+    expect(batches.flat()).toEqual(huge);
+  });
+});
 
 describe('GraphRAG community detection over the entity graph (Pillar 5, T15)', () => {
   it('separates two densely-interlinked clusters into exactly 2 communities', () => {
@@ -179,6 +214,89 @@ describe('GraphRAG community detection over the entity graph (Pillar 5, T15)', (
       s.top_entities.some((e) => e.id === X),
     )!;
     expect(cluster2.member_memory_ids).toContain(m3);
+  });
+
+  it('summarizeCommunities handles more entities than fit in one SQL IN-batch (no "too many SQL variables")', () => {
+    // Regression: the old `WHERE id IN (?,?,…)` over EVERY entity id crashed past
+    // the SQLite ~32k bound-parameter limit. Inserting a few thousand isolated
+    // entities and forcing a tiny batch via the chunked code path proves the IN
+    // clauses are now chunked. We assert correctness (every entity surfaces as a
+    // singleton community with its real name) rather than literally inserting 33k
+    // rows, which the chunkIds unit test already covers for the boundary.
+    const db = createTestDb();
+    const N = 2500;
+    const insert = db.prepare(
+      'INSERT INTO entities (id, name, normalized_name, type, mention_count) VALUES (?, ?, ?, ?, ?)',
+    );
+    const tx = db.transaction(() => {
+      for (let i = 0; i < N; i++) {
+        insert.run(`ent-${i}`, `Name ${i}`, `name${i}`, 'concept', i);
+      }
+    });
+    tx();
+
+    // minSize 1 so all singletons return; no limit cap so we see them all.
+    const summaries = summarizeCommunities(db, { limit: N, minSize: 1 });
+    expect(summaries).toHaveLength(N);
+    // Each community is a singleton carrying exactly its own entity with the
+    // correct name pulled back through the chunked entity query.
+    for (const s of summaries) {
+      expect(s.size).toBe(1);
+      expect(s.top_entities).toHaveLength(1);
+      const e = s.top_entities[0];
+      expect(e.name).toBe(`Name ${e.id.slice(4)}`);
+    }
+  });
+
+  it('summarizeCommunities caps member_memory_ids by importance/mention_count, not lexicographic id', () => {
+    // Regression (finding 2): the cap used to keep the lexicographically-smallest
+    // member ids — arbitrary truncation. It must keep the MOST IMPORTANT memories
+    // (highest importance_score, then most-accessed), so capping never silently
+    // drops the memories that matter.
+    const db = createTestDb();
+    const A = findOrCreateEntity(db, 'CapEntity', 'concept');
+    const m1 = addMemory(db, 'low importance memory');
+    const m2 = addMemory(db, 'high importance memory');
+    const m3 = addMemory(db, 'mid importance memory');
+    // Give m2 the highest importance and m1 the lowest. Lexicographically the
+    // ids are random UUIDs, so an importance-blind cap could drop m2.
+    db.prepare('UPDATE memories SET importance_score = ? WHERE id = ?').run(0.1, m1);
+    db.prepare('UPDATE memories SET importance_score = ? WHERE id = ?').run(0.9, m2);
+    db.prepare('UPDATE memories SET importance_score = ? WHERE id = ?').run(0.5, m3);
+    link(db, m1, A);
+    link(db, m2, A);
+    link(db, m3, A);
+
+    // Cap to 1 member memory: the single survivor MUST be the most important (m2).
+    const summaries = summarizeCommunities(db, { memberMemoriesCap: 1 });
+    const cluster = summaries.find((s) => s.top_entities.some((e) => e.id === A))!;
+    expect(cluster.member_memory_ids).toEqual([m2]);
+
+    // Cap to 2: the two most important (m2 then m3), highest-importance first.
+    const top2 = summarizeCommunities(db, { memberMemoriesCap: 2 }).find((s) =>
+      s.top_entities.some((e) => e.id === A),
+    )!;
+    expect(top2.member_memory_ids).toEqual([m2, m3]);
+  });
+
+  it('summarizeCommunities member_memory_ids ordering is deterministic on tied importance', () => {
+    // When importance and access_count tie, fall back to id so output is stable.
+    const db = createTestDb();
+    const A = findOrCreateEntity(db, 'TieEntity', 'concept');
+    const ids = ['mem-aaa', 'mem-bbb', 'mem-ccc'];
+    for (const id of ids) {
+      db.prepare('INSERT INTO memories (id, content, importance_score) VALUES (?, ?, ?)').run(
+        id,
+        `content ${id}`,
+        0.5,
+      );
+      link(db, id, A);
+    }
+    const cluster = summarizeCommunities(db).find((s) =>
+      s.top_entities.some((e) => e.id === A),
+    )!;
+    // All tied on importance → ascending id tiebreak, deterministic.
+    expect(cluster.member_memory_ids).toEqual(['mem-aaa', 'mem-bbb', 'mem-ccc']);
   });
 
   it('summarizeCommunities minSize filter drops singletons', () => {
