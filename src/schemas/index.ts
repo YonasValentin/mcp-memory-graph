@@ -1015,6 +1015,22 @@ export const MemoryAttributionSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// 31. MemoryQuestionsSchema (Pillar 8) — active "questions to ask" digest
+// ---------------------------------------------------------------------------
+
+export const MemoryQuestionsSchema = z.object({
+  scope: scopeField(false),
+  namespace: namespaceField(),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(20)
+    .describe('Maximum number of questions to return (default 20)'),
+});
+
+// ---------------------------------------------------------------------------
 // REST API query/body schemas — derived from the MCP schemas above.
 // Express query strings arrive as `string | string[] | undefined`, so each
 // field uses zod preprocess to coerce numbers/arrays out of strings before

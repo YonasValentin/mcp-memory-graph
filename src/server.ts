@@ -41,6 +41,7 @@ import {
   MemoryTemplateSchema,
   MemorySessionNoteSchema,
   MemoryAttributionSchema,
+  MemoryQuestionsSchema,
 } from './schemas/index.js';
 import { handleStore } from './tools/store.js';
 import { handleSearch } from './tools/search.js';
@@ -77,6 +78,7 @@ import { handleCommunities } from './tools/communities.js';
 import { handleTemplate } from './tools/templates.js';
 import { handleSessionNote } from './tools/session-note.js';
 import { handleAttribution } from './tools/attribution.js';
+import { handleQuestions } from './tools/questions.js';
 
 import { metrics } from './api/metrics.js';
 import { logger } from './lib/logger.js';
@@ -529,6 +531,17 @@ export function createServer(): McpServer {
     instrument('memory_attribution', async (input) => {
       const parsed = MemoryAttributionSchema.parse(input);
       return handleAttribution(getDb(), parsed);
+    }),
+  );
+
+  // ── 32. memory_questions ──────────────────────────────────────────────────
+  server.tool(
+    'memory_questions',
+    'Active "questions to ask" digest. Surfaces open questions / gaps the graph is uniquely positioned to find so you know what to verify or learn next: AMBIGUOUS inferred links to confirm (verify), frequently-mentioned but barely-documented entities (gap), and disconnected memories that may be stale or mis-scoped (orphan). Returns { questions: [{ question, type, evidence }], count } over currently-valid top-level memories. Optional scope/namespace filters and limit (default 20).',
+    MemoryQuestionsSchema.shape,
+    instrument('memory_questions', async (input) => {
+      const parsed = MemoryQuestionsSchema.parse(input);
+      return handleQuestions(getDb(), parsed);
     }),
   );
 
