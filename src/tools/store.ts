@@ -1,18 +1,23 @@
 import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import type { EmbeddingProvider, Memory, MemoryInput, MemoryRow } from '../types.js';
-import { insertMemory, rowToMemory } from '../db/repository.js';
+import { insertMemory, invalidateMemory, getMemoryById, updateMemory, rowToMemory } from '../db/repository.js';
 import { computeContentSignal } from '../search/content-signals.js';
 import { extractEntitiesRegex } from '../graph/entity-extractor.js';
 import { storeExtractedEntities } from '../graph/entity-store.js';
 import { detectConflicts, recordConflicts, type ConflictResult } from '../graph/conflict-resolver.js';
 import { buildSimilarityEdges } from '../graph/similarity-edges.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
+import { decideWriteOperation, type WriteOp } from '../graph/write-gate.js';
 import { logger } from '../lib/logger.js';
 
 interface StoreResult {
   stored: boolean;
   memory: Memory;
+  /** mem0-style write classification for this call. */
+  operation: WriteOp;
+  /** Human-readable reason for the chosen operation. */
+  operation_reason: string;
   conflicts?: ConflictResult[];
 }
 
@@ -44,22 +49,66 @@ export async function handleStore(
   }
   /* c8 ignore stop */
 
-  // If an exact duplicate already exists, return it without inserting a new row.
-  const duplicate = conflicts.find((c) => c.type === 'duplicate');
-  if (duplicate) {
-    const existingRow = db
-      .prepare<[string], MemoryRow>('SELECT * FROM memories WHERE id = ?')
-      .get(duplicate.existing_memory_id);
+  // Classify the write. Default policy ('add') yields only NOOP or ADD, so the
+  // path below is byte-identical to the pre-T9 store for default callers.
+  const decision = decideWriteOperation(conflicts, input.on_conflict ?? 'add');
+  const conflictsOut = conflicts.length > 0 ? conflicts : undefined;
+
+  // ── NOOP: exact duplicate already present — return it without inserting. ──
+  if (decision.op === 'NOOP') {
+    const existingRow = decision.targetId ? getMemoryById(db, decision.targetId) : null;
     if (existingRow) {
       return {
         stored: false,
         memory: rowToMemory(existingRow),
-        conflicts,
+        operation: 'NOOP',
+        operation_reason: decision.reason,
+        conflicts: conflictsOut,
       };
     }
-    // Existing row vanished between detection and lookup — fall through and insert.
+    // Existing row vanished between detection and lookup — fall through to ADD.
   }
 
+  // ── UPDATE: merge into the existing target via the standard update path. ──
+  if (decision.op === 'UPDATE' && decision.targetId) {
+    const existing = getMemoryById(db, decision.targetId);
+    if (existing) {
+      const mergedContent = `${existing.content}\n\n${input.content}`;
+      const mergedEmbedding = await embedder.embed(
+        contextualizeForEmbedding(mergedContent, {
+          title: existing.title,
+          document_type: existing.document_type,
+          namespace: existing.namespace,
+        }),
+      );
+      // updateMemory wraps insert(memory_versions) + row update + vec re-index
+      // in a single transaction (the same path handleUpdate uses).
+      const updatedRow = updateMemory(
+        db,
+        existing.id,
+        { content: mergedContent, author: input.author ?? existing.author ?? undefined },
+        mergedEmbedding,
+      );
+      if (updatedRow) {
+        return {
+          stored: true,
+          memory: rowToMemory(updatedRow),
+          operation: 'UPDATE',
+          operation_reason: decision.reason,
+          conflicts: conflictsOut,
+        };
+      }
+      // Target vanished mid-update — fall through to ADD.
+    }
+  }
+
+  // ── DELETE: invalidate (retire) the conflicting target, then ADD anew. ──
+  if (decision.op === 'DELETE' && decision.targetId) {
+    invalidateMemory(db, decision.targetId);
+    // new row goes through the normal ADD post-steps below.
+  }
+
+  // ── ADD (and DELETE's follow-on insert). ──
   const row: MemoryRow = {
     id: randomUUID(),
     scope: input.scope ?? 'global',
@@ -125,6 +174,8 @@ export async function handleStore(
   return {
     stored: true,
     memory: rowToMemory(row),
-    conflicts: conflicts.length > 0 ? conflicts : undefined,
+    operation: decision.op === 'DELETE' ? 'DELETE' : 'ADD',
+    operation_reason: decision.reason,
+    conflicts: conflictsOut,
   };
 }

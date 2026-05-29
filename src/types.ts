@@ -88,6 +88,13 @@ export interface MemoryInput {
   metadata?: Record<string, unknown>;
   expires_at?: string;
   confidence_score?: number;
+  /**
+   * mem0-style write policy on conflict. 'add' (default) preserves today's
+   * behaviour (NOOP on exact dup, otherwise ADD). 'update' merges into a
+   * superseded-band match; 'supersede' retires the conflicting match and adds
+   * the new memory. UPDATE/DELETE are strictly opt-in.
+   */
+  on_conflict?: 'add' | 'update' | 'supersede';
 }
 
 export interface MemoryUpdate {

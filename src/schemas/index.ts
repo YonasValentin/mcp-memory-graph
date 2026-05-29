@@ -97,6 +97,15 @@ export const MemoryStoreSchema = z.object({
     .describe(
       'ISO 8601 expiration date (memory auto-excluded from search after this)',
     ),
+  on_conflict: z
+    .enum(['add', 'update', 'supersede'])
+    .default('add')
+    .describe(
+      'Write policy when a near-match exists. "add" (default): insert as new, ' +
+      'except an exact duplicate is skipped (NOOP) — identical to prior behaviour. ' +
+      '"update": merge content into the existing match (append + re-embed + version bump). ' +
+      '"supersede": retire (invalidate) the conflicting match and add this as the current one.',
+    ),
 });
 
 // ---------------------------------------------------------------------------
