@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -83,16 +83,30 @@ function corsMiddleware(allowed: string[]) {
 }
 
 /**
+ * Constant-time string comparison. `crypto.timingSafeEqual` does NOT short-circuit
+ * on the first differing byte (unlike `Buffer.compare`/`===`), so it does not leak
+ * how many leading bytes matched via timing. It throws when the two buffers differ
+ * in length, so we length-guard first and return false for unequal lengths.
+ * (A length difference is already observable from the byte count, so the guard
+ * leaks nothing the attacker can't measure directly.)
+ */
+export function timingSafeStrEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
+}
+
+/**
  * Bearer-token middleware. When MCP_AUTH_TOKEN is set, every request to the
  * mounted prefix must present `Authorization: Bearer <token>`. Constant-time
- * comparison via Buffer.compare to avoid timing attacks.
+ * comparison via `crypto.timingSafeEqual` (length-guarded) to avoid timing attacks.
  */
 function bearerMiddleware(token: string) {
-  const expected = Buffer.from(`Bearer ${token}`);
+  const expected = `Bearer ${token}`;
   return function bearerMw(req: Request, res: Response, next: NextFunction): void {
     const got = req.header('authorization') ?? '';
-    const candidate = Buffer.from(got);
-    const ok = candidate.length === expected.length && Buffer.compare(candidate, expected) === 0;
+    const ok = timingSafeStrEqual(got, expected);
     if (!ok) {
       res.status(401).json({
         error: 'Unauthorized',
