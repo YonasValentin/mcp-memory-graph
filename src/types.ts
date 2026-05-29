@@ -44,6 +44,8 @@ export interface Memory {
   last_accessed_at: string | null;
   importance_score: number;
   confidence_score: number;
+  /** How this memory came to exist (manual, vault_sync, reflection, …). */
+  provenance: ProvenanceType;
 }
 
 export interface MemoryRow {
@@ -72,6 +74,8 @@ export interface MemoryRow {
   confidence_score: number;
   /** Spaced-repetition stability: grows on access, drives the forgetting curve. */
   stability: number;
+  /** How this memory came to exist (manual, vault_sync, reflection, …). */
+  provenance?: string;
   rowid?: number;
 }
 

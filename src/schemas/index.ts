@@ -613,6 +613,22 @@ export const VaultSearchSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// 15b. MemoryExportVaultSchema (Pillar 6) — write memories OUT to a vault
+// ---------------------------------------------------------------------------
+
+export const MemoryExportVaultSchema = z.object({
+  vault_path: z
+    .string()
+    .min(1)
+    .describe(
+      'Absolute path to the target Obsidian vault directory (created if missing). ' +
+      'Memories are written as .md files with YAML frontmatter — the reverse of vault_sync.',
+    ),
+  scope: scopeField(false),
+  namespace: namespaceField(),
+});
+
+// ---------------------------------------------------------------------------
 // 16. MemoryConsolidateSchema
 // ---------------------------------------------------------------------------
 

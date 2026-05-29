@@ -23,6 +23,7 @@ import {
   VaultSyncSchema,
   VaultStatusSchema,
   VaultSearchSchema,
+  MemoryExportVaultSchema,
   MemoryConsolidateSchema,
   MemoryExtractLearningsSchema,
   MemoryManifestSchema,
@@ -53,6 +54,7 @@ import { handleImport } from './tools/import.js';
 import { handleVaultSync } from './tools/vault-sync.js';
 import { handleVaultStatus } from './tools/vault-status.js';
 import { handleVaultSearch } from './tools/vault-search.js';
+import { handleExportVault } from './tools/export-vault.js';
 import { handleConsolidate } from './tools/consolidate.js';
 import { handleExtractLearnings } from './tools/extract-learnings.js';
 import { handleManifest } from './tools/manifest.js';
@@ -321,6 +323,17 @@ export function createServer(): McpServer {
     instrument('vault_search', async (input) => {
       const parsed = VaultSearchSchema.parse(input);
       return handleVaultSearch(getDb(), await getEmbedder(), parsed);
+    }),
+  );
+
+  // ── 15b. memory_export_vault ─────────────────────────────────────────────
+  server.tool(
+    'memory_export_vault',
+    'Write memories OUT to an Obsidian vault as .md files with YAML frontmatter — the reverse of vault_sync. Each currently-valid top-level memory becomes a plain markdown file a human can open and edit; namespaced memories land under <vault>/<namespace>/. Lossless: written files parse back via the vault parser. Optionally filter by scope/namespace.',
+    MemoryExportVaultSchema.shape,
+    instrument('memory_export_vault', async (input) => {
+      const parsed = MemoryExportVaultSchema.parse(input);
+      return handleExportVault(getDb(), parsed);
     }),
   );
 

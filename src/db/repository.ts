@@ -423,6 +423,7 @@ export function rowToMemory(row: MemoryRow): Memory {
     last_accessed_at: row.last_accessed_at,
     importance_score: row.importance_score,
     confidence_score: row.confidence_score,
+    provenance: (row.provenance as Memory['provenance']) ?? 'manual',
   };
 }
 
