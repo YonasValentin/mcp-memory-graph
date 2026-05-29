@@ -18,7 +18,7 @@ export type CondensationLevel = 'full' | 'summary' | 'one_liner';
 
 export type EntityType = 'person' | 'project' | 'tool' | 'concept' | 'organization' | 'file' | 'package' | 'pattern';
 
-export type ProvenanceType = 'manual' | 'vault_sync' | 'learning_extraction' | 'consolidation_merge' | 'import' | 'ingest';
+export type ProvenanceType = 'manual' | 'vault_sync' | 'learning_extraction' | 'consolidation_merge' | 'import' | 'ingest' | 'reflection';
 
 export interface Memory {
   readonly id: string;

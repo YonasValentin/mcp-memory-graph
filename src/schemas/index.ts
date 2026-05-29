@@ -852,6 +852,47 @@ export const CoreMemoryReplaceSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// 26. MemoryReflectSchema (Pillar 5)
+// ---------------------------------------------------------------------------
+
+export const MemoryReflectSchema = z.object({
+  mode: z
+    .enum(['gather', 'store'])
+    .default('gather')
+    .describe(
+      '"gather" (default): the server SELECTs the most reflection-worthy memories ' +
+      '(high importance × recent) as material for you to synthesize. "store": ' +
+      'persist a synthesized insight back, linked to its source memories.',
+    ),
+  scope: scopeField(false),
+  namespace: namespaceField(),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .optional()
+    .describe('gather: max reflection-material rows to return (default 10)'),
+  insight: z
+    .string()
+    .optional()
+    .describe(
+      'store: the higher-level insight you synthesized from the gathered material',
+    ),
+  title: z
+    .string()
+    .optional()
+    .describe('store: optional short title for the stored insight'),
+  source_ids: z
+    .array(z.string())
+    .optional()
+    .describe(
+      'store: ids of the source memories this insight was derived from ' +
+      '(linked via "derived_from"; non-existent ids are skipped)',
+    ),
+});
+
+// ---------------------------------------------------------------------------
 // REST API query/body schemas — derived from the MCP schemas above.
 // Express query strings arrive as `string | string[] | undefined`, so each
 // field uses zod preprocess to coerce numbers/arrays out of strings before

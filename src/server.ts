@@ -34,6 +34,7 @@ import {
   CoreMemoryGetSchema,
   CoreMemoryAppendSchema,
   CoreMemoryReplaceSchema,
+  MemoryReflectSchema,
 } from './schemas/index.js';
 import { handleStore } from './tools/store.js';
 import { handleSearch } from './tools/search.js';
@@ -63,6 +64,7 @@ import {
   handleCoreMemoryAppend,
   handleCoreMemoryReplace,
 } from './tools/core-memory.js';
+import { handleReflect } from './tools/reflect.js';
 
 import { metrics } from './api/metrics.js';
 import { logger } from './lib/logger.js';
@@ -438,6 +440,17 @@ export function createServer(): McpServer {
     instrument('core_memory_replace', async (input) => {
       const parsed = CoreMemoryReplaceSchema.parse(input);
       return handleCoreMemoryReplace(getDb(), parsed);
+    }),
+  );
+
+  // ── 27. memory_reflect ────────────────────────────────────────────────────
+  server.tool(
+    'memory_reflect',
+    'Generative-Agents-style reflection (agent-driven, no LLM in the server). mode:"gather" (default) returns the most reflection-worthy memories (high importance × recent) as material plus an instruction to synthesize 1–3 higher-level insights. mode:"store" persists a synthesized insight (provenance="reflection") and "derived_from"-links it to its source memories.',
+    MemoryReflectSchema.shape,
+    instrument('memory_reflect', async (input) => {
+      const parsed = MemoryReflectSchema.parse(input);
+      return handleReflect(getDb(), await getEmbedder(), parsed);
     }),
   );
 
