@@ -1,0 +1,76 @@
+import type Database from 'better-sqlite3';
+import type { MemoryScope, MemoryRow } from '../types.js';
+import { classifyTier, type MemoryTier } from '../search/tiers.js';
+
+interface TiersInput {
+  scope?: MemoryScope;
+  namespace?: string;
+  /** Injected reference time for deterministic classification (tests). */
+  now?: Date;
+}
+
+interface TiersResult {
+  counts: Record<MemoryTier, number>;
+  total: number;
+  hot_memories: Array<{ id: string; title: string | null }>;
+}
+
+/** Max hot memories returned in the response. */
+const HOT_LIMIT = 20;
+
+type TierRow = Pick<
+  MemoryRow,
+  'id' | 'title' | 'access_count' | 'last_accessed_at' | 'created_at' | 'stability'
+>;
+
+/**
+ * Classify currently-valid, top-level memories into hot / recall / archival
+ * tiers (MemGPT-style) and return the distribution plus the hot set. Purely a
+ * read over existing columns — no schema change, no side effects.
+ */
+export function handleMemoryTiers(
+  db: Database.Database,
+  input: TiersInput = {},
+): TiersResult {
+  const now = input.now ?? new Date();
+
+  // Top-level, currently-valid memories only (bi-temporal filter).
+  const conditions: string[] = [
+    'parent_id IS NULL',
+    'valid_to IS NULL',
+    'tx_expired IS NULL',
+  ];
+  const params: unknown[] = [];
+
+  if (input.scope !== undefined) {
+    conditions.push('scope = ?');
+    params.push(input.scope);
+  }
+  if (input.namespace !== undefined) {
+    conditions.push('namespace = ?');
+    params.push(input.namespace);
+  }
+
+  const whereClause = `WHERE ${conditions.join(' AND ')}`;
+
+  const rows = db
+    .prepare<unknown[], TierRow>(
+      `SELECT id, title, access_count, last_accessed_at, created_at, stability
+       FROM memories ${whereClause}
+       ORDER BY COALESCE(last_accessed_at, created_at) DESC`,
+    )
+    .all(...params);
+
+  const counts: Record<MemoryTier, number> = { hot: 0, recall: 0, archival: 0 };
+  const hot_memories: Array<{ id: string; title: string | null }> = [];
+
+  for (const row of rows) {
+    const tier = classifyTier(row, now);
+    counts[tier] += 1;
+    if (tier === 'hot' && hot_memories.length < HOT_LIMIT) {
+      hot_memories.push({ id: row.id, title: row.title });
+    }
+  }
+
+  return { counts, total: rows.length, hot_memories };
+}

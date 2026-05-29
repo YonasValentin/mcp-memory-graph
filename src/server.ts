@@ -17,6 +17,7 @@ import {
   MemoryRelatedSchema,
   MemoryVersionsSchema,
   MemoryStatsSchema,
+  MemoryTiersSchema,
   MemoryExportSchema,
   MemoryImportSchema,
   VaultSyncSchema,
@@ -44,6 +45,7 @@ import { handleIngest } from './tools/ingest.js';
 import { handleRelated } from './tools/related.js';
 import { handleVersions } from './tools/versions.js';
 import { handleStats } from './tools/stats.js';
+import { handleMemoryTiers } from './tools/tiers.js';
 import { handleExport } from './tools/export.js';
 import { handleImport } from './tools/import.js';
 import { handleVaultSync } from './tools/vault-sync.js';
@@ -249,6 +251,17 @@ export function createServer(): McpServer {
     instrument('memory_stats', async (input) => {
       const parsed = MemoryStatsSchema.parse(input);
       return handleStats(getDb(), parsed);
+    }),
+  );
+
+  // ── 10b. memory_tiers ─────────────────────────────────────────────────────
+  server.tool(
+    'memory_tiers',
+    'Show the MemGPT-style tier distribution (hot / recall / archival) of currently-valid, top-level memories and list the hot working set. Tiers are derived from access recency + frequency — hot = frequently or recently accessed, archival = old and rarely touched, recall = everything in between. Read-only; optional scope/namespace filter.',
+    MemoryTiersSchema.shape,
+    instrument('memory_tiers', async (input) => {
+      const parsed = MemoryTiersSchema.parse(input);
+      return handleMemoryTiers(getDb(), parsed);
     }),
   );
 
