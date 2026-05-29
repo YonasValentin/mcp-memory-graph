@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -9,7 +9,7 @@ import { createServer } from '../server.js';
 import { closeDatabase } from '../db/connection.js';
 import { getReadWriteDb, getEmbedder } from '../lib/direct-access.js';
 import { registerApiRoutes, registerPublishRoutes } from '../api/routes.js';
-import { rateLimitMiddleware, RateLimiter, defaultConfig as rateLimitDefaultConfig } from '../api/rate-limit.js';
+import { rateLimitMiddleware, RateLimiter, defaultConfig as rateLimitDefaultConfig, publishConfig as rateLimitPublishConfig } from '../api/rate-limit.js';
 import { renderMetrics, METRICS_CONTENT_TYPE } from '../api/metrics.js';
 import { securityHeadersMiddleware } from '../api/security-headers.js';
 import { logger } from '../lib/logger.js';
@@ -83,16 +83,30 @@ function corsMiddleware(allowed: string[]) {
 }
 
 /**
+ * Constant-time string comparison. `crypto.timingSafeEqual` does NOT short-circuit
+ * on the first differing byte (unlike `Buffer.compare`/`===`), so it does not leak
+ * how many leading bytes matched via timing. It throws when the two buffers differ
+ * in length, so we length-guard first and return false for unequal lengths.
+ * (A length difference is already observable from the byte count, so the guard
+ * leaks nothing the attacker can't measure directly.)
+ */
+export function timingSafeStrEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
+}
+
+/**
  * Bearer-token middleware. When MCP_AUTH_TOKEN is set, every request to the
  * mounted prefix must present `Authorization: Bearer <token>`. Constant-time
- * comparison via Buffer.compare to avoid timing attacks.
+ * comparison via `crypto.timingSafeEqual` (length-guarded) to avoid timing attacks.
  */
 function bearerMiddleware(token: string) {
-  const expected = Buffer.from(`Bearer ${token}`);
+  const expected = `Bearer ${token}`;
   return function bearerMw(req: Request, res: Response, next: NextFunction): void {
     const got = req.header('authorization') ?? '';
-    const candidate = Buffer.from(got);
-    const ok = candidate.length === expected.length && Buffer.compare(candidate, expected) === 0;
+    const ok = timingSafeStrEqual(got, expected);
     if (!ok) {
       res.status(401).json({
         error: 'Unauthorized',
@@ -134,8 +148,14 @@ function localhostHostValidation(host: string) {
 export interface BuildAppDeps {
   getDb: () => Database.Database;
   getEmbedder: () => Promise<EmbeddingProvider>;
-  /** Override the rate limiter (e.g. for tests). */
+  /** Override the rate limiter for /api and /mcp (e.g. for tests). */
   rateLimiter?: RateLimiter;
+  /**
+   * Override the limiter for the public /publish surface. Defaults to a
+   * dedicated, stricter limiter; when only `rateLimiter` is supplied (tests),
+   * that one is reused so a single injected bucket drives /publish too.
+   */
+  publishRateLimiter?: RateLimiter;
 }
 
 export interface BuiltApp {
@@ -155,11 +175,20 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
   const host = bindHost();
   const allowed = parseAllowedOrigins();
   const limiter = deps.rateLimiter ?? new RateLimiter(rateLimitDefaultConfig());
+  // The public /publish surface gets its own (stricter) limiter. If a test
+  // injects a single `rateLimiter`, reuse it so the injected bucket also bounds
+  // /publish; otherwise build a dedicated stricter one.
+  const publishLimiter =
+    deps.publishRateLimiter ?? deps.rateLimiter ?? new RateLimiter(rateLimitPublishConfig());
 
   const isRemote = host !== '127.0.0.1' && host !== 'localhost' && host !== '::1';
 
   // Trust the first proxy hop so req.ip reflects X-Forwarded-For when behind
-  // Cloudflare/NGINX. Ignored when bound to loopback only.
+  // Cloudflare/NGINX (for logging/diagnostics only). Ignored when bound to
+  // loopback. NOTE: the rate limiter does NOT key on req.ip/XFF (which is
+  // client-spoofable even with trust proxy) — it keys on the immediate socket
+  // peer via `clientKey` (see src/api/rate-limit.ts), optionally augmented by an
+  // operator-trusted proxy header (MCP_TRUSTED_IP_HEADER).
   if (isRemote) {
     app.set('trust proxy', 1);
   }
@@ -272,7 +301,10 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
 
   // ── Public read-only memory wiki (T18) ────────────────────────────────
   // Mounted OUTSIDE the /api and /mcp bearer prefixes — public by design,
-  // gated instead by access_level inside the publish data layer.
+  // gated instead by access_level inside the publish data layer. It IS rate
+  // limited (its own stricter bucket): each search runs a query embedding, an
+  // unauthenticated CPU-DoS lever, so it must not be unmetered.
+  app.use('/publish', rateLimitMiddleware(publishLimiter));
   registerPublishRoutes(app, deps.getDb, deps.getEmbedder);
 
   // POST /mcp — main MCP handler
