@@ -18,6 +18,7 @@ import { createTestDb } from '../../testing/test-db.js';
 import { handleStore } from '../../tools/store.js';
 import {
   detectContradictions,
+  labelFromLogits,
   normalizeNliLabel,
   CrossEncoderNli,
   type NliClassifier,
@@ -204,6 +205,48 @@ describe('normalizeNliLabel (pure)', () => {
     expect(normalizeNliLabel('neutral')).toBe('neutral');
     expect(normalizeNliLabel('LABEL_0')).toBe('neutral'); // unknown → neutral (safe default)
     expect(normalizeNliLabel('')).toBe('neutral');
+  });
+});
+
+describe('labelFromLogits (pure)', () => {
+  // Xenova/nli-deberta-v3-xsmall emits 3 logits; its config.id2label is
+  // {0:contradiction, 1:entailment, 2:neutral}. We softmax → argmax → map the
+  // winning index through id2label → normalizeNliLabel.
+  const id2label = { '0': 'contradiction', '1': 'entailment', '2': 'neutral' };
+
+  it('picks contradiction when its logit dominates (argmax + softmax)', () => {
+    const { label, score } = labelFromLogits([8, -2, -1], id2label);
+    expect(label).toBe('contradiction');
+    expect(score).toBeGreaterThan(0.9); // softmax confidence of the winning class
+    expect(score).toBeLessThanOrEqual(1);
+  });
+
+  it('picks entailment when index 1 dominates', () => {
+    const { label } = labelFromLogits([-3, 9, 0], id2label);
+    expect(label).toBe('entailment');
+  });
+
+  it('picks neutral when index 2 dominates', () => {
+    const { label } = labelFromLogits([0, 1, 7], id2label);
+    expect(label).toBe('neutral');
+  });
+
+  it('distinguishes a contradiction pair from an entailment pair (input-dependent)', () => {
+    // The bug this fix removes returned identical scores regardless of input;
+    // crafted logits must yield DIFFERENT labels.
+    expect(labelFromLogits([6, 0, -1], id2label).label).toBe('contradiction');
+    expect(labelFromLogits([-1, 6, 0], id2label).label).toBe('entailment');
+  });
+
+  it('softmax score is the probability of the argmax class (sums to 1 across classes)', () => {
+    // Equal logits → uniform 1/3 each; the reported score is the winner's prob.
+    const { score } = labelFromLogits([1, 1, 1], id2label);
+    expect(score).toBeCloseTo(1 / 3, 5);
+  });
+
+  it('routes the winning index through normalizeNliLabel (unknown label → neutral)', () => {
+    // A single-label config (like the broken ms-marco one) → unknown → neutral.
+    expect(labelFromLogits([5], { '0': 'LABEL_0' }).label).toBe('neutral');
   });
 });
 

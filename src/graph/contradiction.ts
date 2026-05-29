@@ -34,6 +34,36 @@ export function normalizeNliLabel(raw: string): NliLabel {
 }
 
 /**
+ * Turns an NLI model's raw 3-way logits into a {label, score}: softmax over the
+ * logits, take the argmax class, map its index through the model's `id2label`
+ * (e.g. {0:contradiction, 1:entailment, 2:neutral}) and normalize. The score is
+ * the softmax probability of the winning class.
+ *
+ * Why we do this by hand instead of via the text-classification pipeline: the
+ * pipeline ignores the {text, text_pair} sentence-pair form, so it scored every
+ * (premise, hypothesis) pair identically. Reading the model's logits directly
+ * makes the result actually depend on the input. Pure & testable, so the only
+ * genuinely untestable code in {@link CrossEncoderNli} is the model
+ * load/inference itself.
+ */
+export function labelFromLogits(
+  logits: number[],
+  id2label: Record<string, string>,
+): { label: NliLabel; score: number } {
+  const max = Math.max(...logits);
+  const exps = logits.map((x) => Math.exp(x - max));
+  const sum = exps.reduce((a, b) => a + b, 0);
+  let argmax = 0;
+  for (let i = 1; i < exps.length; i++) {
+    if (exps[i] > exps[argmax]) argmax = i;
+  }
+  return {
+    label: normalizeNliLabel(id2label[String(argmax)] ?? ''),
+    score: exps[argmax] / sum,
+  };
+}
+
+/**
  * Local MNLI cross-encoder backed by `Xenova/nli-deberta-v3-xsmall` via
  * `@huggingface/transformers`. The model is lazy-loaded on first {@link classify}
  * call (mirrors {@link ../search/reranker.ts}), so constructing the class is
@@ -42,7 +72,8 @@ export function normalizeNliLabel(raw: string): NliLabel {
 export class CrossEncoderNli implements NliClassifier {
   readonly modelName: string;
 
-  private pipeline: any = null;
+  private tokenizer: any = null;
+  private model: any = null;
   private ready: boolean = false;
 
   constructor(modelName?: string) {
@@ -56,15 +87,24 @@ export class CrossEncoderNli implements NliClassifier {
 
   /* c8 ignore start */
   // Model inference — exercised only with the real model, never in the suite.
-  // (The pure label mapping it relies on, normalizeNliLabel, is unit-tested.)
+  // (The pure label mapping it relies on, labelFromLogits, is unit-tested.)
   async classify(premise: string, hypothesis: string): Promise<{ label: NliLabel; score: number }> {
     await this.ensureInitialized();
 
-    // MNLI cross-encoders score the {premise, hypothesis} pair across three
-    // labels; the text-classification pipeline surfaces the top label + score.
-    const output = await this.pipeline!({ text: premise, text_pair: hypothesis }, { top_k: 1 });
-    const top = Array.isArray(output) ? output[0] : output;
-    return { label: normalizeNliLabel(String(top?.label ?? '')), score: top?.score ?? 0 };
+    // Feed the (premise, hypothesis) pair as a sentence pair via the tokenizer's
+    // text_pair, then run the model directly — the text-classification pipeline
+    // ignores text_pair, so it scored every pair identically. labelFromLogits
+    // softmaxes the 3-way logits and maps the argmax via the model's id2label.
+    const inputs = await this.tokenizer!(premise, {
+      text_pair: hypothesis,
+      padding: true,
+      truncation: true,
+    });
+    const { logits } = await this.model!(inputs);
+    return labelFromLogits(
+      Array.from(logits.data as Float32Array),
+      this.model!.config.id2label,
+    );
   }
 
   // Model download/load — never exercised in the hermetic test suite.
@@ -73,8 +113,11 @@ export class CrossEncoderNli implements NliClassifier {
 
     console.error('Loading NLI model (first time may take a few seconds)...');
     try {
-      const { pipeline } = await import('@huggingface/transformers');
-      this.pipeline = await pipeline('text-classification', this.modelName, {
+      const { AutoTokenizer, AutoModelForSequenceClassification } = await import(
+        '@huggingface/transformers'
+      );
+      this.tokenizer = await AutoTokenizer.from_pretrained(this.modelName);
+      this.model = await AutoModelForSequenceClassification.from_pretrained(this.modelName, {
         dtype: 'fp32' as const,
         device: 'cpu' as const,
       });
