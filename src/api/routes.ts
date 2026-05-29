@@ -32,6 +32,9 @@ import {
   ApiPatchBodySchema,
 } from '../schemas/index.js';
 import { logger } from '../lib/logger.js';
+import { ReloadGate, maybeBustGraphCache } from '../lib/hot-reload.js';
+import path from 'node:path';
+import os from 'node:os';
 import { metrics } from './metrics.js';
 
 type GetDb = () => Database.Database;
@@ -43,6 +46,17 @@ type GetEmbedder = () => Promise<EmbeddingProvider>;
 // free.
 const GRAPH_CACHE_TTL_MS = 60_000;
 const graphCache = new Map<string, { ts: number; payload: unknown }>();
+
+// (T26) Hot-reload gate over the DB file. SQLite already exposes committed
+// writes from other connections to our live connection, so query freshness is
+// automatic; the staleness risk is purely the derived `graphCache` above. When
+// the DB file is rewritten out-of-band (background writer / git-hook rebuild /
+// `git pull`), this gate detects it by (mtime_ns, size) and busts the cache —
+// without reopening the connection. Resolve the path once: if env is unset and
+// the default file is absent, the gate is a no-op (shouldReload stays false).
+const dbFilePath =
+  process.env.MCP_MEMORY_DB_PATH ?? path.join(os.homedir(), '.mcp-memory', 'memory.db');
+const graphReloadGate = new ReloadGate(dbFilePath);
 
 class HttpError extends Error {
   constructor(
@@ -230,6 +244,11 @@ export function registerApiRoutes(
     const refresh = req.query.refresh === '1' || req.query.refresh === 'true';
     const cacheKey = `${q.limit}|${q.min_importance ?? 0}`;
     const now = Date.now();
+
+    // If the DB file changed on disk since the last request, every cached graph
+    // payload is potentially stale — drop them all before the TTL lookup so the
+    // dashboard reflects an external rebuild without ?refresh=1 or a restart.
+    maybeBustGraphCache(graphReloadGate, graphCache);
 
     const cached = !refresh ? graphCache.get(cacheKey) : undefined;
     if (cached && now - cached.ts < GRAPH_CACHE_TTL_MS) {
