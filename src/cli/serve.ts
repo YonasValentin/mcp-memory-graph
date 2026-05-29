@@ -173,7 +173,11 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
   const isRemote = host !== '127.0.0.1' && host !== 'localhost' && host !== '::1';
 
   // Trust the first proxy hop so req.ip reflects X-Forwarded-For when behind
-  // Cloudflare/NGINX. Ignored when bound to loopback only.
+  // Cloudflare/NGINX (for logging/diagnostics only). Ignored when bound to
+  // loopback. NOTE: the rate limiter does NOT key on req.ip/XFF (which is
+  // client-spoofable even with trust proxy) — it keys on the immediate socket
+  // peer via `clientKey` (see src/api/rate-limit.ts), optionally augmented by an
+  // operator-trusted proxy header (MCP_TRUSTED_IP_HEADER).
   if (isRemote) {
     app.set('trust proxy', 1);
   }
