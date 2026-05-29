@@ -7,10 +7,12 @@ import type Database from 'better-sqlite3';
  * Creates a fresh in-memory SQLite database with full schema and migrations.
  * Each call returns an isolated database — safe for parallel test execution.
  *
- * Note: initializeSchema sets schema_version=3, which makes runMigrations
- * skip all migrations. We reset schema_version to 0 before running migrations
- * so that migration-added tables (memory_access_log, vault_sync_meta, etc.)
- * are created.
+ * Note: on a fresh DB, initializeSchema stamps schema_version=CURRENT_SCHEMA_VERSION
+ * (the full current schema is created directly), which would make runMigrations
+ * skip every migration. We reset schema_version to 0 first so the migrations
+ * re-run against the already-current schema — harmless no-ops (every CREATE uses
+ * IF NOT EXISTS and addColumn ignores duplicate-column) that exercise the
+ * migration code paths for coverage.
  */
 export function createTestDb(): Database.Database {
   const db = createDatabase(':memory:');
