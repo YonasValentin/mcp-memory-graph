@@ -14,7 +14,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import { initializeSchema, configuredDimensions, CURRENT_SCHEMA_VERSION } from '../../db/schema.js';
-import { runMigrations, migrateDatabase } from '../../db/migrations.js';
+import { runMigrations, migrateDatabase, addColumn } from '../../db/migrations.js';
 
 function freshDb(): Database.Database {
   const db = new Database(':memory:');
@@ -312,6 +312,29 @@ describe('migrateDatabase — the `migrate` CLI command path', () => {
       .prepare<[string], { value: string }>('SELECT value FROM schema_meta WHERE key = ?')
       .get('schema_version');
     expect(version?.value).toBe(String(CURRENT_SCHEMA_VERSION));
+  });
+});
+
+describe('addColumn — narrowed catch (only ignores duplicate-column)', () => {
+  it('ignores a duplicate-column re-run (idempotent ADD COLUMN)', () => {
+    const db = freshDb();
+    db.exec('CREATE TABLE t (id TEXT)');
+    addColumn(db, 'ALTER TABLE t ADD COLUMN c TEXT');
+    // Re-running the same ADD COLUMN must not throw — it is the only error the
+    // migration runner is allowed to swallow.
+    expect(() => addColumn(db, 'ALTER TABLE t ADD COLUMN c TEXT')).not.toThrow();
+    const names = new Set((db.prepare('PRAGMA table_info(t)').all() as Array<{ name: string }>).map((r) => r.name));
+    expect(names.has('c')).toBe(true);
+  });
+
+  it('rethrows a genuine error (e.g. ALTER on a missing table) instead of swallowing it', () => {
+    const db = freshDb();
+    expect(() => addColumn(db, 'ALTER TABLE nope ADD COLUMN c TEXT')).toThrow(/no such table/);
+  });
+
+  it('rethrows malformed SQL instead of silently bumping the migration past it', () => {
+    const db = freshDb();
+    expect(() => addColumn(db, 'ALTER TABLE garble nonsense')).toThrow();
   });
 });
 
