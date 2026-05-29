@@ -40,6 +40,7 @@ import {
   MemoryCommunitiesSchema,
   MemoryTemplateSchema,
   MemorySessionNoteSchema,
+  MemoryAttributionSchema,
 } from './schemas/index.js';
 import { handleStore } from './tools/store.js';
 import { handleSearch } from './tools/search.js';
@@ -75,6 +76,7 @@ import { handleReflect } from './tools/reflect.js';
 import { handleCommunities } from './tools/communities.js';
 import { handleTemplate } from './tools/templates.js';
 import { handleSessionNote } from './tools/session-note.js';
+import { handleAttribution } from './tools/attribution.js';
 
 import { metrics } from './api/metrics.js';
 import { logger } from './lib/logger.js';
@@ -516,6 +518,17 @@ export function createServer(): McpServer {
     instrument('memory_session_note', async (input) => {
       const parsed = MemorySessionNoteSchema.parse(input);
       return handleSessionNote(getDb(), await getEmbedder(), parsed);
+    }),
+  );
+
+  // ── 31. memory_attribution ────────────────────────────────────────────────
+  server.tool(
+    'memory_attribution',
+    'Multi-agent / team attribution rollup. Returns how many currently-valid top-level memories each agent (agent_id, set at store time) wrote — { by_agent, by_author, total } — distinct from author (the human/source). Memories stored without an agent_id are bucketed under "unattributed". Optional scope/namespace filters scope the rollup.',
+    MemoryAttributionSchema.shape,
+    instrument('memory_attribution', async (input) => {
+      const parsed = MemoryAttributionSchema.parse(input);
+      return handleAttribution(getDb(), parsed);
     }),
   );
 

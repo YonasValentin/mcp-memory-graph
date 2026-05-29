@@ -91,6 +91,10 @@ export const MemoryStoreSchema = z.object({
   access_level: accessLevelWithDefault(),
   language: languageWithDefault(),
   metadata: metadataField(),
+  agent_id: z
+    .string()
+    .optional()
+    .describe('Identifier of the writing agent for multi-agent attribution'),
   expires_at: z
     .string()
     .optional()
@@ -999,6 +1003,15 @@ export const MemorySessionNoteSchema = z.object({
     .string()
     .optional()
     .describe('Optional title used only on create (defaults to "Session <session_id>").'),
+});
+
+// ---------------------------------------------------------------------------
+// 30. MemoryAttributionSchema (Pillar 7) — multi-agent provenance rollup
+// ---------------------------------------------------------------------------
+
+export const MemoryAttributionSchema = z.object({
+  scope: scopeField(false),
+  namespace: namespaceField(),
 });
 
 // ---------------------------------------------------------------------------

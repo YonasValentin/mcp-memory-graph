@@ -46,6 +46,8 @@ export interface Memory {
   confidence_score: number;
   /** How this memory came to exist (manual, vault_sync, reflection, …). */
   provenance: ProvenanceType;
+  /** Which agent wrote this memory (multi-agent attribution), distinct from `author`. */
+  agent_id: string | null;
 }
 
 export interface MemoryRow {
@@ -76,6 +78,8 @@ export interface MemoryRow {
   stability: number;
   /** How this memory came to exist (manual, vault_sync, reflection, …). */
   provenance?: string;
+  /** Which agent wrote this memory (multi-agent attribution), distinct from `author`. */
+  agent_id?: string | null;
   rowid?: number;
 }
 
@@ -94,6 +98,8 @@ export interface MemoryInput {
   metadata?: Record<string, unknown>;
   expires_at?: string;
   confidence_score?: number;
+  /** Identifier of the writing agent for multi-agent attribution (distinct from author). */
+  agent_id?: string;
   /**
    * mem0-style write policy on conflict. 'add' (default) preserves today's
    * behaviour (NOOP on exact dup, otherwise ADD). 'update' merges into a

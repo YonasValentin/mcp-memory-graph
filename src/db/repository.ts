@@ -13,17 +13,17 @@ export function insertMemory(
         author, department, tags, access_level, language, metadata,
         parent_id, chunk_index, version, created_at, updated_at, expires_at,
         access_count, last_accessed_at, importance_score, confidence_score,
-        valid_from, valid_to, tx_expired
+        valid_from, valid_to, tx_expired, agent_id
       ) VALUES (
         @id, @scope, @namespace, @title, @content, @document_type, @source,
         @author, @department, @tags, @access_level, @language, @metadata,
         @parent_id, @chunk_index, @version, @created_at, @updated_at, @expires_at,
         @access_count, @last_accessed_at, @importance_score, @confidence_score,
-        @created_at, NULL, NULL
+        @created_at, NULL, NULL, @agent_id
       )
     `);
 
-    const result = stmt.run(memory);
+    const result = stmt.run({ ...memory, agent_id: memory.agent_id ?? null });
     const rowid = BigInt(result.lastInsertRowid);
 
     db.prepare(
@@ -424,6 +424,7 @@ export function rowToMemory(row: MemoryRow): Memory {
     importance_score: row.importance_score,
     confidence_score: row.confidence_score,
     provenance: (row.provenance as Memory['provenance']) ?? 'manual',
+    agent_id: row.agent_id ?? null,
   };
 }
 

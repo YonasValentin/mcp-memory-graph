@@ -225,6 +225,20 @@ const migrations: Migration[] = [
       db.exec(CORE_MEMORY_DDL);
     },
   },
+  {
+    version: 9,
+    up: (db) => {
+      // Pillar 7: multi-agent / team attribution. `agent_id` records WHICH agent
+      // wrote a memory, distinct from `author` (the human/source). Nullable so
+      // pre-existing rows backfill to NULL automatically — additive and
+      // backward-compatible (a NULL agent_id is today's behaviour).
+      const addColumn = (sql: string) => {
+        try { db.exec(sql); } catch { /* column already exists */ }
+      };
+
+      addColumn('ALTER TABLE memories ADD COLUMN agent_id TEXT');
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

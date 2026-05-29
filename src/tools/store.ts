@@ -169,6 +169,10 @@ export async function handleStore(
     importance_score: computeContentSignal(input.content),
     confidence_score: input.confidence_score ?? 0.7,
     stability: 1.0,
+    // Multi-agent attribution: explicit input wins, else a deployment-wide env
+    // default lets all of a deployment's writes be auto-tagged, else null
+    // (today's behaviour — no attribution).
+    agent_id: input.agent_id ?? process.env.MCP_AGENT_ID ?? null,
   };
 
   // Atomically: insert the memory, record conflicts (FK now valid), extract entities.
