@@ -3,7 +3,11 @@ import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { createTestDb } from '../../testing/test-db.js';
 import { findOrCreateEntity, findOrCreateRelationship } from '../../graph/entity-store.js';
-import { personalizedPageRank, rankMemoriesByPPR } from '../../graph/pagerank.js';
+import {
+  personalizedPageRank,
+  rankMemoriesByPPR,
+  sumMemoryScores,
+} from '../../graph/pagerank.js';
 
 /**
  * Materializes an undirected `co_occurs` edge by upserting the relationship
@@ -173,6 +177,58 @@ describe('Personalized PageRank over the entity graph (Pillar 3, T4)', () => {
     const tilted = personalizedPageRank(db, [S], { useSpecificity: true });
     expect(tilted.get(R)!).toBeGreaterThan(tilted.get(H)!);
     expect(tilted.get(H)!).toBeLessThan(flat.get(H)!);
+  });
+
+  it('excludes retracted/expired/superseded memories from the ranking', () => {
+    const db = createTestDb();
+    const A = findOrCreateEntity(db, 'SeedEnt', 'concept');
+    const B = findOrCreateEntity(db, 'NeighborEnt', 'concept');
+    addEdge(db, A, B);
+
+    const live = addMemory(db, 'live memory near seed');
+    const retracted = addMemory(db, 'retracted memory near seed');
+    const expired = addMemory(db, 'tx-expired memory near seed');
+    const superseded = addMemory(db, 'superseded memory near seed');
+    for (const m of [live, retracted, expired, superseded]) link(db, m, B);
+
+    // Retire three of the four memories via the three retirement columns.
+    db.prepare('UPDATE memories SET valid_to = ? WHERE id = ?').run('2026-01-01T00:00:00.000Z', retracted);
+    db.prepare('UPDATE memories SET tx_expired = ? WHERE id = ?').run('2026-01-01T00:00:00.000Z', expired);
+    db.prepare('UPDATE memories SET superseded_at = ? WHERE id = ?').run('2026-01-01T00:00:00.000Z', superseded);
+
+    const ranked = rankMemoriesByPPR(db, [A], { useSpecificity: false });
+    const ids = ranked.map((r) => r.memory_id);
+
+    expect(ids).toContain(live);
+    expect(ids).not.toContain(retracted);
+    expect(ids).not.toContain(expired);
+    expect(ids).not.toContain(superseded);
+  });
+
+  it('sumMemoryScores pins the float summation order (row order cannot change the result)', () => {
+    // Float += is not associative, so summing the same per-entity scores in a
+    // different order can yield bit-different totals. The exact float values
+    // below DO differ when summed left-to-right vs reversed; sumMemoryScores must
+    // pin the order (by entity id) so the link/row order it receives is
+    // irrelevant — the same memory always gets the same bit-for-bit score.
+    const entityScores = new Map<string, number>([
+      ['ent-a', 0.1],
+      ['ent-b', 0.2],
+      ['ent-c', 0.30000000000000004],
+      ['ent-d', 0.1 + 0.2], // 0.30000000000000004 again — float-fussy values
+    ]);
+    const forward = [
+      { memory_id: 'm', entity_id: 'ent-a' },
+      { memory_id: 'm', entity_id: 'ent-b' },
+      { memory_id: 'm', entity_id: 'ent-c' },
+      { memory_id: 'm', entity_id: 'ent-d' },
+    ];
+    const reversed = [...forward].reverse();
+
+    const fwd = sumMemoryScores(forward, entityScores).get('m');
+    const rev = sumMemoryScores(reversed, entityScores).get('m');
+    // Bit-identical regardless of the order the links arrive in.
+    expect(fwd).toBe(rev);
   });
 
   it('respects the limit option', () => {

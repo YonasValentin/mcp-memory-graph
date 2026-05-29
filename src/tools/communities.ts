@@ -1,7 +1,6 @@
 import type Database from 'better-sqlite3';
 import {
-  summarizeCommunities,
-  countCommunities,
+  summarizeCommunitiesWithTotal,
   type CommunitySummary,
 } from '../graph/communities.js';
 
@@ -43,7 +42,9 @@ export function handleCommunities(
   db: Database.Database,
   input: CommunitiesInput = {},
 ): CommunitiesResult {
-  const communities = summarizeCommunities(db, {
+  // Single graph build: derive the post-filter summaries AND the true
+  // corpus-wide total from ONE community detection pass.
+  const { communities, total_communities } = summarizeCommunitiesWithTotal(db, {
     limit: input.limit,
     minSize: input.min_size,
   });
@@ -52,7 +53,7 @@ export function handleCommunities(
     communities,
     // True corpus-wide total (pre-filter, pre-limit) so the agent isn't misled
     // about completeness; `returned` is the post-filter/limit row count.
-    total_communities: countCommunities(db),
+    total_communities,
     returned: communities.length,
     instruction:
       'Each community is a densely-connected cluster of entities — a candidate ' +

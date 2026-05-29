@@ -82,6 +82,9 @@ export function detectConflicts(
     const keywordOverlap = jaccardSimilarity(newWords, existingWords);
     const overlapScore = 0.5 * vectorSim + 0.5 * keywordOverlap;
 
+    // Band thresholds. All branches are exercised directly by
+    // src/__tests__/graph/conflict-resolver.test.ts, which pins the vector
+    // (vectorSim ≈ 1) and drives each band via the jaccard keyword overlap.
     if (overlapScore > 0.85) {
       results.push({
         type: 'duplicate',
@@ -89,13 +92,7 @@ export function detectConflicts(
         overlap_score: overlapScore,
         description: `Duplicate detected (overlap: ${overlapScore.toFixed(3)})`,
       });
-    } else if (overlapScore > 0.75) /* c8 ignore start */ {
-      // The 0.75 < score <= 0.85 ("superseded") and 0.65 < score <= 0.75
-      // ("contradicted") buckets need finely-tuned vector + jaccard scores
-      // that the deterministic mock embedder can't easily produce. The
-      // recordConflicts persistence path for these branches is covered by
-      // src/__tests__/tools/store-conflicts.test.ts and
-      // src/__tests__/coverage-fill.test.ts.
+    } else if (overlapScore > 0.75) {
       results.push({
         type: 'superseded',
         existing_memory_id: row.id,
@@ -110,7 +107,6 @@ export function detectConflicts(
         description: `Potential contradiction (overlap: ${overlapScore.toFixed(3)})`,
       });
     }
-    /* c8 ignore stop */
   }
 
   return results;

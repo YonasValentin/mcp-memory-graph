@@ -55,6 +55,17 @@ export function runMergeGraphs(argv: string[]): void {
   /* c8 ignore stop */
 }
 
+/**
+ * Builds the `merge.memory-union.driver` command git runs on a merge of
+ * `memory-graph.json`. The dist entry path is double-quoted so paths containing
+ * spaces (e.g. `~/My Projects/...`) survive the shell git uses to invoke the
+ * driver. The `%A %B %A` placeholders are git's ours/theirs/output contract.
+ * Pure — no IO — so it can be unit-tested.
+ */
+export function buildMergeDriverCommand(distEntry: string): string {
+  return `node "${distEntry}" merge-graphs %A %B %A`;
+}
+
 /* c8 ignore start — git config + filesystem wiring; the pure merge it installs is tested. */
 /**
  * `memory git-setup` — installs the `.gitattributes` entry and the
@@ -78,9 +89,10 @@ export async function runGitSetup(): Promise<void> {
     console.error(`${ATTR_PATH} already configured`);
   }
 
-  // dist path of this CLI (compiled index.js) — what git invokes on merge.
+  // dist path of this CLI (compiled index.js) — what git invokes on merge. The
+  // path is quoted by buildMergeDriverCommand so spaces in it don't break.
   const distEntry = fileURLToPath(new URL('../index.js', import.meta.url));
-  const driver = `node ${distEntry} merge-graphs %A %B %A`;
+  const driver = buildMergeDriverCommand(distEntry);
   execFileSync('git', ['config', 'merge.memory-union.name', 'memory graph union merge']);
   execFileSync('git', ['config', 'merge.memory-union.driver', driver]);
 

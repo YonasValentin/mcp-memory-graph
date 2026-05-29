@@ -45,9 +45,15 @@ function mem(id: string, updated_at: string): ExportedMemory {
     document_type: null,
     created_at: '2026-01-01T00:00:00.000Z',
     updated_at,
+    valid_to: null,
     provenance: 'manual',
     access_level: 'internal',
   };
+}
+
+/** A tombstoned (deleted) memory: same id, `valid_to` stamped. */
+function tombstone(id: string, updated_at: string, valid_to: string): ExportedMemory {
+  return { ...mem(id, updated_at), valid_to };
 }
 
 function artifact(memories: ExportedMemory[], links: GraphArtifact['links'] = []): GraphArtifact {
@@ -87,16 +93,22 @@ describe('exportGraph — committable graph artifact (Pillar 7, T21)', () => {
     expect(again).toEqual(art);
   });
 
-  it('excludes invalidated (valid_to set) memories', async () => {
+  it('exports invalidated memories AS TOMBSTONES (valid_to set), not absent', async () => {
+    // A deleted memory must travel in the artifact as a tombstone so a merge can
+    // suppress the other branch's live copy. Dropping it would let the live copy
+    // resurrect the deletion (the Bruno claim gap).
     const db = createTestDb();
     const keep = await store(db, 'kept memory note', 'Keep');
     const gone = await store(db, 'invalidated memory note', 'Gone');
     invalidateMemory(db, gone.id);
 
     const art = exportGraph(db);
-    const ids = art.memories.map((m) => m.id);
-    expect(ids).toContain(keep.id);
-    expect(ids).not.toContain(gone.id);
+    const byId = new Map(art.memories.map((m) => [m.id, m]));
+    // Live memory present with no tombstone.
+    expect(byId.get(keep.id)?.valid_to).toBeNull();
+    // Deleted memory PRESENT but tombstoned (valid_to stamped).
+    expect(byId.has(gone.id)).toBe(true);
+    expect(byId.get(gone.id)?.valid_to).not.toBeNull();
   });
 
   it('excludes chunk rows (only top-level memories)', async () => {
@@ -260,6 +272,107 @@ describe('mergeGraphs — pure union merge (the merge-driver core)', () => {
     expect(merged.entities).toHaveLength(1);
     expect(merged.entities[0].id).toBe('e1'); // lower id wins the tie
     expect(mergeGraphs(b, a)).toEqual(merged); // order-independent
+  });
+
+  it('treats a memory with NO valid_to field (legacy artifact) as LIVE, not a tombstone', () => {
+    // Older artifacts predate the valid_to field. The merge must read a missing
+    // valid_to as null (live), so legacy graphs union normally — newer updated_at
+    // wins, nothing is mistaken for a deletion.
+    const legacyOld = { ...mem('Z', '2026-01-01T00:00:00.000Z') } as ExportedMemory;
+    delete (legacyOld as { valid_to?: string | null }).valid_to;
+    const legacyNew = { ...mem('Z', '2026-05-01T00:00:00.000Z'), content: 'NEWER Z' } as ExportedMemory;
+    delete (legacyNew as { valid_to?: string | null }).valid_to;
+
+    const ab = mergeGraphs(artifact([legacyOld]), artifact([legacyNew]));
+    const ba = mergeGraphs(artifact([legacyNew]), artifact([legacyOld]));
+    expect(ab).toEqual(ba);
+    const z = ab.memories.find((m) => m.id === 'Z')!;
+    expect(z.content).toBe('NEWER Z'); // later updated_at wins — normal live merge
+  });
+
+  it('a tombstone suppresses the other branch\'s live copy (no resurrection), both directions', () => {
+    // Branch A deletes memory X (tombstone, valid_to set). Branch B still has a
+    // live X (same updated_at — invalidation does not bump updated_at). The merge
+    // MUST keep X tombstoned, not resurrect the live copy. And mergeGraphs(A,B)
+    // must equal mergeGraphs(B,A).
+    const ts = '2026-01-01T00:00:00.000Z';
+    const deletedX = tombstone('X', ts, '2026-02-01T00:00:00.000Z');
+    const liveX = mem('X', ts);
+
+    const a = artifact([deletedX]);
+    const b = artifact([liveX]);
+
+    const ab = mergeGraphs(a, b);
+    const ba = mergeGraphs(b, a);
+
+    expect(ab).toEqual(ba); // order-independent
+    const x = ab.memories.find((m) => m.id === 'X')!;
+    expect(x.valid_to).toBe('2026-02-01T00:00:00.000Z'); // stays deleted
+  });
+
+  it('a NEWER live edit wins over an OLDER tombstone (re-creation), both directions', () => {
+    // A memory deleted at T1, then genuinely re-created/edited at T2 > T1 on the
+    // other branch. The newer live edit should win — deletion is not permanent if
+    // a later edit supersedes it. updated_at carries the recency signal here.
+    const deletedOld = tombstone('Y', '2026-01-01T00:00:00.000Z', '2026-01-15T00:00:00.000Z');
+    const liveNew: ExportedMemory = { ...mem('Y', '2026-03-01T00:00:00.000Z'), content: 'REVIVED' };
+
+    const a = artifact([deletedOld]);
+    const b = artifact([liveNew]);
+
+    const ab = mergeGraphs(a, b);
+    const ba = mergeGraphs(b, a);
+    expect(ab).toEqual(ba);
+    const y = ab.memories.find((m) => m.id === 'Y')!;
+    expect(y.valid_to).toBeNull(); // revived
+    expect(y.content).toBe('REVIVED');
+  });
+
+  it('the EARLIER tombstone wins when both branches deleted the same memory', () => {
+    // Both branches deleted X. invalidateMemory keeps the FIRST valid_to
+    // (COALESCE), so the merge must converge on the earlier deletion instant —
+    // and do so identically in both directions.
+    const ts = '2026-01-01T00:00:00.000Z';
+    const earlier = tombstone('X', ts, '2026-02-01T00:00:00.000Z');
+    const later = tombstone('X', ts, '2026-05-01T00:00:00.000Z');
+
+    const a = artifact([earlier]);
+    const b = artifact([later]);
+
+    const ab = mergeGraphs(a, b);
+    const ba = mergeGraphs(b, a);
+    expect(ab).toEqual(ba);
+    expect(ab.memories.find((m) => m.id === 'X')!.valid_to).toBe('2026-02-01T00:00:00.000Z');
+  });
+
+  it('two tombstones with the SAME valid_to converge via a stable full-record tie-break', () => {
+    // Both branches deleted X at the exact same instant but the rows differ in
+    // other fields (e.g. divergent content captured before deletion). The
+    // earlier-deletion rule is a no-op here, so a stable full-record compare must
+    // pick the same winner regardless of merge direction.
+    const vt = '2026-02-01T00:00:00.000Z';
+    const fromA: ExportedMemory = { ...tombstone('X', '2026-01-01T00:00:00.000Z', vt), content: 'A-content' };
+    const fromB: ExportedMemory = { ...tombstone('X', '2026-01-01T00:00:00.000Z', vt), content: 'B-content' };
+
+    const ab = mergeGraphs(artifact([fromA]), artifact([fromB]));
+    const ba = mergeGraphs(artifact([fromB]), artifact([fromA]));
+    expect(ab).toEqual(ba); // order-independent
+    const x = ab.memories.find((m) => m.id === 'X')!;
+    expect(x.valid_to).toBe(vt); // still deleted at the shared instant
+  });
+
+  it('a tombstone with a LATER deletion instant wins over a live copy at the same updated_at', () => {
+    // Tombstone valid_to is later than the live copy's updated_at → the deletion
+    // is the more recent fact about X → it wins, symmetrically.
+    const liveX = mem('X', '2026-01-01T00:00:00.000Z');
+    const deletedLater = tombstone('X', '2026-01-01T00:00:00.000Z', '2026-06-01T00:00:00.000Z');
+
+    const a = artifact([liveX]);
+    const b = artifact([deletedLater]);
+    const ab = mergeGraphs(a, b);
+    const ba = mergeGraphs(b, a);
+    expect(ab).toEqual(ba);
+    expect(ab.memories.find((m) => m.id === 'X')!.valid_to).toBe('2026-06-01T00:00:00.000Z');
   });
 
   it('is order-independent on same entity id + equal mention_count but different fields', () => {

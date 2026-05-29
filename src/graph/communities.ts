@@ -20,6 +20,34 @@ import type Database from 'better-sqlite3';
 
 const DEFAULT_MAX_ITERATIONS = 20;
 
+/**
+ * SQLite's compile-time bound-parameter ceiling (SQLITE_MAX_VARIABLE_NUMBER).
+ * Modern SQLite defaults to 32766; a single `IN (?,?,…)` over more ids than this
+ * throws "too many SQL variables". We chunk well under it.
+ */
+export const SQLITE_MAX_VARIABLES = 32766;
+
+/**
+ * Conservative per-query batch size for `IN (?,?,…)` lookups — comfortably under
+ * {@link SQLITE_MAX_VARIABLES} so a chunk can never overflow the parameter limit
+ * even alongside a few other bound params in the same statement.
+ */
+const DEFAULT_ID_CHUNK_SIZE = 900;
+
+/**
+ * Splits `ids` into contiguous batches of at most `size` so each batch can be
+ * fed to a single `IN (?,?,…)` query without exceeding SQLite's bound-parameter
+ * limit. Order is preserved (batch 0 holds the first `size` ids, …) so callers
+ * that merge results keep a stable, deterministic sequence. Pure.
+ */
+export function chunkIds(ids: string[], size: number = DEFAULT_ID_CHUNK_SIZE): string[][] {
+  const batches: string[][] = [];
+  for (let i = 0; i < ids.length; i += size) {
+    batches.push(ids.slice(i, i + size));
+  }
+  return batches;
+}
+
 /** Tuning knobs for {@link detectCommunities}. All optional. */
 export interface DetectCommunitiesOptions {
   /**
@@ -226,7 +254,12 @@ export interface CommunitySummary {
   size: number;
   /** Highest-mention entities in the community (cap {@link TOP_ENTITIES_CAP}). */
   top_entities: CommunityEntity[];
-  /** Distinct memories linked to the community (cap {@link MEMBER_MEMORIES_CAP}). */
+  /**
+   * Distinct memories linked to the community, MOST IMPORTANT first
+   * (importance_score desc, then access_count desc, then id), capped to
+   * {@link DEFAULT_MEMBER_MEMORIES_CAP}. The cap keeps the memories that matter
+   * rather than truncating arbitrarily by UUID order.
+   */
   member_memory_ids: string[];
 }
 
@@ -236,6 +269,8 @@ export interface SummarizeCommunitiesOptions {
   limit?: number;
   /** Drop communities with fewer than this many entities. Default 1. */
   minSize?: number;
+  /** Member memories surfaced per community (most important first). Default 20. */
+  memberMemoriesCap?: number;
 }
 
 const DEFAULT_SUMMARY_LIMIT = 20;
@@ -243,53 +278,126 @@ const DEFAULT_MIN_SIZE = 1;
 /** Highest-mention entities surfaced per community. */
 const TOP_ENTITIES_CAP = 5;
 /** Member memories surfaced per community. */
-const MEMBER_MEMORIES_CAP = 20;
+const DEFAULT_MEMBER_MEMORIES_CAP = 20;
+
+/** Importance/access metadata for ranking a community's member memories. */
+interface MemoryRankRow {
+  id: string;
+  importance_score: number;
+  access_count: number;
+}
 
 /**
  * Groups entities by community and builds a local summary per community.
  *
  * Runs {@link detectCommunities}, then for each community computes its size
  * (entity count), its top entities (by `mention_count` desc, capped), and the
- * distinct memories linked to any of its entities via `memory_entities`
- * (capped). Communities smaller than `minSize` are dropped; the rest are sorted
- * by size desc (ties broken by `community_id` for stable output) and capped to
- * `limit`. Read-only.
+ * distinct memories linked to any of its entities via `memory_entities` —
+ * surfaced MOST IMPORTANT first (importance_score desc, then access_count desc,
+ * then id) and capped. Communities smaller than `minSize` are dropped; the rest
+ * are sorted by size desc (ties broken by `community_id` for stable output) and
+ * capped to `limit`. Read-only.
+ *
+ * Every `IN (?,?,…)` lookup is chunked via {@link chunkIds} so a graph with more
+ * than SQLite's ~32k bound-parameter limit of entities never throws "too many
+ * SQL variables".
  */
 export function summarizeCommunities(
   db: Database.Database,
   opts: SummarizeCommunitiesOptions = {},
 ): CommunitySummary[] {
+  return summarizeFromCommunities(db, detectCommunities(db), opts);
+}
+
+/**
+ * Summarizes communities AND reports the true corpus-wide total in a SINGLE
+ * graph build — for callers (e.g. the `memory_communities` tool) that need both.
+ * Detecting communities once and deriving the post-filter summaries plus the
+ * pre-filter total from the same map avoids running the whole label-propagation
+ * pass twice. Read-only.
+ *
+ * `total_communities` is the TRUE count of detected communities BEFORE any
+ * `min_size`/`limit` filtering — distinct from `communities.length`.
+ */
+export function summarizeCommunitiesWithTotal(
+  db: Database.Database,
+  opts: SummarizeCommunitiesOptions & { min_size?: number } = {},
+): { communities: CommunitySummary[]; total_communities: number } {
+  const communities = detectCommunities(db);
+  const summaries = summarizeFromCommunities(db, communities, {
+    ...opts,
+    minSize: opts.minSize ?? opts.min_size,
+  });
+  const total_communities =
+    communities.size === 0 ? 0 : new Set(communities.values()).size;
+  return { communities: summaries, total_communities };
+}
+
+/**
+ * Core summarizer over an ALREADY-COMPUTED community map — the shared body of
+ * {@link summarizeCommunities} and {@link summarizeCommunitiesWithTotal}. Keeps
+ * the expensive graph build out of the per-summary work so callers can run it
+ * once. Read-only.
+ */
+function summarizeFromCommunities(
+  db: Database.Database,
+  communities: Map<string, number>,
+  opts: SummarizeCommunitiesOptions = {},
+): CommunitySummary[] {
   const limit = opts.limit ?? DEFAULT_SUMMARY_LIMIT;
   const minSize = opts.minSize ?? DEFAULT_MIN_SIZE;
+  const memberCap = opts.memberMemoriesCap ?? DEFAULT_MEMBER_MEMORIES_CAP;
 
-  const communities = detectCommunities(db);
   if (communities.size === 0) return [];
 
-  // Pull entity name + mention_count for every entity we just clustered.
+  // Pull entity name + mention_count for every entity we just clustered. The id
+  // set can exceed SQLite's bound-parameter limit, so chunk the IN-clause and
+  // merge the rows back into one map.
   const entityIds = [...communities.keys()];
-  const placeholders = entityIds.map(() => '?').join(',');
-  const entityRows = db
-    .prepare<string[], { id: string; name: string; mention_count: number }>(
-      `SELECT id, name, mention_count
-         FROM entities
-        WHERE id IN (${placeholders})`,
-    )
-    .all(...entityIds);
-  const entityById = new Map(entityRows.map((r) => [r.id, r]));
+  const entityById = new Map<string, { id: string; name: string; mention_count: number }>();
+  for (const batch of chunkIds(entityIds)) {
+    const placeholders = batch.map(() => '?').join(',');
+    const rows = db
+      .prepare<string[], { id: string; name: string; mention_count: number }>(
+        `SELECT id, name, mention_count
+           FROM entities
+          WHERE id IN (${placeholders})`,
+      )
+      .all(...batch);
+    for (const r of rows) entityById.set(r.id, r);
+  }
 
   // Memories linked to any clustered entity → maps entity to its memories.
-  const links = db
-    .prepare<string[], MemoryEntityRow>(
-      `SELECT memory_id, entity_id
-         FROM memory_entities
-        WHERE entity_id IN (${placeholders})`,
-    )
-    .all(...entityIds);
   const memoriesByEntity = new Map<string, string[]>();
-  for (const link of links) {
-    const list = memoriesByEntity.get(link.entity_id);
-    if (list) list.push(link.memory_id);
-    else memoriesByEntity.set(link.entity_id, [link.memory_id]);
+  for (const batch of chunkIds(entityIds)) {
+    const placeholders = batch.map(() => '?').join(',');
+    const links = db
+      .prepare<string[], MemoryEntityRow>(
+        `SELECT memory_id, entity_id
+           FROM memory_entities
+          WHERE entity_id IN (${placeholders})`,
+      )
+      .all(...batch);
+    for (const link of links) {
+      const list = memoriesByEntity.get(link.entity_id);
+      if (list) list.push(link.memory_id);
+      else memoriesByEntity.set(link.entity_id, [link.memory_id]);
+    }
+  }
+
+  // Importance/access metadata for ranking member memories (chunked lookup).
+  const allMemoryIds = [...new Set([...memoriesByEntity.values()].flat())];
+  const memoryRank = new Map<string, MemoryRankRow>();
+  for (const batch of chunkIds(allMemoryIds)) {
+    const placeholders = batch.map(() => '?').join(',');
+    const rows = db
+      .prepare<string[], MemoryRankRow>(
+        `SELECT id, importance_score, access_count
+           FROM memories
+          WHERE id IN (${placeholders})`,
+      )
+      .all(...batch);
+    for (const r of rows) memoryRank.set(r.id, r);
   }
 
   // Bucket entity ids by community id.
@@ -319,10 +427,12 @@ export function summarizeCommunities(
       if (!mems) continue;
       for (const m of mems) memorySet.add(m);
     }
-    // Sorted for deterministic output before capping.
+    // Rank by importance_score desc, then access_count desc, then id (stable,
+    // deterministic) BEFORE capping — so the cap keeps the memories that matter,
+    // not the lexicographically-smallest UUIDs.
     const member_memory_ids = [...memorySet]
-      .sort((a, b) => (a < b ? -1 : 1))
-      .slice(0, MEMBER_MEMORIES_CAP);
+      .sort((a, b) => compareMemoryRank(memoryRank.get(a), memoryRank.get(b), a, b))
+      .slice(0, memberCap);
 
     summaries.push({
       community_id: communityId,
@@ -339,16 +449,22 @@ export function summarizeCommunities(
 }
 
 /**
- * The TRUE count of all communities detected in the graph — BEFORE any minSize
- * filter or limit cap. A caller doing global sensemaking needs this corpus-wide
- * count (for completeness / pagination) separately from how many summaries a
- * filtered/capped {@link summarizeCommunities} call returned. Read-only.
- *
- * Community ids are densely renumbered 0..k-1, so the total is simply the
- * number of distinct community ids.
+ * Orders two member-memory ids by a MEANINGFUL key: importance_score desc, then
+ * access_count desc, then id asc as a stable, deterministic final tiebreak. A
+ * missing rank row (memory not found) sorts last so it can't crowd out ranked
+ * memories under the cap.
  */
-export function countCommunities(db: Database.Database): number {
-  const communities = detectCommunities(db);
-  if (communities.size === 0) return 0;
-  return new Set(communities.values()).size;
+function compareMemoryRank(
+  a: MemoryRankRow | undefined,
+  b: MemoryRankRow | undefined,
+  idA: string,
+  idB: string,
+): number {
+  const impA = a?.importance_score ?? -Infinity;
+  const impB = b?.importance_score ?? -Infinity;
+  if (impA !== impB) return impB - impA;
+  const accA = a?.access_count ?? -Infinity;
+  const accB = b?.access_count ?? -Infinity;
+  if (accA !== accB) return accB - accA;
+  return idA < idB ? -1 : idA > idB ? 1 : 0;
 }
