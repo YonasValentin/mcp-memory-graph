@@ -4,6 +4,76 @@ All notable changes to the MCP Memory Server are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.0.0] - 2026-05-29
+
+The "revolution" release: 8 pillars expand the server from 17 to 37 MCP tools.
+Database schema migrated to **v9** via additive migrations. All new behaviors
+are **additive and opt-in** — existing tools, defaults, and stored data are
+preserved (e.g. search stays hybrid-by-default; graph/rerank/point-in-time
+features only activate when their flags are passed; `memory_forget` is additive
+to `memory_delete`).
+
+### Added
+
+**Pillar 1 — Bi-temporal memory**
+
+- Valid-time (`valid_from`/`valid_to`) alongside transaction-time; updates *invalidate-don't-delete* so history is never lost
+- `as_of: <timestamp>` point-in-time recall on search and reads
+- `memory_history` tool: full bi-temporal timeline + edit versions for one memory
+
+**Pillar 2 — Knowledge graph**
+
+- Confidence-tagged `memory_links` (wikilink / co-occurrence / similarity edges) and entity co-occurrence
+- `memory_graph` multi-hop entity traversal (depth 1–3) and `memory_extract_entities`
+- HippoRAG Personalized-PageRank multi-hop retrieval via `use_graph: true` on search
+- `memory_query`: token-budgeted, hub-avoiding subgraph traversal that answers a question without flooding context
+- `memory_communities`: GraphRAG community detection (weighted label propagation) for corpus-level themes
+
+**Pillar 3 — Retrieval**
+
+- Cross-encoder reranking via `rerank: true` on search
+- Contextual indexing
+
+**Pillar 4 — Self-correcting writes**
+
+- ADD / UPDATE / DELETE / NOOP write gate (`on_conflict`)
+- NLI cross-encoder contradiction detection
+- Forgetting-curve `stability` signal
+
+**Pillar 5 — Agent-OS memory**
+
+- Pinned, bounded core-memory block: `core_memory_get` / `core_memory_append` / `core_memory_replace`
+- `memory_tiers`: MemGPT-style hot / recall / archival distribution + hot working set
+- `memory_reflect`: Generative-Agents-style reflection (gather material / store insight)
+
+**Pillar 6 — Obsidian-grade vault**
+
+- `memory_export_vault`: bidirectional `.md` write-back with lossless YAML frontmatter (reverse of `vault_sync`)
+- `memory_canvas`: JSON Canvas 1.0 `.canvas` export
+- Read-only memory wiki / Publish routes (`/publish/:namespace`), hard-scoped to published access levels
+- `memory_session_note` (per-session daily note) and `memory_template` (structured note scaffolds)
+
+**Pillar 7 — Team & solo sharing**
+
+- Interactive `memory init` wizard (with `--yes` for all-defaults)
+- Committable graph artifact: `export-graph` CLI → deterministic `memory-graph.json`
+- `git-setup` CLI: installs `.gitattributes` + `memory-union` git merge driver (`merge-graphs`) for conflict-free sharing
+- `memory_attribution`: per-`agent_id` rollup (default agent via `MCP_AGENT_ID`)
+
+**Pillar 8 — Trust & governance**
+
+- `memory_questions`: "questions to ask" digest (ambiguous links, under-documented entities, orphans)
+- `memory_forget`: GDPR soft-delete (recoverable, queryable via `as_of`) or hard erase-after-export; additive to `memory_delete`
+- `memory_manifest`, `memory_condense` / `memory_restore`
+- Output sanitization chokepoint (ANSI/VT escapes, control chars, zero-width / BiDi Trojan-Source) on every tool result
+- Config hot-reload
+- Security headers (HSTS, CSP) with `MCP_HSTS_*` / `MCP_CSP_*` controls
+
+### Changed
+
+- Database schema migrated to **v9** (additive migrations only; existing data preserved)
+- `bin` / package bumped to 2.0.0
+
 ## [1.0.0] - 2026-03-27
 
 ### Added
