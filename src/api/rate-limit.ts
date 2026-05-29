@@ -50,6 +50,19 @@ export function defaultConfig(): RateLimiterConfig {
 }
 
 /**
+ * Dedicated, stricter defaults for the PUBLIC unauthenticated /publish surface.
+ * Each /publish search runs a query embedding (and optionally rerank) — a heavier
+ * per-request cost than /api — so the public bucket is smaller and refills
+ * slower by default. Overridable via MCP_PUBLISH_RATELIMIT_*.
+ */
+export function publishConfig(): RateLimiterConfig {
+  return {
+    capacity: envInt('MCP_PUBLISH_RATELIMIT_CAPACITY', 15),
+    refillPerSec: envInt('MCP_PUBLISH_RATELIMIT_REFILL_PER_SEC', 2),
+  };
+}
+
+/**
  * Derive the rate-limit bucket key for a request.
  *
  * SECURITY: we key on `req.socket.remoteAddress` — the immediate TCP peer — and

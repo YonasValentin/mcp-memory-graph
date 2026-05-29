@@ -9,7 +9,7 @@ import { createServer } from '../server.js';
 import { closeDatabase } from '../db/connection.js';
 import { getReadWriteDb, getEmbedder } from '../lib/direct-access.js';
 import { registerApiRoutes, registerPublishRoutes } from '../api/routes.js';
-import { rateLimitMiddleware, RateLimiter, defaultConfig as rateLimitDefaultConfig } from '../api/rate-limit.js';
+import { rateLimitMiddleware, RateLimiter, defaultConfig as rateLimitDefaultConfig, publishConfig as rateLimitPublishConfig } from '../api/rate-limit.js';
 import { renderMetrics, METRICS_CONTENT_TYPE } from '../api/metrics.js';
 import { securityHeadersMiddleware } from '../api/security-headers.js';
 import { logger } from '../lib/logger.js';
@@ -148,8 +148,14 @@ function localhostHostValidation(host: string) {
 export interface BuildAppDeps {
   getDb: () => Database.Database;
   getEmbedder: () => Promise<EmbeddingProvider>;
-  /** Override the rate limiter (e.g. for tests). */
+  /** Override the rate limiter for /api and /mcp (e.g. for tests). */
   rateLimiter?: RateLimiter;
+  /**
+   * Override the limiter for the public /publish surface. Defaults to a
+   * dedicated, stricter limiter; when only `rateLimiter` is supplied (tests),
+   * that one is reused so a single injected bucket drives /publish too.
+   */
+  publishRateLimiter?: RateLimiter;
 }
 
 export interface BuiltApp {
@@ -169,6 +175,11 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
   const host = bindHost();
   const allowed = parseAllowedOrigins();
   const limiter = deps.rateLimiter ?? new RateLimiter(rateLimitDefaultConfig());
+  // The public /publish surface gets its own (stricter) limiter. If a test
+  // injects a single `rateLimiter`, reuse it so the injected bucket also bounds
+  // /publish; otherwise build a dedicated stricter one.
+  const publishLimiter =
+    deps.publishRateLimiter ?? deps.rateLimiter ?? new RateLimiter(rateLimitPublishConfig());
 
   const isRemote = host !== '127.0.0.1' && host !== 'localhost' && host !== '::1';
 
@@ -290,7 +301,10 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
 
   // ── Public read-only memory wiki (T18) ────────────────────────────────
   // Mounted OUTSIDE the /api and /mcp bearer prefixes — public by design,
-  // gated instead by access_level inside the publish data layer.
+  // gated instead by access_level inside the publish data layer. It IS rate
+  // limited (its own stricter bucket): each search runs a query embedding, an
+  // unauthenticated CPU-DoS lever, so it must not be unmetered.
+  app.use('/publish', rateLimitMiddleware(publishLimiter));
   registerPublishRoutes(app, deps.getDb, deps.getEmbedder);
 
   // POST /mcp — main MCP handler

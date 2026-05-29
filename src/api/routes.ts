@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3';
 import type { z, ZodTypeAny } from 'zod';
 import type { EmbeddingProvider } from '../types.js';
 import { handleSearch } from '../tools/search.js';
+import { hybridSearch, toSummary } from '../search/hybrid.js';
 import { handleList } from '../tools/list.js';
 import { handleGet } from '../tools/get.js';
 import { handleUpdate } from '../tools/update.js';
@@ -57,6 +58,16 @@ const graphCache = new Map<string, { ts: number; payload: unknown }>();
 const dbFilePath =
   process.env.MCP_MEMORY_DB_PATH ?? path.join(os.homedir(), '.mcp-memory', 'memory.db');
 const graphReloadGate = new ReloadGate(dbFilePath);
+
+// Public /publish search cost bounds. The /publish surface is unauthenticated
+// and runs a query embedding (and optionally rerank) per request — an attacker
+// flooding distinct queries is a CPU DoS lever. Cap the query length so a single
+// request can't pin the embedder, and oversample published results within a hard
+// ceiling so the published post-filter never under-returns (F6) while still
+// bounding work.
+const PUBLISH_SEARCH_MAX_QUERY_LEN = 512;
+const PUBLISH_SEARCH_DISPLAY_LIMIT = 20;
+const PUBLISH_SEARCH_OVERSAMPLE = 100;
 
 class HttpError extends Error {
   constructor(
@@ -334,23 +345,45 @@ export function registerPublishRoutes(
       res.json({ results: [], total: 0 });
       return;
     }
+    // Bound public search cost: reject an over-long query BEFORE embedding it so
+    // a single unauthenticated request can't pin the CPU-heavy embedder (F3).
+    if (q.length > PUBLISH_SEARCH_MAX_QUERY_LEN) {
+      throw new HttpError(
+        400,
+        'INVALID_INPUT',
+        `Query too long (max ${PUBLISH_SEARCH_MAX_QUERY_LEN} chars)`,
+      );
+    }
     const db = getDb();
-    // Access gating is the post-filter against the published id set — it is the
+    // Access gating is the intersection with the published id set — it is the
     // single authority and honors the full MCP_PUBLISH_ACCESS_LEVELS allowlist
     // (same gate as index/page/graph). We deliberately do NOT pass access_level
-    // to handleSearch: hardcoding 'public' would under-expose namespaces whose
+    // to the search: hardcoding 'public' would under-expose namespaces whose
     // allowlist also includes 'internal'. Search only scopes by namespace; the
     // intersection with publishedIds enforces which access levels are visible.
+    //
+    // SECURITY (F4): call hybridSearch DIRECTLY instead of handleSearch. The
+    // /publish surface is unauthenticated and must be side-effect free —
+    // handleSearch records access (bumps access_count/importance/stability and
+    // writes memory_access_log) for EVERY hit BEFORE this post-filter, letting an
+    // anonymous caller mutate non-published rows. hybridSearch is read-only.
+    //
+    // RECALL (F6): oversample, then intersect with publishedIds, THEN take the
+    // display window — so higher-ranked non-published rows can't push published
+    // pages out of a too-small top-N.
     const publishedIds = getPublishedIdSet(db, { namespace });
-    const search = await handleSearch(db, await getEmbedder(), {
+    const { results } = await hybridSearch(db, await getEmbedder(), {
       query: q,
       namespace,
-      detail_level: 'summary',
+      limit: PUBLISH_SEARCH_OVERSAMPLE,
+      offset: 0,
+      search_mode: 'hybrid',
     });
-    const results = (search.results as Array<{ id: string }>).filter((r) =>
-      publishedIds.has(r.id),
-    );
-    res.json({ results, total: results.length });
+    const published = results
+      .filter((r) => publishedIds.has(r.memory.id))
+      .slice(0, PUBLISH_SEARCH_DISPLAY_LIMIT)
+      .map(toSummary);
+    res.json({ results: published, total: published.length });
   }));
 
   // ── GET /publish/:namespace/page/:id — HTML page or 404 JSON ────────────
