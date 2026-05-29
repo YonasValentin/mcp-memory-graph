@@ -4,10 +4,27 @@ import type { ExtractedEntity } from './entity-extractor.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
+/**
+ * Lowercases and strips to [a-z0-9-]. When the strip leaves nothing (a
+ * symbol-only name like '++' or '#'), it falls back to a deterministic hash of
+ * the original so distinct symbol-only entities get distinct, non-empty keys
+ * instead of all colliding onto normalized_name='' (G3-F6). Names that retain
+ * alphanumerics keep the plain strip so downstream search/extraction
+ * normalization stays stable.
+ */
 export function normalizeName(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, '');
+  const stripped = name.toLowerCase().replace(/[^a-z0-9-]/g, '');
+  if (stripped.length > 0) return stripped;
+  return `sym-${djb2(name.toLowerCase())}`;
+}
+
+/** Deterministic 32-bit djb2 hash → unsigned base-36 string. */
+function djb2(s: string): string {
+  let hash = 5381;
+  for (let i = 0; i < s.length; i++) {
+    hash = ((hash << 5) + hash + s.charCodeAt(i)) | 0;
+  }
+  return (hash >>> 0).toString(36);
 }
 
 // ── Entity CRUD ─────────────────────────────────────────────────────────
