@@ -105,11 +105,15 @@ function sendError(res: Response, err: unknown): void {
     return;
   }
   const message = err instanceof Error ? err.message : String(err);
+  // Safe-by-default: only surface the raw internal message in explicit
+  // development. When NODE_ENV is unset (the default for a locally-run binary)
+  // or 'production', return a generic message so better-sqlite3 errors, file
+  // paths, etc. don't leak in the JSON body.
   res.status(500).json({
     error: 'Internal Server Error',
     code: 'INTERNAL',
     requestId,
-    detail: process.env.NODE_ENV === 'production' ? undefined : message,
+    detail: process.env.NODE_ENV === 'development' ? message : undefined,
   });
 }
 
