@@ -14,6 +14,7 @@ import { MockEmbeddingProvider } from '../../testing/mock-embedder.js';
 import { handleStore } from '../../tools/store.js';
 import { handleConsolidate } from '../../tools/consolidate.js';
 import { insertMemory } from '../../db/repository.js';
+import { contextualizeForEmbedding } from '../../search/contextual.js';
 import type { MemoryRow } from '../../types.js';
 
 const embedder = new MockEmbeddingProvider();
@@ -35,12 +36,18 @@ describe('handleConsolidate dedup-merge', () => {
       access_count: 0, last_accessed_at: null,
       importance_score: 0.9, confidence_score: 0.8,
     };
-    insertMemory(db, a, await embedder.embed(a.content));
+    // Insert both with the SAME contextualized embedding the consolidate dedup
+    // probe re-computes (title/document_type/namespace prefix), so the probe
+    // vector matches the indexed vectors. The mock embedder is a hash (not a
+    // semantic model) and now near-orthogonal for distinct text, so identical
+    // content is the only reliable near-duplicate; mergeContent's containment
+    // short-circuit keeps the single copy while duplicates_found records it.
+    const ctxVec = await embedder.embed(
+      contextualizeForEmbedding(a.content, { title: a.title, document_type: a.document_type, namespace: a.namespace }),
+    );
+    insertMemory(db, a, ctxVec);
     const b = { ...a, id: 'mem-b', importance_score: 0.4 };
-    // Use slightly different content so mergeContent picks the 'append' path
-    // — `+ separator + secondary`.
-    b.content = a.content + ' Additional clause that differs.';
-    insertMemory(db, b, await embedder.embed(b.content));
+    insertMemory(db, b, ctxVec);
 
     const report = await handleConsolidate(db, embedder, {
       similarity_threshold: 0.5,

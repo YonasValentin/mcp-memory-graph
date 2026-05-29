@@ -32,10 +32,16 @@ export class MockEmbeddingProvider implements EmbeddingProvider {
       hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
     }
     for (let i = 0; i < this.dimensions; i++) {
-      // Generate deterministic pseudo-random values in [-1, 1]
+      // Deterministic pseudo-random values in [-1, 1]. Using the FULL signed
+      // range (not [0,1]) keeps distinct texts genuinely near-orthogonal — with
+      // non-negative components every vector sat in the positive orthant (cos
+      // ~0.75, L2 ~0.7), which made the similarity-edge no-op invariant the test
+      // suite relies on hold only under a very strict distance threshold. Signed
+      // components restore that documented near-orthogonality; identical text
+      // still maps to an identical vector (so dedup/conflict tests are unchanged).
       hash = ((hash << 13) ^ hash) | 0;
       hash = (hash * 1597334677) | 0;
-      vec[i] = (hash & 0x7fffffff) / 0x7fffffff;
+      vec[i] = ((hash & 0x7fffffff) / 0x7fffffff) * 2 - 1;
     }
     // Normalize to unit vector
     let norm = 0;
