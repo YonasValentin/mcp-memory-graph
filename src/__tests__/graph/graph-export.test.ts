@@ -159,6 +159,22 @@ describe('mergeGraphs — pure union merge (the merge-driver core)', () => {
     expect(mergeGraphs(a, b)).toEqual(mergeGraphs(b, a));
   });
 
+  it('is order-independent on same id + SAME updated_at but DIFFERENT content', () => {
+    // Two devs edit the same memory and commit in the same wall-clock second:
+    // identical id + updated_at, divergent content. A union driver MUST converge
+    // both merge directions to the same content, or clones silently diverge.
+    const ts = '2026-01-01T00:00:00.000Z';
+    const fromA: ExportedMemory = { ...mem('m1', ts), content: 'FROM A' };
+    const fromB: ExportedMemory = { ...mem('m1', ts), content: 'FROM B' };
+    const a = artifact([fromA]);
+    const b = artifact([fromB]);
+
+    const ab = mergeGraphs(a, b);
+    const ba = mergeGraphs(b, a);
+    expect(ab).toEqual(ba); // full content equality, not just id-set
+    expect(ab.memories[0].content).toBe(ba.memories[0].content);
+  });
+
   it('on link collision keeps the max evidence_count', () => {
     const m1 = mem('m1', '2026-01-01T00:00:00.000Z');
     const m2 = mem('m2', '2026-01-01T00:00:00.000Z');
@@ -244,6 +260,29 @@ describe('mergeGraphs — pure union merge (the merge-driver core)', () => {
     expect(merged.entities).toHaveLength(1);
     expect(merged.entities[0].id).toBe('e1'); // lower id wins the tie
     expect(mergeGraphs(b, a)).toEqual(merged); // order-independent
+  });
+
+  it('is order-independent on same entity id + equal mention_count but different fields', () => {
+    // Same id + same mention_count, divergent other fields (name/type) — the
+    // lower-id tie-break is a no-op here, so a stable full-record compare must
+    // make both merge directions converge.
+    const a: GraphArtifact = {
+      version: 1,
+      memories: [],
+      links: [],
+      entities: [{ id: 'e1', name: 'Docker', normalized_name: 'docker', type: 'tool', mention_count: 2 }],
+    };
+    const b: GraphArtifact = {
+      version: 1,
+      memories: [],
+      links: [],
+      entities: [{ id: 'e1', name: 'docker-engine', normalized_name: 'docker', type: 'concept', mention_count: 2 }],
+    };
+
+    const ab = mergeGraphs(a, b);
+    const ba = mergeGraphs(b, a);
+    expect(ab).toEqual(ba);
+    expect(ab.entities[0].name).toBe(ba.entities[0].name);
   });
 });
 
