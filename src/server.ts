@@ -38,6 +38,8 @@ import {
   CoreMemoryReplaceSchema,
   MemoryReflectSchema,
   MemoryCommunitiesSchema,
+  MemoryTemplateSchema,
+  MemorySessionNoteSchema,
 } from './schemas/index.js';
 import { handleStore } from './tools/store.js';
 import { handleSearch } from './tools/search.js';
@@ -71,6 +73,8 @@ import {
 } from './tools/core-memory.js';
 import { handleReflect } from './tools/reflect.js';
 import { handleCommunities } from './tools/communities.js';
+import { handleTemplate } from './tools/templates.js';
+import { handleSessionNote } from './tools/session-note.js';
 
 import { metrics } from './api/metrics.js';
 import { logger } from './lib/logger.js';
@@ -490,6 +494,28 @@ export function createServer(): McpServer {
     instrument('memory_communities', async (input) => {
       const parsed = MemoryCommunitiesSchema.parse(input);
       return handleCommunities(getDb(), parsed);
+    }),
+  );
+
+  // ── 29. memory_template ───────────────────────────────────────────────────
+  server.tool(
+    'memory_template',
+    'Fetch an Obsidian-style note scaffold for a document_type so stored memories stay structurally consistent. Returns a markdown template with ## Section headers (e.g., decision → Context/Decision/Consequences; incident → Symptom/Root Cause/Fix/Prevention; also learning, bug-fix, meeting, session). Unknown types get a generic Summary/Details/Notes scaffold (known:false). Read-only: fill the scaffold, then store it via memory_store.',
+    MemoryTemplateSchema.shape,
+    instrument('memory_template', async (input) => {
+      const parsed = MemoryTemplateSchema.parse(input);
+      return handleTemplate(parsed);
+    }),
+  );
+
+  // ── 30. memory_session_note ───────────────────────────────────────────────
+  server.tool(
+    'memory_session_note',
+    'Frictionless per-session capture ("daily note for agents"). Keyed by source "session:<session_id>": the first call creates one session memory (document_type "session"); every later call for the same session_id appends to that same memory (newline-joined, re-embedded and versioned). Different session_ids stay isolated. Returns { memory_id, created, appended }.',
+    MemorySessionNoteSchema.shape,
+    instrument('memory_session_note', async (input) => {
+      const parsed = MemorySessionNoteSchema.parse(input);
+      return handleSessionNote(getDb(), await getEmbedder(), parsed);
     }),
   );
 

@@ -963,6 +963,45 @@ export const MemoryCommunitiesSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// 28. MemoryTemplateSchema (Pillar 6) — per-document_type scaffold
+// ---------------------------------------------------------------------------
+
+export const MemoryTemplateSchema = z.object({
+  document_type: z
+    .string()
+    .min(1)
+    .describe(
+      'Document type to fetch a note scaffold for (e.g., decision, incident, ' +
+      'learning, bug-fix, meeting, session). Unknown types get a generic ' +
+      'Summary/Details/Notes scaffold (known:false).',
+    ),
+});
+
+// ---------------------------------------------------------------------------
+// 29. MemorySessionNoteSchema (Pillar 6) — frictionless per-session capture
+// ---------------------------------------------------------------------------
+
+export const MemorySessionNoteSchema = z.object({
+  session_id: z
+    .string()
+    .min(1)
+    .describe(
+      'Session identifier. The note is keyed by source "session:<session_id>" — ' +
+      'the first call creates the memory, later calls append to that same one.',
+    ),
+  text: z
+    .string()
+    .min(1)
+    .describe('Text to capture (created as content, or appended newline-joined to the session note).'),
+  scope: scopeField(false),
+  namespace: namespaceField(),
+  title: z
+    .string()
+    .optional()
+    .describe('Optional title used only on create (defaults to "Session <session_id>").'),
+});
+
+// ---------------------------------------------------------------------------
 // REST API query/body schemas — derived from the MCP schemas above.
 // Express query strings arrive as `string | string[] | undefined`, so each
 // field uses zod preprocess to coerce numbers/arrays out of strings before
