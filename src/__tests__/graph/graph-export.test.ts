@@ -76,9 +76,13 @@ describe('exportGraph — committable graph artifact (Pillar 7, T21)', () => {
     const ids = art.memories.map((m) => m.id);
     expect(ids).toEqual([...ids].sort());
     expect(new Set(ids)).toEqual(new Set([m1.id, m2.id, m3.id]));
-    // the one link
-    expect(art.links).toHaveLength(1);
-    expect(art.links[0]).toMatchObject({ source: m1.id, target: m2.id, relation: 'links_to' });
+    // The manual wikilink edge is exported…
+    const wikilink = art.links.find((l) => l.source_kind === 'wikilink');
+    expect(wikilink).toMatchObject({ source: m1.id, target: m2.id, relation: 'links_to' });
+    // …alongside the auto co-occurrence edges (these memories share Docker/React
+    // entities, so the co-occurrence -> memory_links bridge (G3-F7) emits them).
+    const cooccur = art.links.filter((l) => l.source_kind === 'co_occurrence');
+    expect(cooccur.length).toBeGreaterThan(0);
     // entities auto-extracted (Docker/React/... are known tools)
     expect(art.entities.length).toBeGreaterThan(0);
 

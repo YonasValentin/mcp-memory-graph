@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import type { ExtractedEntity } from './entity-extractor.js';
+import { createMemoryLink } from './memory-links.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -114,9 +115,65 @@ export function storeExtractedEntities(
     // Entities mentioned together in one memory co-occur — materialize that as
     // graph edges so the knowledge graph actually has edges (not just nodes).
     buildCooccurrenceEdges(db, entityIds);
+    // Bridge co-occurrence into the memory<->memory graph too (G3-F7): memories
+    // sharing an entity get a memory_links 'co_occurs' edge, so /api/graph and
+    // memory_get.links reflect co-occurrence (not just entity_relationships).
+    buildMemoryCooccurrenceLinks(db, memoryId, entityIds);
   });
 
   store();
+}
+
+// Cap how many co-occurrence memory_links a single store creates so one memory
+// sharing a popular entity with thousands of others can't fan out into an edge
+// storm. Other memories are taken in deterministic id order.
+const MAX_COOCCURRENCE_MEMORY_LINKS = 25;
+
+/**
+ * Materializes memory<->memory co-occurrence into `memory_links` (G3-F7).
+ * Finds currently-valid, top-level memories (other than `memoryId`) that share
+ * at least one of `entityIds` and creates one canonical-direction `co_occurs`
+ * edge per pair (relation 'co_occurs', source_kind 'co_occurrence', confidence
+ * INFERRED). Repeats of the same pair bump evidence_count via createMemoryLink's
+ * upsert, so the edge strengthens as the two memories keep co-occurring.
+ */
+export function buildMemoryCooccurrenceLinks(
+  db: Database.Database,
+  memoryId: string,
+  entityIds: string[],
+): void {
+  const unique = [...new Set(entityIds)];
+  if (unique.length === 0) return;
+
+  const placeholders = unique.map(() => '?').join(',');
+  const others = db
+    .prepare<unknown[], { id: string }>(
+      `SELECT DISTINCT m.id AS id
+         FROM memory_entities me
+         JOIN memories m ON m.id = me.memory_id
+        WHERE me.entity_id IN (${placeholders})
+          AND m.id <> ?
+          AND m.parent_id IS NULL
+          AND m.valid_to IS NULL
+          AND m.tx_expired IS NULL
+        ORDER BY m.id
+        LIMIT ?`,
+    )
+    .all(...unique, memoryId, MAX_COOCCURRENCE_MEMORY_LINKS);
+
+  for (const other of others) {
+    // Canonical (lower id -> higher id) direction so (A,B) and (B,A) collapse
+    // onto one edge whose evidence_count grows on recurrence.
+    const [source, target] = memoryId < other.id ? [memoryId, other.id] : [other.id, memoryId];
+    createMemoryLink(db, {
+      sourceId: source,
+      targetId: target,
+      relation: 'co_occurs',
+      confidence: 'INFERRED',
+      confidenceScore: 0.5,
+      sourceKind: 'co_occurrence',
+    });
+  }
 }
 
 // Cap pair-building so a memory mentioning many entities can't explode into an
