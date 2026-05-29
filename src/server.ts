@@ -30,6 +30,9 @@ import {
   MemoryCondenseSchema,
   MemoryRestoreSchema,
   MemoryQuerySchema,
+  CoreMemoryGetSchema,
+  CoreMemoryAppendSchema,
+  CoreMemoryReplaceSchema,
 } from './schemas/index.js';
 import { handleStore } from './tools/store.js';
 import { handleSearch } from './tools/search.js';
@@ -53,6 +56,11 @@ import { handleGraph } from './tools/graph.js';
 import { handleExtractEntities } from './tools/extract-entities.js';
 import { handleCondense, handleRestore } from './tools/condense.js';
 import { handleQuery } from './tools/query.js';
+import {
+  handleCoreMemoryGet,
+  handleCoreMemoryAppend,
+  handleCoreMemoryReplace,
+} from './tools/core-memory.js';
 
 import { metrics } from './api/metrics.js';
 import { logger } from './lib/logger.js';
@@ -384,6 +392,39 @@ export function createServer(): McpServer {
     instrument('memory_query', async (input) => {
       const parsed = MemoryQuerySchema.parse(input);
       return handleQuery(getDb(), await getEmbedder(), parsed);
+    }),
+  );
+
+  // ── 24. core_memory_get ───────────────────────────────────────────────────
+  server.tool(
+    'core_memory_get',
+    'Read the pinned "core memory" block for a (scope, namespace) — a small, bounded, always-in-context note the agent maintains about who it is and what matters now. Returns content, char_limit, and used (character count).',
+    CoreMemoryGetSchema.shape,
+    instrument('core_memory_get', async (input) => {
+      const parsed = CoreMemoryGetSchema.parse(input);
+      return handleCoreMemoryGet(getDb(), parsed);
+    }),
+  );
+
+  // ── 25. core_memory_append ────────────────────────────────────────────────
+  server.tool(
+    'core_memory_append',
+    'Append text to the pinned core-memory block (newline-separated when non-empty). If the result would exceed char_limit the write is refused (error: core_memory_full) so you compact via core_memory_replace instead of silently overflowing.',
+    CoreMemoryAppendSchema.shape,
+    instrument('core_memory_append', async (input) => {
+      const parsed = CoreMemoryAppendSchema.parse(input);
+      return handleCoreMemoryAppend(getDb(), parsed);
+    }),
+  );
+
+  // ── 26. core_memory_replace ───────────────────────────────────────────────
+  server.tool(
+    'core_memory_replace',
+    'Replace the first occurrence of old_text with new_text in the pinned core-memory block. Returns error: not_found if old_text is absent, or core_memory_full if the result would exceed char_limit. Use this to update or compact the block.',
+    CoreMemoryReplaceSchema.shape,
+    instrument('core_memory_replace', async (input) => {
+      const parsed = CoreMemoryReplaceSchema.parse(input);
+      return handleCoreMemoryReplace(getDb(), parsed);
     }),
   );
 

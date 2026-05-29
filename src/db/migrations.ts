@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { CURRENT_SCHEMA_VERSION, MEMORY_LINKS_DDL } from './schema.js';
+import { CURRENT_SCHEMA_VERSION, MEMORY_LINKS_DDL, CORE_MEMORY_DDL } from './schema.js';
 
 interface Migration {
   version: number;
@@ -216,6 +216,13 @@ const migrations: Migration[] = [
       };
 
       addColumn('ALTER TABLE memories ADD COLUMN stability REAL NOT NULL DEFAULT 1.0');
+    },
+  },
+  {
+    version: 8,
+    up: (db) => {
+      // Pillar 5: MemGPT-style pinned "core memory" block per (scope, namespace).
+      db.exec(CORE_MEMORY_DDL);
     },
   },
 ];

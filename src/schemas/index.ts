@@ -809,6 +809,40 @@ export const MemoryQuerySchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// 25. CoreMemory schemas (Pillar 5)
+// ---------------------------------------------------------------------------
+
+export const CoreMemoryGetSchema = z.object({
+  scope: scopeFieldWithDefault(),
+  namespace: namespaceField(),
+});
+
+export const CoreMemoryAppendSchema = z.object({
+  scope: scopeFieldWithDefault(),
+  namespace: namespaceField(),
+  text: z
+    .string()
+    .min(1)
+    .describe(
+      'Text to append to the pinned core-memory block (newline-separated when ' +
+      'the block is non-empty). Refused if it would exceed char_limit — ' +
+      'compact via core_memory_replace instead.',
+    ),
+});
+
+export const CoreMemoryReplaceSchema = z.object({
+  scope: scopeFieldWithDefault(),
+  namespace: namespaceField(),
+  old_text: z
+    .string()
+    .min(1)
+    .describe('Substring to find (first occurrence) in the core-memory block'),
+  new_text: z
+    .string()
+    .describe('Replacement text for the first occurrence of old_text'),
+});
+
+// ---------------------------------------------------------------------------
 // REST API query/body schemas — derived from the MCP schemas above.
 // Express query strings arrive as `string | string[] | undefined`, so each
 // field uses zod preprocess to coerce numbers/arrays out of strings before
