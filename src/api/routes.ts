@@ -13,6 +13,14 @@ import { handleStats } from '../tools/stats.js';
 import { handleManifest } from '../tools/manifest.js';
 import { getLinksAmong } from '../graph/memory-links.js';
 import {
+  getPublishedPages,
+  getPublishedPage,
+  getPublishedGraph,
+  getPublishedIdSet,
+  renderIndexHtml,
+  renderPageHtml,
+} from '../publish/wiki.js';
+import {
   ApiSearchQuerySchema,
   ApiListQuerySchema,
   ApiManifestQuerySchema,
@@ -267,5 +275,73 @@ export function registerApiRoutes(
     const q = parseOrThrow(ApiManifestQuerySchema, req.query);
     const result = handleManifest(getDb(), q);
     res.json(result);
+  }));
+}
+
+/**
+ * Obsidian-Publish-style read-only "memory wiki" (Pillar 6 / T18).
+ *
+ * Mounted at /publish and intentionally NOT behind bearer auth — this is the
+ * public sharing surface. Access control is enforced in the data layer
+ * (`src/publish/wiki.ts`): every query is scoped to the namespace AND an
+ * `access_level` allowlist, and link traversal re-applies the filter, so a
+ * non-published memory is unreachable via the index, a direct page-by-id, the
+ * graph, backlinks, OR search. All user data is HTML-escaped at render time.
+ */
+export function registerPublishRoutes(
+  router: Application,
+  getDb: GetDb,
+  getEmbedder: GetEmbedder,
+): void {
+  // ── GET /publish/:namespace — HTML index ────────────────────────────────
+  router.get('/publish/:namespace', asyncHandler('GET /publish/:namespace', (req, res) => {
+    const namespace = param(req, 'namespace');
+    const pages = getPublishedPages(getDb(), { namespace });
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(renderIndexHtml(namespace, pages));
+  }));
+
+  // ── GET /publish/:namespace/graph — JSON (published only) ───────────────
+  router.get('/publish/:namespace/graph', asyncHandler('GET /publish/:namespace/graph', (req, res) => {
+    const namespace = param(req, 'namespace');
+    res.json(getPublishedGraph(getDb(), { namespace }));
+  }));
+
+  // ── GET /publish/:namespace/search?q= — JSON, published pages only ──────
+  router.get('/publish/:namespace/search', asyncHandler('GET /publish/:namespace/search', async (req, res) => {
+    const namespace = param(req, 'namespace');
+    const q = typeof req.query.q === 'string' ? req.query.q : '';
+    if (q.trim().length === 0) {
+      res.json({ results: [], total: 0 });
+      return;
+    }
+    const db = getDb();
+    // Defense in depth: post-filter against the published id set so even if the
+    // search layer's namespace/access_level filtering changed, no non-published
+    // memory can surface here.
+    const publishedIds = getPublishedIdSet(db, { namespace });
+    const search = await handleSearch(db, await getEmbedder(), {
+      query: q,
+      namespace,
+      access_level: 'public',
+      detail_level: 'summary',
+    });
+    const results = (search.results as Array<{ id: string }>).filter((r) =>
+      publishedIds.has(r.id),
+    );
+    res.json({ results, total: results.length });
+  }));
+
+  // ── GET /publish/:namespace/page/:id — HTML page or 404 JSON ────────────
+  router.get('/publish/:namespace/page/:id', asyncHandler('GET /publish/:namespace/page/:id', (req, res) => {
+    const namespace = param(req, 'namespace');
+    const id = param(req, 'id');
+    const page = getPublishedPage(getDb(), { namespace, id });
+    if (!page) {
+      res.status(404).json({ error: 'not_found' });
+      return;
+    }
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(renderPageHtml(namespace, page));
   }));
 }
