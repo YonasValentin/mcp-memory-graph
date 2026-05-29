@@ -625,6 +625,12 @@ export const MemoryConsolidateSchema = z.object({
   max_operations: z
     .number().int().min(1).max(1000).default(100)
     .describe('Maximum number of merge/prune operations per run'),
+  forgetting_floor: z
+    .number().min(0).max(1).optional()
+    .describe(
+      'Opt-in spaced-repetition prune. When set (0-1), remove weakly-held memories ' +
+      'whose retention e^(-Δt/stability) has decayed below this floor. Omit to disable.',
+    ),
 });
 
 // ---------------------------------------------------------------------------

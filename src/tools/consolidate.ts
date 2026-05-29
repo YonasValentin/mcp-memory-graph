@@ -13,6 +13,14 @@ import {
 } from '../db/repository.js';
 import { getConfig } from '../config/loader.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
+import { computeRetention } from '../search/temporal.js';
+
+/**
+ * Below this access count a memory is "weakly held" and eligible for the
+ * opt-in forgetting-curve prune. Frequently-accessed memories (≥ this) are
+ * never forgotten regardless of retention.
+ */
+const FORGETTING_MIN_ACCESS_TO_KEEP = 3;
 
 const CONTENT_MERGE_SEPARATOR = '\n\n---\n\n';
 
@@ -100,6 +108,12 @@ export async function handleConsolidate(
     prune_low_quality?: boolean;
     dry_run?: boolean;
     max_operations?: number;
+    /**
+     * Opt-in spaced-repetition prune. When set, an extra pass removes weakly-held
+     * memories whose retention `e^(-Δt/stability)` has fallen below this floor.
+     * Undefined (default) → no forgetting prune happens; behavior is unchanged.
+     */
+    forgetting_floor?: number;
   },
 ): Promise<ConsolidationReport> {
   const startTime = Date.now();
@@ -108,6 +122,7 @@ export async function handleConsolidate(
     duplicates_merged: 0,
     expired_pruned: 0,
     low_quality_pruned: 0,
+    forgetting_pruned: 0,
     scores_updated: 0,
     errors: [],
     knowledge_gaps: [],
@@ -244,6 +259,46 @@ export async function handleConsolidate(
       }
     } catch (err) /* c8 ignore start */ {
       report.errors.push(`Prune stage failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    /* c8 ignore stop */
+  }
+
+  // ── Stage 3b: Spaced-repetition forgetting prune (opt-in) ─────────────
+  // Only runs when `forgetting_floor` is provided — otherwise this whole stage
+  // is skipped and behavior is byte-identical to the prior consolidate. Removes
+  // weakly-held memories (low access_count) whose retention has decayed below
+  // the floor. Guards mirror the other prune stages: top-level rows only
+  // (parent_id IS NULL) and high-importance memories are protected.
+  if (input.forgetting_floor !== undefined && !limitReached()) {
+    try {
+      const minImportance = getConfig().consolidation.min_importance_to_keep;
+      const now = Date.now();
+      const candidates = db
+        .prepare<unknown[], { id: string; stability: number; last_accessed_at: string | null; created_at: string }>(
+          `SELECT id, stability, last_accessed_at, created_at FROM memories
+           WHERE access_count < ?
+             AND importance_score < ?
+             AND parent_id IS NULL
+             AND valid_to IS NULL
+             AND tx_expired IS NULL${filterClause}`,
+        )
+        .all(FORGETTING_MIN_ACCESS_TO_KEEP, minImportance, ...filterParams);
+
+      for (const row of candidates) {
+        if (limitReached()) break;
+        const lastActive = row.last_accessed_at ?? row.created_at;
+        const ageDays = Math.max(0, (now - new Date(lastActive).getTime()) / 86_400_000);
+        const retention = computeRetention(ageDays, row.stability);
+        if (retention >= input.forgetting_floor) continue;
+
+        if (!dryRun) {
+          deleteMemory(db, row.id);
+        }
+        report.forgetting_pruned++;
+        opsPerformed++;
+      }
+    } catch (err) /* c8 ignore start */ {
+      report.errors.push(`Forgetting prune stage failed: ${err instanceof Error ? err.message : String(err)}`);
     }
     /* c8 ignore stop */
   }

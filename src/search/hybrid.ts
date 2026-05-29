@@ -283,7 +283,7 @@ export async function hybridSearch(
       const row = rowMap.get(item.rowid)!;
       return {
         ...item,
-        score: applyTemporalDecay(item.score, row.created_at, options.temporal_decay!, row.access_count),
+        score: applyTemporalDecay(item.score, row.created_at, options.temporal_decay!, row.access_count, row.stability),
       };
     });
     ranked.sort((a, b) => b.score - a.score);

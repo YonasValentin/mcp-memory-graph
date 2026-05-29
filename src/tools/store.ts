@@ -168,6 +168,7 @@ export async function handleStore(
     last_accessed_at: null,
     importance_score: computeContentSignal(input.content),
     confidence_score: input.confidence_score ?? 0.7,
+    stability: 1.0,
   };
 
   // Atomically: insert the memory, record conflicts (FK now valid), extract entities.

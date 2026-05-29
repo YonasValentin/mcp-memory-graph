@@ -4,7 +4,7 @@ import type Database from 'better-sqlite3';
  * The current schema version baked into this codebase. Updated together with
  * a new entry in `runMigrations`.
  */
-export const CURRENT_SCHEMA_VERSION = 6;
+export const CURRENT_SCHEMA_VERSION = 7;
 
 /**
  * Persistent memory-to-memory edge store (Pillar 1). Edges carry a confidence
@@ -168,7 +168,8 @@ export function initializeSchema(db: Database.Database): void {
       provenance_detail TEXT,
       valid_from TEXT,
       valid_to TEXT,
-      tx_expired TEXT
+      tx_expired TEXT,
+      stability REAL NOT NULL DEFAULT 1.0
     );
 
     CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);

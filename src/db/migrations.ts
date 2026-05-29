@@ -203,6 +203,21 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: 7,
+    up: (db) => {
+      // Spaced-repetition forgetting curve: each memory carries a `stability`
+      // that grows on access. retention = e^(-Δt/stability) powers an opt-in
+      // ranking multiplier and an opt-in prune signal. The NOT NULL DEFAULT
+      // backfills existing rows to 1.0 in the same ALTER (SQLite applies a
+      // constant default to all pre-existing rows).
+      const addColumn = (sql: string) => {
+        try { db.exec(sql); } catch { /* column already exists */ }
+      };
+
+      addColumn('ALTER TABLE memories ADD COLUMN stability REAL NOT NULL DEFAULT 1.0');
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

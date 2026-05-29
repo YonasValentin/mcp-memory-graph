@@ -71,6 +71,7 @@ export async function handleIngest(
       last_accessed_at: null,
       importance_score: 0.5,
       confidence_score: 0.5,
+      stability: 1.0,
     };
 
     insertMemory(db, parentRow, parentEmbedding);
@@ -103,6 +104,7 @@ export async function handleIngest(
         last_accessed_at: null,
         importance_score: 0.5,
         confidence_score: 0.5,
+        stability: 1.0,
       };
 
       insertMemory(db, chunkRow, chunkEmbeddings[i]);

@@ -4,7 +4,7 @@ export type AccessLevel = 'public' | 'internal' | 'confidential' | 'restricted';
 
 export type SearchMode = 'hybrid' | 'vector' | 'keyword';
 
-export type DecayType = 'exponential' | 'linear' | 'none';
+export type DecayType = 'exponential' | 'linear' | 'none' | 'forgetting';
 
 export type ContentType = 'text' | 'markdown' | 'code' | 'legal' | 'structured';
 
@@ -70,6 +70,8 @@ export interface MemoryRow {
   last_accessed_at: string | null;
   importance_score: number;
   confidence_score: number;
+  /** Spaced-repetition stability: grows on access, drives the forgetting curve. */
+  stability: number;
   rowid?: number;
 }
 
@@ -365,6 +367,8 @@ export interface ConsolidationReport {
   duplicates_merged: number;
   expired_pruned: number;
   low_quality_pruned: number;
+  /** Memories pruned by the opt-in forgetting-curve pass (0 unless `forgetting_floor` set). */
+  forgetting_pruned: number;
   scores_updated: number;
   /** True execution failures only — see `knowledge_gaps` for missing-knowledge signals. */
   errors: string[];

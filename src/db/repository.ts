@@ -428,6 +428,13 @@ export function rowToMemory(row: MemoryRow): Memory {
 
 // ── Access Tracking ──────────────────────────────────────────────────────
 
+/**
+ * Spaced-repetition reinforcement: each access grows a memory's `stability`
+ * by this amount, so frequently-accessed memories forget more slowly under the
+ * `e^(-Δt/stability)` retention curve (see {@link computeRetention}).
+ */
+export const STABILITY_INCREMENT = 0.5;
+
 export function recordAccess(
   db: Database.Database,
   entries: AccessLogEntry[],
@@ -443,7 +450,8 @@ export function recordAccess(
       UPDATE memories
       SET access_count = access_count + 1,
           last_accessed_at = datetime('now'),
-          importance_score = MIN(1.0, importance_score + 0.03)
+          importance_score = MIN(1.0, importance_score + 0.03),
+          stability = stability + ${STABILITY_INCREMENT}
       WHERE id = ?
     `);
 
