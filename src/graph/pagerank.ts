@@ -299,6 +299,37 @@ export interface RankMemoriesOptions extends PageRankOptions {
 const DEFAULT_MEMORY_LIMIT = 50;
 
 /**
+ * Sums per-entity PPR scores into per-memory scores in a PINNED order so the
+ * result is bit-for-bit deterministic. Floating-point addition is not
+ * associative, and the `links` rows arrive in unspecified DB order, so summing
+ * in row order would let the query plan perturb the last bits of a score. We
+ * sort the contributions (by memory_id, then entity_id) before accumulating, so
+ * the same inputs always produce the same totals regardless of arrival order.
+ * Pure.
+ */
+export function sumMemoryScores(
+  links: MemoryEntityRow[],
+  entityScores: Map<string, number>,
+): Map<string, number> {
+  const ordered = [...links].sort(
+    (a, b) =>
+      (a.memory_id < b.memory_id ? -1 : a.memory_id > b.memory_id ? 1 : 0) ||
+      (a.entity_id < b.entity_id ? -1 : a.entity_id > b.entity_id ? 1 : 0),
+  );
+
+  const memoryScores = new Map<string, number>();
+  for (const link of ordered) {
+    const entityScore = entityScores.get(link.entity_id);
+    if (entityScore === undefined) continue;
+    memoryScores.set(
+      link.memory_id,
+      (memoryScores.get(link.memory_id) ?? 0) + entityScore,
+    );
+  }
+  return memoryScores;
+}
+
+/**
  * Ranks memories by HippoRAG PPR relevance to the seed entities.
  *
  * Runs {@link personalizedPageRank}, then scores each memory as the sum of the
@@ -307,7 +338,12 @@ const DEFAULT_MEMORY_LIMIT = 50;
  * scoring entities (score 0) are omitted. Returns descending by score, capped
  * at `opts.limit`. Read-only.
  *
- * Ties break on `memory_id` so the order is fully deterministic.
+ * RETIRED memories — invalidated (`valid_to`), transaction-expired
+ * (`tx_expired`), or superseded (`superseded_at`) — are excluded so stale facts
+ * never surface in associative recall.
+ *
+ * The per-memory summation is order-pinned (see {@link sumMemoryScores}) and
+ * ties break on `memory_id`, so the ranking is fully deterministic.
  */
 export function rankMemoriesByPPR(
   db: Database.Database,
@@ -320,25 +356,23 @@ export function rankMemoriesByPPR(
 
   // Only memories linked to a scored entity can score above 0; restrict the
   // scan to those entities so we don't walk the whole memory_entities table.
+  // Join `memories` to drop retired rows (valid_to / tx_expired / superseded_at)
+  // so the ranking only ever surfaces currently-valid memories.
   const entityIds = [...entityScores.keys()];
   const placeholders = entityIds.map(() => '?').join(',');
   const links = db
     .prepare<string[], MemoryEntityRow>(
-      `SELECT memory_id, entity_id
-         FROM memory_entities
-        WHERE entity_id IN (${placeholders})`,
+      `SELECT me.memory_id AS memory_id, me.entity_id AS entity_id
+         FROM memory_entities me
+         JOIN memories m ON m.id = me.memory_id
+        WHERE me.entity_id IN (${placeholders})
+          AND m.valid_to IS NULL
+          AND m.tx_expired IS NULL
+          AND m.superseded_at IS NULL`,
     )
     .all(...entityIds);
 
-  const memoryScores = new Map<string, number>();
-  for (const link of links) {
-    const entityScore = entityScores.get(link.entity_id);
-    if (entityScore === undefined) continue;
-    memoryScores.set(
-      link.memory_id,
-      (memoryScores.get(link.memory_id) ?? 0) + entityScore,
-    );
-  }
+  const memoryScores = sumMemoryScores(links, entityScores);
 
   const ranked: RankedMemory[] = [];
   for (const [memory_id, score] of memoryScores) {
