@@ -9,7 +9,7 @@ AI assistants lose context between sessions. Your decisions, patterns, and insti
 - **Survives across sessions** — Knowledge stored today is searchable tomorrow
 - **Understands meaning** — "contract notice period" finds "90-day renewal clause" even without exact keyword match
 - **Improves itself** — Tracks what gets accessed, scores quality, extracts learnings from sessions, and consolidates knowledge automatically
-- **Stays private** — Everything runs locally. No cloud APIs, no telemetry, no data leaving your machine
+- **Stays private** — The core path runs entirely locally: local embeddings, no cloud APIs, no telemetry. The only exception is the **optional** Stop hook (opt-in via `init`), which sends your session transcript to your locally-installed Claude Code (`claude -p`) for learning extraction — disable it with `review_on_stop: false`
 - **Works for any team** — Engineers store architectural decisions, lawyers store contract patterns, accountants store audit procedures
 
 ## Features
@@ -1078,4 +1078,4 @@ npx mcp-memory-server consolidate
 
 ## License
 
-MIT
+MIT — see [LICENSE](./LICENSE).
