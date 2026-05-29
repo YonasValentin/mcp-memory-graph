@@ -44,6 +44,9 @@ export class CrossEncoderReranker implements Reranker {
     docs: { id: string; text: string }[],
   ): Promise<Array<{ id: string; score: number }>> {
     if (docs.length === 0) return [];
+    /* c8 ignore start */
+    // Model load + per-doc inference — never exercised in the hermetic test
+    // suite (would require downloading and running the real cross-encoder).
     await this.ensureInitialized();
 
     const results: Array<{ id: string; score: number }> = [];
@@ -58,6 +61,7 @@ export class CrossEncoderReranker implements Reranker {
       results.push({ id: doc.id, score });
     }
     return results;
+    /* c8 ignore stop */
   }
 
   isReady(): boolean {

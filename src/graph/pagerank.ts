@@ -208,13 +208,17 @@ export function personalizedPageRank(
     teleportTotal += w;
   }
   // Defensive: if every seed somehow had zero specificity, fall back to uniform
-  // over the seed set so the restart vector is well-defined.
+  // over the seed set so the restart vector is well-defined. Unreachable via the
+  // public API — specificity is `1 / (1 + mentions)` (always > 0) or a constant 1
+  // when disabled — so this only fires under corrupted internal state.
+  /* c8 ignore start */
   if (teleportTotal === 0) {
     for (const i of seenSeed) {
       teleport[i] = 1;
       teleportTotal += 1;
     }
   }
+  /* c8 ignore stop */
   for (let i = 0; i < n; i++) teleport[i] /= teleportTotal;
 
   // Power iteration. Start from the teleport distribution (good warm start).

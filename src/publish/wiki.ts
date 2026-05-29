@@ -99,17 +99,6 @@ export function getPublishedPages(
   }));
 }
 
-/** True when `id` is a published page in `namespace` (the single gate every
- * traversal relies on). */
-function isPublished(db: Database.Database, namespace: string, id: string): boolean {
-  const row = db
-    .prepare<string[], { id: string }>(
-      `SELECT id FROM memories WHERE id = ? AND ${publishedWhere()} LIMIT 1`,
-    )
-    .get(id, ...publishedParams(namespace));
-  return row !== undefined;
-}
-
 /** Resolve a set of memory ids to {id,title}, keeping ONLY those that are
  * published in `namespace`. This is the leak-proofing step for links. */
 function resolvePublishedLinks(

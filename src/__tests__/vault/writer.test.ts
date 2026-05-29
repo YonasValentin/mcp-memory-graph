@@ -24,6 +24,7 @@ import {
   memoryToMarkdown,
   safeVaultFilename,
   exportMemoriesToVault,
+  confineToVault,
 } from '../../vault/writer.js';
 import { handleExportVault } from '../../tools/export-vault.js';
 
@@ -260,6 +261,22 @@ describe('path safety', () => {
     // Nothing escaped: the parent of the vault must NOT contain an "escape" file.
     const parent = path.dirname(realVault);
     expect(fs.existsSync(path.join(parent, 'escape.md'))).toBe(false);
+  });
+
+  it('confineToVault returns null for a traversal-bearing relPath', () => {
+    // A relPath that resolves outside the vault root must be rejected outright —
+    // this is the single source of truth for write confinement.
+    const realVault = fs.realpathSync(vaultDir);
+    expect(confineToVault(realVault, '../escape.md')).toBeNull();
+    expect(confineToVault(realVault, '../../etc/passwd')).toBeNull();
+  });
+
+  it('confineToVault accepts a relPath that stays inside the vault', () => {
+    const realVault = fs.realpathSync(vaultDir);
+    const inside = confineToVault(realVault, 'sub/note.md');
+    expect(inside).toBe(path.join(realVault, 'sub', 'note.md'));
+    // The vault root itself is allowed.
+    expect(confineToVault(realVault, '.')).toBe(realVault);
   });
 });
 

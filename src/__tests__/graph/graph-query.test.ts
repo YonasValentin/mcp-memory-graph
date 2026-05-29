@@ -203,4 +203,20 @@ describe('queryGraph — token-budgeted hub-avoiding graph traversal (Pillar 3, 
       expect(scoreById.get(seedId)!).toBeGreaterThanOrEqual(cutoff);
     }
   });
+
+  it('truncates a long node body to a word-boundary snippet with an ellipsis', async () => {
+    const db = createTestDb();
+    const query = 'palindrome heliotrope quasar marker';
+    // Body well over the 200-char snippet cap, with spaces so the truncation
+    // trims to a word boundary before appending the ellipsis.
+    const longBody = `${query} ` + 'lorem ipsum dolor sit amet '.repeat(20);
+    await store(db, longBody, 'Long Seed');
+
+    const result = await queryGraph(db, embedder, { query });
+
+    expect(result.seeds.length).toBeGreaterThan(0);
+    expect(result.context).toContain('…');
+    // The snippet stops at a word boundary, so no partial trailing word survives.
+    expect(result.context).not.toContain('lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem');
+  });
 });

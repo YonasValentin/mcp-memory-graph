@@ -219,6 +219,12 @@ describe('publish — selective read-only memory wiki', () => {
     expect(miss.status).toBe(200);
     const missBody = JSON.parse(miss.body) as { results: Array<{ id: string }> };
     expect(missBody.results.some((r) => r.id === iId)).toBe(false);
+
+    // An empty / whitespace-only query short-circuits to an empty result set
+    // without touching the DB.
+    const empty = await request(port, { path: '/publish/wiki/search?q=+++' });
+    expect(empty.status).toBe(200);
+    expect(JSON.parse(empty.body)).toEqual({ results: [], total: 0 });
   });
 });
 

@@ -136,4 +136,24 @@ describe('cross-encoder reranking stage (Pillar 3, T6)', () => {
     expect(reranker).toBeInstanceOf(CrossEncoderReranker);
     expect(typeof reranker.rerank).toBe('function');
   });
+
+  it('honors an explicit model name', () => {
+    const reranker = new CrossEncoderReranker('Xenova/custom-model');
+    expect(reranker.modelName).toBe('Xenova/custom-model');
+  });
+
+  it('reports not-ready before any model load', () => {
+    // isReady() must be true only after a (model-loading) rerank — hermetically
+    // it always reports false because the suite never loads the model.
+    const reranker = new CrossEncoderReranker();
+    expect(reranker.isReady()).toBe(false);
+  });
+
+  it('rerank([]) short-circuits to [] without touching the model', async () => {
+    // The empty-docs fast path must return before ensureInitialized(), so it
+    // never triggers a download — and stays not-ready afterward.
+    const reranker = new CrossEncoderReranker();
+    await expect(reranker.rerank('anything', [])).resolves.toEqual([]);
+    expect(reranker.isReady()).toBe(false);
+  });
 });

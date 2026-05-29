@@ -13,6 +13,7 @@ import { MockEmbeddingProvider } from '../../testing/mock-embedder.js';
 import { CachedEmbeddingProvider } from '../../embeddings/cache.js';
 import { RateLimiter } from '../../api/rate-limit.js';
 import { handleStore } from '../../tools/store.js';
+import { createMemoryLink } from '../../graph/memory-links.js';
 
 interface Resp { status: number; body: string; headers: http.IncomingHttpHeaders }
 
@@ -144,6 +145,32 @@ describe('every /api endpoint', () => {
     expect(body).toHaveProperty('nodes');
     expect(body).toHaveProperty('edges');
     expect(body).toHaveProperty('total');
+  });
+
+  it('GET /api/graph maps persistent edges into the D3 payload', async () => {
+    const embedder = new MockEmbeddingProvider();
+    const a = await handleStore(db, embedder, { content: 'graph edge source memory.' });
+    const b = await handleStore(db, embedder, { content: 'graph edge target memory.' });
+    createMemoryLink(db, {
+      sourceId: a.memory.id,
+      targetId: b.memory.id,
+      relation: 'references',
+      sourceKind: 'typed',
+      confidence: 'EXTRACTED',
+      confidenceScore: 0.9,
+    });
+
+    const res = await request(port, '/api/graph?limit=50&min_importance=0');
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body);
+    const edge = body.edges.find(
+      (e: { source: string; target: string }) => e.source === a.memory.id && e.target === b.memory.id,
+    );
+    expect(edge).toBeDefined();
+    expect(edge.relation).toBe('references');
+    expect(edge.kind).toBe('typed');
+    expect(edge.confidence).toBe('EXTRACTED');
+    expect(edge.similarity).toBeCloseTo(0.9);
   });
 
   it('GET /api/graph caches identical requests', async () => {
