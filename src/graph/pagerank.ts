@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { chunkIds } from './communities.js';
 
 /**
  * HippoRAG-style multi-hop retrieval (Pillar 3, T4).
@@ -147,13 +148,18 @@ function buildGraph(
   // Specificity (IDF-analog): rarer entities (low mention_count) weigh more.
   const specificity = new Float64Array(n).fill(1);
   if (useSpecificity && n > 0) {
-    const placeholders = ids.map(() => '?').join(',');
-    const rows = db
-      .prepare<string[], EntityRow>(
-        `SELECT id, mention_count FROM entities WHERE id IN (${placeholders})`,
-      )
-      .all(...ids);
-    const byId = new Map(rows.map((r) => [r.id, r.mention_count]));
+    // The id set can exceed SQLite's ~32k bound-parameter limit, so chunk the
+    // IN-clause and merge the rows back into one map (mirrors communities.ts).
+    const byId = new Map<string, number>();
+    for (const batch of chunkIds(ids)) {
+      const placeholders = batch.map(() => '?').join(',');
+      const rows = db
+        .prepare<string[], EntityRow>(
+          `SELECT id, mention_count FROM entities WHERE id IN (${placeholders})`,
+        )
+        .all(...batch);
+      for (const r of rows) byId.set(r.id, r.mention_count);
+    }
     for (let i = 0; i < n; i++) {
       const mentions = byId.get(ids[i]) ?? 0;
       specificity[i] = 1 / (1 + mentions);
@@ -358,19 +364,25 @@ export function rankMemoriesByPPR(
   // scan to those entities so we don't walk the whole memory_entities table.
   // Join `memories` to drop retired rows (valid_to / tx_expired / superseded_at)
   // so the ranking only ever surfaces currently-valid memories.
+  // The scored-entity set can exceed SQLite's ~32k bound-parameter limit, so
+  // chunk the IN-clause and accumulate the rows (mirrors communities.ts).
   const entityIds = [...entityScores.keys()];
-  const placeholders = entityIds.map(() => '?').join(',');
-  const links = db
-    .prepare<string[], MemoryEntityRow>(
-      `SELECT me.memory_id AS memory_id, me.entity_id AS entity_id
-         FROM memory_entities me
-         JOIN memories m ON m.id = me.memory_id
-        WHERE me.entity_id IN (${placeholders})
-          AND m.valid_to IS NULL
-          AND m.tx_expired IS NULL
-          AND m.superseded_at IS NULL`,
-    )
-    .all(...entityIds);
+  const links: MemoryEntityRow[] = [];
+  for (const batch of chunkIds(entityIds)) {
+    const placeholders = batch.map(() => '?').join(',');
+    const rows = db
+      .prepare<string[], MemoryEntityRow>(
+        `SELECT me.memory_id AS memory_id, me.entity_id AS entity_id
+           FROM memory_entities me
+           JOIN memories m ON m.id = me.memory_id
+          WHERE me.entity_id IN (${placeholders})
+            AND m.valid_to IS NULL
+            AND m.tx_expired IS NULL
+            AND m.superseded_at IS NULL`,
+      )
+      .all(...batch);
+    links.push(...rows);
+  }
 
   const memoryScores = sumMemoryScores(links, entityScores);
 
