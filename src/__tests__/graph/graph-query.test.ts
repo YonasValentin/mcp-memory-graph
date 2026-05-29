@@ -93,6 +93,70 @@ describe('queryGraph — token-budgeted hub-avoiding graph traversal (Pillar 3, 
     }
   });
 
+  it('avoids MULTIPLE comparable hubs at once (order-independent threshold)', async () => {
+    const db = createTestDb();
+    // Single seed S adjacent to two comparable hubs H1, H2 (12 satellites each).
+    // Under a max/percentile-over-visited rule, the second hub sets the bar to
+    // its own degree and both flood; the median×k rule keeps both above the bar.
+    const query = 'quetzalcoatl obsidian seedphrase';
+    const s = await store(db, `${query} primary anchor note`, 'Seed S');
+    const h1 = await store(db, 'first hub highly connected node', 'Hub H1');
+    const h2 = await store(db, 'second hub highly connected node', 'Hub H2');
+    link(db, s.id, h1.id);
+    link(db, s.id, h2.id);
+
+    const satellites = new Set<string>();
+    for (let i = 0; i < 12; i++) {
+      const d1 = await store(db, `h1-satellite leaf alpha ${i}`, `H1 sat ${i}`);
+      const d2 = await store(db, `h2-satellite leaf beta ${i}`, `H2 sat ${i}`);
+      link(db, h1.id, d1.id);
+      link(db, h2.id, d2.id);
+      satellites.add(d1.id);
+      satellites.add(d2.id);
+    }
+
+    const result = await queryGraph(db, embedder, { query, max_hops: 2, max_tokens: 50000 });
+    const byId = new Map(result.nodes.map((n) => [n.id, n]));
+    const seedSet = new Set(result.seeds);
+
+    // Both hubs are present as hop-1 nodes (reached, but not expanded through).
+    expect(byId.has(h1.id)).toBe(true);
+    expect(byId.has(h2.id)).toBe(true);
+    expect(byId.get(h1.id)!.hops).toBe(1);
+    expect(byId.get(h2.id)!.hops).toBe(1);
+
+    // No satellite of EITHER hub is reached by traversal (hops>0). Any satellite
+    // that appears must be a hop-0 seed (mock-embedder leakage), never via a hub.
+    for (const node of result.nodes) {
+      if (!satellites.has(node.id)) continue;
+      expect(seedSet.has(node.id)).toBe(true);
+      expect(node.hops).toBe(0);
+    }
+  });
+
+  it('caps expansion breadth even when a hub is itself the sole seed', async () => {
+    const db = createTestDb();
+    // A hub is the seed (lexically matches the query). With the breadth cap it
+    // must NOT dump all its satellites — at most MAX_BRANCH (8) are followed.
+    const query = 'quetzalcoatl obsidian seedphrase';
+    const hub = await store(db, `${query} hub anchor`, 'Hub Seed');
+    const satellites: string[] = [];
+    for (let i = 0; i < 30; i++) {
+      const d = await store(db, `hubseed satellite leaf number ${i}`, `Sat ${i}`);
+      link(db, hub.id, d.id);
+      satellites.push(d.id);
+    }
+
+    const result = await queryGraph(db, embedder, { query, max_hops: 1, max_tokens: 50000 });
+    expect(result.seeds).toContain(hub.id);
+
+    // The hub seed expands at most MAX_BRANCH (8) of its satellites via traversal.
+    const traversedSatellites = result.nodes.filter(
+      (n) => satellites.includes(n.id) && n.hops > 0,
+    );
+    expect(traversedSatellites.length).toBeLessThanOrEqual(8);
+  });
+
   it('truncates to the token budget and emits an actionable hint', async () => {
     const db = createTestDb();
     const { query } = await buildGraph(db);

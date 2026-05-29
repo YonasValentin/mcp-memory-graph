@@ -8,6 +8,20 @@ import { getMemoryById } from '../db/repository.js';
 const CHARS_PER_TOKEN = 3.4;
 /** Floor for the hub degree threshold — never treat a tiny graph as "all hubs". */
 const MIN_HUB_DEGREE = 10;
+/**
+ * Hub threshold = HUB_MULTIPLIER × median candidate degree (floored). A
+ * median×k rule is robust to MANY hubs at once: unlike a max/percentile over a
+ * small sample, the median is not dragged upward by a handful of hubs, so even
+ * several comparable hubs all land above the bar and are skipped on expansion.
+ */
+const HUB_MULTIPLIER = 4;
+/**
+ * Per-node expansion breadth cap. Even a seed (or any expanded node) follows at
+ * most this many neighbors — bounds flooding regardless of threshold edge cases
+ * (e.g. a hub that is itself a seed). Neighbors are taken by edge confidence
+ * desc, tiebreaking toward the lower-degree neighbor.
+ */
+const MAX_BRANCH = 8;
 /** Snippet length per rendered node (chars). */
 const SNIPPET_CHARS = 200;
 
@@ -43,6 +57,13 @@ interface VisitState {
   via: string;
 }
 
+/** An undirected neighbor with the best edge confidence + relation reaching it. */
+interface Neighbor {
+  id: string;
+  confidence: number;
+  relation: string;
+}
+
 /**
  * graphify-style token-budgeted graph traversal. Seeds from hybrid search,
  * walks the persistent `memory_links` graph (both directions, undirected) with
@@ -53,8 +74,11 @@ interface VisitState {
  *  1. Seed selection with gap cutoff — top hybrid-search hits, stopping once a
  *     candidate scores below 20% of the top seed (graphify's gap cutoff).
  *  2. Hub-avoiding BFS — include hub nodes but never EXPAND through them, so one
- *     super-connected memory can't explode the result. Hub threshold = p99 of
- *     visited-node degrees, floored at {@link MIN_HUB_DEGREE}; seeds always expand.
+ *     (or several) super-connected memories can't explode the result. Hub
+ *     threshold = {@link HUB_MULTIPLIER} × median candidate degree, floored at
+ *     {@link MIN_HUB_DEGREE} and frozen up-front (so it's order-independent and
+ *     not diluted by leaked satellites). A per-node breadth cap
+ *     ({@link MAX_BRANCH}) bounds flooding even when a hub is itself a seed.
  *  3. Token-budgeted rendering — seeds first, then by degree desc. Stop before
  *     exceeding `max_tokens`; if nodes remain, set `truncated` and append a hint.
  */
@@ -102,65 +126,84 @@ export async function queryGraph(
   // ── 2. Hub-avoiding BFS over memory_links (undirected) ──────────────────────
   const seedSet = new Set(seeds);
   const degreeCache = new Map<string, number>();
-  const neighborCache = new Map<string, string[]>();
+  const neighborCache = new Map<string, Neighbor[]>();
 
-  const degreeOf = (id: string): number => {
-    let d = degreeCache.get(id);
-    if (d === undefined) {
-      d = neighborsOf(id).length;
-    }
-    return d;
-  };
-
-  // Undirected neighbors = outgoing targets ∪ backlink sources. Cached so each
+  // Undirected neighbors = outgoing targets ∪ backlink sources, carrying the best
+  // edge confidence per neighbor (for the breadth cap's ordering). Cached so each
   // node's edges are read once; the cache also seeds `degreeCache`.
-  function neighborsOf(id: string): string[] {
+  function neighborsOf(id: string): Neighbor[] {
     const cached = neighborCache.get(id);
     if (cached) return cached;
-    const ns = new Set<string>();
-    for (const e of getOutgoingLinks(db, id)) ns.add(e.target_memory_id);
-    for (const e of getBacklinks(db, id)) ns.add(e.source_memory_id);
-    const arr = [...ns];
+    const best = new Map<string, Neighbor>();
+    const consider = (otherId: string, confidence: number, relation: string): void => {
+      const prev = best.get(otherId);
+      if (!prev || confidence > prev.confidence) {
+        best.set(otherId, { id: otherId, confidence, relation });
+      }
+    };
+    for (const e of getOutgoingLinks(db, id)) consider(e.target_memory_id, e.confidence_score, e.relation);
+    for (const e of getBacklinks(db, id)) consider(e.source_memory_id, e.confidence_score, e.relation);
+    const arr = [...best.values()];
     neighborCache.set(id, arr);
     degreeCache.set(id, arr.length);
     return arr;
   }
 
+  const degreeOf = (id: string): number => degreeCache.get(id) ?? neighborsOf(id).length;
+
+  // Hub threshold = HUB_MULTIPLIER × MEDIAN candidate degree, floored at
+  // MIN_HUB_DEGREE — computed ONCE up-front over a STABLE, representative sample:
+  // every node reachable within `maxHops` of the seeds (the full set of nodes
+  // that could ever be expansion candidates). A plain unweighted BFS gathers the
+  // sample WITHOUT hub-skipping, so the many low-degree satellites behind a hub
+  // are counted — this drags the median DOWN so even several comparable hubs sit
+  // well above HUB_MULTIPLIER × median. The median (vs max/percentile) is not
+  // pulled up by a handful of hubs, making detection robust to MULTIPLE hubs and
+  // order-independent (frozen before the real, hub-avoiding traversal runs).
+  const sampleIds = new Set<string>(seeds);
+  let sampleFrontier = [...seeds];
+  for (let hop = 0; hop < maxHops && sampleFrontier.length > 0; hop++) {
+    const nextSample: string[] = [];
+    for (const id of sampleFrontier) {
+      for (const n of neighborsOf(id)) {
+        if (sampleIds.has(n.id)) continue;
+        sampleIds.add(n.id);
+        nextSample.push(n.id);
+      }
+    }
+    sampleFrontier = nextSample;
+  }
+  const candidateDegrees = [...sampleIds].map(degreeOf).sort((a, b) => a - b);
+  const medianDegree = candidateDegrees.length === 0
+    /* c8 ignore next */
+    ? 0
+    : candidateDegrees[Math.floor((candidateDegrees.length - 1) / 2)];
+  const hubThreshold = Math.max(MIN_HUB_DEGREE, Math.round(HUB_MULTIPLIER * medianDegree));
+
   const visited = new Map<string, VisitState>();
   for (const id of seeds) visited.set(id, { hops: 0, via: 'seed' });
 
-  // Hub threshold = p99 of visited-node degrees, floored at MIN_HUB_DEGREE. We
-  // drop the single highest degree from the percentile sample so a lone dominant
-  // hub can't set the bar to its OWN degree (which would make it un-flaggable);
-  // on tiny graphs this leaves the MIN_HUB_DEGREE floor as the operative gate.
-  // Recomputed each hop as the visited set grows, so it tracks the real subgraph.
-  let hubThreshold = MIN_HUB_DEGREE;
-  const recomputeThreshold = (): void => {
-    const degrees = [...visited.keys()].map(degreeOf).sort((a, b) => a - b);
-    const sample = degrees.length > 1 ? degrees.slice(0, -1) : degrees;
-    if (sample.length === 0) {
-      hubThreshold = MIN_HUB_DEGREE;
-      return;
-    }
-    const idx = Math.min(sample.length - 1, Math.floor(sample.length * 0.99));
-    hubThreshold = Math.max(MIN_HUB_DEGREE, sample[idx]);
-  };
-
   // Frontier BFS. We don't expand THROUGH a hub (degree > threshold) unless it's
-  // a seed, but we still INCLUDE the hub node in `visited` (it was reached).
+  // a seed, but we still INCLUDE the hub node in `visited` (it was reached). Every
+  // expanding node follows at most MAX_BRANCH neighbors (confidence desc, tiebreak
+  // lower degree) so even a hub-as-seed can't dump all its satellites.
   let frontier = [...seeds];
   for (let hop = 1; hop <= maxHops && frontier.length > 0; hop++) {
-    recomputeThreshold();
     const next: string[] = [];
     for (const id of frontier) {
       // Don't expand through a hub unless it's a seed (seeds always expand).
       if (!seedSet.has(id) && degreeOf(id) > hubThreshold) continue;
 
-      for (const neighbor of neighborsOf(id)) {
-        if (visited.has(neighbor)) continue;
-        const relation = relationBetween(db, id, neighbor);
-        visited.set(neighbor, { hops: hop, via: `${id} [${relation}]` });
-        next.push(neighbor);
+      const ranked = [...neighborsOf(id)].sort((a, b) =>
+        b.confidence - a.confidence || degreeOf(a.id) - degreeOf(b.id),
+      );
+      let branched = 0;
+      for (const neighbor of ranked) {
+        if (branched >= MAX_BRANCH) break;
+        if (visited.has(neighbor.id)) continue;
+        visited.set(neighbor.id, { hops: hop, via: `${id} [${neighbor.relation}]` });
+        next.push(neighbor.id);
+        branched++;
       }
     }
     frontier = next;
@@ -234,18 +277,6 @@ function renderBlock(row: MemoryRow, state: VisitState, degree: number): string 
     : row.content;
   const reach = state.via === 'seed' ? 'seed' : `via ${state.via}`;
   return `## ${heading}\n(${reach}, ${state.hops} hop${state.hops === 1 ? '' : 's'}, degree ${degree})\n${snippet}`;
-}
-
-/** First relation on any edge between `from` and `to` (either direction). */
-function relationBetween(db: Database.Database, from: string, to: string): string {
-  for (const e of getOutgoingLinks(db, from)) {
-    if (e.target_memory_id === to) return e.relation;
-  }
-  for (const e of getBacklinks(db, from)) {
-    if (e.source_memory_id === to) return e.relation;
-  }
-  /* c8 ignore next */
-  return 'links_to';
 }
 
 /** Bi-temporal currently-valid check — excludes retracted (valid_to set) rows. */
