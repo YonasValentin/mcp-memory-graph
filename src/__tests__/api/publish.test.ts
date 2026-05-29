@@ -132,6 +132,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
+  delete process.env.MCP_PUBLISH_ACCESS_LEVELS;
 });
 
 describe('publish — selective read-only memory wiki', () => {
@@ -218,5 +219,113 @@ describe('publish — selective read-only memory wiki', () => {
     expect(miss.status).toBe(200);
     const missBody = JSON.parse(miss.body) as { results: Array<{ id: string }> };
     expect(missBody.results.some((r) => r.id === iId)).toBe(false);
+  });
+});
+
+/**
+ * Allowlist consistency: every published path (index, page, graph, search) must
+ * honor the SAME MCP_PUBLISH_ACCESS_LEVELS set. Regression guard for a bug where
+ * search hardcoded access_level='public', so an operator who opened the wiki to
+ * 'internal' got internal pages in the index but never in search.
+ *
+ * Each test boots its own harness (env must be set BEFORE buildApp + before the
+ * search SQL is built) and reassigns the module-level `server`/`port` so the
+ * shared afterEach closes it and clears the env var.
+ */
+async function bootWithAllowlist(allowlist: string | undefined): Promise<{
+  pid: string; iid: string; cid: string;
+}> {
+  // Close the server the shared beforeEach already opened, then build our own.
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+
+  if (allowlist === undefined) {
+    delete process.env.MCP_PUBLISH_ACCESS_LEVELS;
+  } else {
+    process.env.MCP_PUBLISH_ACCESS_LEVELS = allowlist;
+  }
+
+  db = createTestDb();
+  embedder = new CachedEmbeddingProvider(new MockEmbeddingProvider());
+
+  const p = await handleStore(db, embedder, {
+    namespace: 'wiki',
+    title: 'Public Welcome',
+    content: 'A public page about the platypus onboarding ritual.',
+    access_level: 'public',
+  });
+  const i = await handleStore(db, embedder, {
+    namespace: 'wiki',
+    title: 'Internal Runbook',
+    content: 'Internal-only operational notes about the narwhal deployment pipeline.',
+    access_level: 'internal',
+  });
+  const c = await handleStore(db, embedder, {
+    namespace: 'wiki',
+    title: 'Confidential Cap Table',
+    content: 'Confidential equity details, the axolotl ownership split.',
+    access_level: 'confidential',
+  });
+
+  const built = buildApp({ getDb: () => db, getEmbedder: async () => embedder });
+  await new Promise<void>((resolve) => {
+    server = built.app.listen(0, '127.0.0.1', () => resolve());
+  });
+  port = (server.address() as AddressInfo).port;
+
+  return { pid: p.memory.id, iid: i.memory.id, cid: c.memory.id };
+}
+
+describe('publish — search honors the full access-level allowlist', () => {
+  it('with MCP_PUBLISH_ACCESS_LEVELS=public,internal: index + search expose internal but never confidential', async () => {
+    const { iid, cid } = await bootWithAllowlist('public,internal');
+
+    // Index lists public P and internal I, but not confidential C.
+    const index = await request(port, { path: '/publish/wiki' });
+    expect(index.status).toBe(200);
+    expect(index.body).toContain('Public Welcome');
+    expect(index.body).toContain('Internal Runbook');
+    expect(index.body).not.toContain('Confidential Cap Table');
+
+    // Search matching the internal memory's words now returns it (consistent
+    // with the index) — this is the regression that the hardcoded 'public'
+    // filter broke.
+    const hit = await request(port, { path: '/publish/wiki/search?q=narwhal+deployment' });
+    expect(hit.status).toBe(200);
+    const hitBody = JSON.parse(hit.body) as { results: Array<{ id: string }> };
+    expect(hitBody.results.some((r) => r.id === iid)).toBe(true);
+
+    // Confidential C is unreachable by direct id even under this allowlist.
+    const cPage = await request(port, { path: `/publish/wiki/page/${cid}` });
+    expect(cPage.status).toBe(404);
+    expect(JSON.parse(cPage.body).error).toBe('not_found');
+
+    // Confidential C never appears in search, graph nodes, or the index.
+    const cHit = await request(port, { path: '/publish/wiki/search?q=axolotl+ownership' });
+    expect(cHit.status).toBe(200);
+    const cHitBody = JSON.parse(cHit.body) as { results: Array<{ id: string }> };
+    expect(cHitBody.results.some((r) => r.id === cid)).toBe(false);
+
+    const graph = await request(port, { path: '/publish/wiki/graph' });
+    const graphBody = JSON.parse(graph.body) as { nodes: Array<{ id: string }> };
+    expect(graphBody.nodes.some((n) => n.id === cid)).toBe(false);
+  });
+
+  it('with the default allowlist (unset): internal is excluded everywhere', async () => {
+    const { iid } = await bootWithAllowlist(undefined);
+
+    const index = await request(port, { path: '/publish/wiki' });
+    expect(index.status).toBe(200);
+    expect(index.body).toContain('Public Welcome');
+    expect(index.body).not.toContain('Internal Runbook');
+
+    // Internal not findable by search…
+    const hit = await request(port, { path: '/publish/wiki/search?q=narwhal+deployment' });
+    expect(hit.status).toBe(200);
+    const hitBody = JSON.parse(hit.body) as { results: Array<{ id: string }> };
+    expect(hitBody.results.some((r) => r.id === iid)).toBe(false);
+
+    // …nor by direct id.
+    const iPage = await request(port, { path: `/publish/wiki/page/${iid}` });
+    expect(iPage.status).toBe(404);
   });
 });

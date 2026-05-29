@@ -316,14 +316,16 @@ export function registerPublishRoutes(
       return;
     }
     const db = getDb();
-    // Defense in depth: post-filter against the published id set so even if the
-    // search layer's namespace/access_level filtering changed, no non-published
-    // memory can surface here.
+    // Access gating is the post-filter against the published id set — it is the
+    // single authority and honors the full MCP_PUBLISH_ACCESS_LEVELS allowlist
+    // (same gate as index/page/graph). We deliberately do NOT pass access_level
+    // to handleSearch: hardcoding 'public' would under-expose namespaces whose
+    // allowlist also includes 'internal'. Search only scopes by namespace; the
+    // intersection with publishedIds enforces which access levels are visible.
     const publishedIds = getPublishedIdSet(db, { namespace });
     const search = await handleSearch(db, await getEmbedder(), {
       query: q,
       namespace,
-      access_level: 'public',
       detail_level: 'summary',
     });
     const results = (search.results as Array<{ id: string }>).filter((r) =>
