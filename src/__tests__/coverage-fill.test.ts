@@ -47,6 +47,7 @@ import {
   insertMemory,
   updateMemory,
   deleteMemoriesByFilter,
+  getMemoryById,
   getMemoryRowid,
   rowToMemory,
   recordAccess,
@@ -1052,8 +1053,18 @@ describe('handleConsolidate stages', () => {
   });
 
   it('prune_low_quality removes near-duplicate low-quality memories', async () => {
-    const r1 = await handleStore(db, embedder, { content: 'almost identical content for low quality detection.' });
-    await handleStore(db, embedder, { content: 'almost identical content for low quality detection too.' });
+    const content = 'almost identical content for low quality detection.';
+    const r1 = await handleStore(db, embedder, { content });
+    // The mock embedder is now near-orthogonal for distinct text, so the
+    // near-duplicate must share r1's vector. Insert a second row directly (the
+    // normal store would NOOP an identical-content duplicate) with the SAME
+    // vector the prune probe re-embeds (bare content, no context fields), so
+    // findNearDuplicates returns it and the low-quality delete branch runs.
+    const r1row = db
+      .prepare<[string], MemoryRow>('SELECT * FROM memories WHERE id = ?')
+      .get(r1.memory.id)!;
+    const dupVec = await embedder.embed(content);
+    insertMemory(db, { ...r1row, id: 'lowqual-dup' }, dupVec);
     db
       .prepare(
         "UPDATE memories SET importance_score = 0.0, confidence_score = 0.1, access_count = 0, created_at = '2020-01-01' WHERE id = ?",
@@ -1063,7 +1074,8 @@ describe('handleConsolidate stages', () => {
       prune_low_quality: true,
       similarity_threshold: 0.5,
     });
-    expect(report.duration_ms).toBeGreaterThanOrEqual(0);
+    expect(report.low_quality_pruned).toBeGreaterThanOrEqual(1);
+    expect(getMemoryById(db, r1.memory.id)).toBeNull();
   });
 
   it('respects scope/namespace filter clause', async () => {

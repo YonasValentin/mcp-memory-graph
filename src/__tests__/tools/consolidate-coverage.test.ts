@@ -36,17 +36,18 @@ describe('handleConsolidate dedup-merge', () => {
       access_count: 0, last_accessed_at: null,
       importance_score: 0.9, confidence_score: 0.8,
     };
-    // Insert both with the SAME contextualized embedding the consolidate dedup
-    // probe re-computes (title/document_type/namespace prefix), so the probe
-    // vector matches the indexed vectors. The mock embedder is a hash (not a
-    // semantic model) and now near-orthogonal for distinct text, so identical
-    // content is the only reliable near-duplicate; mergeContent's containment
-    // short-circuit keeps the single copy while duplicates_found records it.
+    // The mock embedder is a hash (not a semantic model) and now near-orthogonal
+    // for distinct text, so we force BOTH rows to share the PRIMARY's
+    // contextualized vector — which is exactly what the consolidate dedup probe
+    // re-computes from primaryRow.content. That makes the probe find the
+    // secondary as a near-duplicate (distance 0) while the two contents still
+    // DIFFER (and neither contains the other), so mergeContent appends and the
+    // re-embed-on-merge branch is exercised.
     const ctxVec = await embedder.embed(
       contextualizeForEmbedding(a.content, { title: a.title, document_type: a.document_type, namespace: a.namespace }),
     );
     insertMemory(db, a, ctxVec);
-    const b = { ...a, id: 'mem-b', importance_score: 0.4 };
+    const b = { ...a, id: 'mem-b', importance_score: 0.4, content: 'a wholly different secondary clause to append.' };
     insertMemory(db, b, ctxVec);
 
     const report = await handleConsolidate(db, embedder, {
@@ -54,6 +55,12 @@ describe('handleConsolidate dedup-merge', () => {
       max_operations: 10,
     });
     expect(report.duplicates_found).toBeGreaterThanOrEqual(1);
+    expect(report.duplicates_merged).toBeGreaterThanOrEqual(1);
+    // The surviving primary now contains both contents (merge appended).
+    const survivor = db
+      .prepare<[string], { content: string }>('SELECT content FROM memories WHERE id = ?')
+      .get('mem-a');
+    expect(survivor?.content).toContain('wholly different secondary clause');
   });
 
   it('exits early when max_operations is exhausted', async () => {
