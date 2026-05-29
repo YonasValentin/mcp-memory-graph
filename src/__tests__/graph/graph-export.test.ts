@@ -345,6 +345,22 @@ describe('mergeGraphs — pure union merge (the merge-driver core)', () => {
     expect(ab.memories.find((m) => m.id === 'X')!.valid_to).toBe('2026-02-01T00:00:00.000Z');
   });
 
+  it('two tombstones with the SAME valid_to converge via a stable full-record tie-break', () => {
+    // Both branches deleted X at the exact same instant but the rows differ in
+    // other fields (e.g. divergent content captured before deletion). The
+    // earlier-deletion rule is a no-op here, so a stable full-record compare must
+    // pick the same winner regardless of merge direction.
+    const vt = '2026-02-01T00:00:00.000Z';
+    const fromA: ExportedMemory = { ...tombstone('X', '2026-01-01T00:00:00.000Z', vt), content: 'A-content' };
+    const fromB: ExportedMemory = { ...tombstone('X', '2026-01-01T00:00:00.000Z', vt), content: 'B-content' };
+
+    const ab = mergeGraphs(artifact([fromA]), artifact([fromB]));
+    const ba = mergeGraphs(artifact([fromB]), artifact([fromA]));
+    expect(ab).toEqual(ba); // order-independent
+    const x = ab.memories.find((m) => m.id === 'X')!;
+    expect(x.valid_to).toBe(vt); // still deleted at the shared instant
+  });
+
   it('a tombstone with a LATER deletion instant wins over a live copy at the same updated_at', () => {
     // Tombstone valid_to is later than the live copy's updated_at → the deletion
     // is the more recent fact about X → it wins, symmetrically.

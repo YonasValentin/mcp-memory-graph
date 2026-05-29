@@ -300,6 +300,34 @@ describe('GraphRAG community detection over the entity graph (Pillar 5, T15)', (
     expect(cluster.member_memory_ids).toEqual(['mem-aaa', 'mem-bbb', 'mem-ccc']);
   });
 
+  it('summarizeCommunities ranks a memory missing from the memories table LAST (orphaned link)', () => {
+    // A memory_entities row can outlive its memory row. Such an orphan has no
+    // importance/access metadata, so it must sort AFTER ranked memories rather
+    // than crowding them out of the cap.
+    const db = createTestDb();
+    const A = findOrCreateEntity(db, 'OrphanHost', 'concept');
+    const real = addMemory(db, 'a real ranked memory');
+    db.prepare('UPDATE memories SET importance_score = ? WHERE id = ?').run(0.9, real);
+    link(db, real, A);
+    // Insert a dangling link to a non-existent memory id (disable FK enforcement
+    // momentarily so the orphan can exist, mirroring a post-delete dangling row).
+    db.pragma('foreign_keys = OFF');
+    db.prepare(
+      'INSERT INTO memory_entities (memory_id, entity_id, role) VALUES (?, ?, ?)',
+    ).run('ghost-memory', A, 'mention');
+    db.pragma('foreign_keys = ON');
+
+    const cluster = summarizeCommunities(db).find((s) =>
+      s.top_entities.some((e) => e.id === A),
+    )!;
+    // Both surface, but the real (ranked) memory comes first; the orphan last.
+    expect(cluster.member_memory_ids[0]).toBe(real);
+    expect(cluster.member_memory_ids).toContain('ghost-memory');
+    expect(cluster.member_memory_ids.indexOf(real)).toBeLessThan(
+      cluster.member_memory_ids.indexOf('ghost-memory'),
+    );
+  });
+
   it('summarizeCommunities minSize filter drops singletons', () => {
     const db = createTestDb();
     buildTwoClusters(db);
