@@ -6,6 +6,7 @@ import { findOrCreateEntity, findOrCreateRelationship } from '../../graph/entity
 import {
   detectCommunities,
   summarizeCommunities,
+  summarizeCommunitiesWithTotal,
   chunkIds,
   SQLITE_MAX_VARIABLES,
 } from '../../graph/communities.js';
@@ -318,6 +319,41 @@ describe('GraphRAG community detection over the entity graph (Pillar 5, T15)', (
 
     const limited = summarizeCommunities(db, { limit: 1 });
     expect(limited).toHaveLength(1);
+  });
+
+  it('summarizeCommunitiesWithTotal returns the same summaries + total in a single graph build', () => {
+    const db = createTestDb();
+    buildTwoClusters(db);
+    findOrCreateEntity(db, 'WidowIsolated', 'concept'); // singleton → 3 total
+
+    const combined = summarizeCommunitiesWithTotal(db, { min_size: 2 });
+    // Matches the separate calls exactly…
+    expect(combined.communities).toEqual(summarizeCommunities(db, { minSize: 2 }));
+    // …and reports the TRUE corpus-wide total (pre-filter), not the post-filter count.
+    expect(combined.total_communities).toBe(3);
+    expect(combined.communities).toHaveLength(2);
+  });
+
+  it('handleCommunities builds the entity graph only ONCE per call (no duplicate detect)', () => {
+    const db = createTestDb();
+    buildTwoClusters(db);
+
+    // Count how many times the entity-graph SELECT runs. The old handler called
+    // summarizeCommunities AND a separate count, each rebuilding the graph, so
+    // the `FROM entities ORDER BY normalized_name` scan ran twice. One build now.
+    let entityGraphScans = 0;
+    const realPrepare = db.prepare.bind(db);
+    (db as unknown as { prepare: typeof db.prepare }).prepare = ((sql: string) => {
+      if (sql.includes('FROM entities') && sql.includes('ORDER BY normalized_name')) {
+        entityGraphScans++;
+      }
+      return realPrepare(sql);
+    }) as typeof db.prepare;
+
+    const result = handleCommunities(db);
+    expect(result.total_communities).toBe(2);
+    expect(result.returned).toBe(2);
+    expect(entityGraphScans).toBe(1); // single graph build, not two
   });
 
   it('handleCommunities returns communities, total, returned, and a non-empty instruction', () => {

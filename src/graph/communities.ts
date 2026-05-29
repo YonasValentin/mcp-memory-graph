@@ -306,11 +306,48 @@ export function summarizeCommunities(
   db: Database.Database,
   opts: SummarizeCommunitiesOptions = {},
 ): CommunitySummary[] {
+  return summarizeFromCommunities(db, detectCommunities(db), opts);
+}
+
+/**
+ * Summarizes communities AND reports the true corpus-wide total in a SINGLE
+ * graph build — for callers (e.g. the `memory_communities` tool) that need both.
+ * Detecting communities once and deriving the post-filter summaries plus the
+ * pre-filter total from the same map avoids running the whole label-propagation
+ * pass twice. Read-only.
+ *
+ * `total_communities` is the TRUE count of detected communities BEFORE any
+ * `min_size`/`limit` filtering — distinct from `communities.length`.
+ */
+export function summarizeCommunitiesWithTotal(
+  db: Database.Database,
+  opts: SummarizeCommunitiesOptions & { min_size?: number } = {},
+): { communities: CommunitySummary[]; total_communities: number } {
+  const communities = detectCommunities(db);
+  const summaries = summarizeFromCommunities(db, communities, {
+    ...opts,
+    minSize: opts.minSize ?? opts.min_size,
+  });
+  const total_communities =
+    communities.size === 0 ? 0 : new Set(communities.values()).size;
+  return { communities: summaries, total_communities };
+}
+
+/**
+ * Core summarizer over an ALREADY-COMPUTED community map — the shared body of
+ * {@link summarizeCommunities} and {@link summarizeCommunitiesWithTotal}. Keeps
+ * the expensive graph build out of the per-summary work so callers can run it
+ * once. Read-only.
+ */
+function summarizeFromCommunities(
+  db: Database.Database,
+  communities: Map<string, number>,
+  opts: SummarizeCommunitiesOptions = {},
+): CommunitySummary[] {
   const limit = opts.limit ?? DEFAULT_SUMMARY_LIMIT;
   const minSize = opts.minSize ?? DEFAULT_MIN_SIZE;
   const memberCap = opts.memberMemoriesCap ?? DEFAULT_MEMBER_MEMORIES_CAP;
 
-  const communities = detectCommunities(db);
   if (communities.size === 0) return [];
 
   // Pull entity name + mention_count for every entity we just clustered. The id
@@ -430,19 +467,4 @@ function compareMemoryRank(
   const accB = b?.access_count ?? -Infinity;
   if (accA !== accB) return accB - accA;
   return idA < idB ? -1 : idA > idB ? 1 : 0;
-}
-
-/**
- * The TRUE count of all communities detected in the graph — BEFORE any minSize
- * filter or limit cap. A caller doing global sensemaking needs this corpus-wide
- * count (for completeness / pagination) separately from how many summaries a
- * filtered/capped {@link summarizeCommunities} call returned. Read-only.
- *
- * Community ids are densely renumbered 0..k-1, so the total is simply the
- * number of distinct community ids.
- */
-export function countCommunities(db: Database.Database): number {
-  const communities = detectCommunities(db);
-  if (communities.size === 0) return 0;
-  return new Set(communities.values()).size;
 }
