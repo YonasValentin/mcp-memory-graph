@@ -67,8 +67,10 @@ type MaterialRow = {
  * synthesize 1–3 higher-level insights and call back with mode 'store'.
  *
  * `store` persists an agent-synthesized insight via {@link handleStore},
- * stamps it provenance='reflection', and `derived_from`-links it to each valid
- * source memory.
+ * stamps it provenance='reflection', and `derived_from`-links it to each
+ * currently-valid, top-level source memory. When the insight near-duplicates an
+ * existing memory (handleStore NOOP) it bails with an error rather than
+ * corrupting that memory's provenance/graph.
  */
 export async function handleReflect(
   db: Database.Database,
@@ -154,16 +156,36 @@ async function storeInsight(
     document_type: 'insight',
     title: input.title,
   });
+
+  // On the default on_conflict='add' path handleStore returns NOOP (stored:false)
+  // when the insight near-duplicates an EXISTING memory, handing back that
+  // memory's id/row. Writing provenance + derived_from edges to it would corrupt
+  // an unrelated (possibly manual) memory's graph, so bail instead (G3-F4).
+  if (!stored.stored) {
+    return {
+      error: `insight duplicates existing memory ${stored.memory.id} — not stored as a reflection`,
+    };
+  }
+
   const insightId = stored.memory.id;
 
   // Mark the insight's provenance so it's distinguishable from manual memories.
   db.prepare("UPDATE memories SET provenance = 'reflection' WHERE id = ?").run(insightId);
 
-  // Link the insight to each valid source memory; skip ids that don't exist.
+  // Link the insight to each currently-valid, top-level source memory. Skipping
+  // invalidated (valid_to set), tx-expired, and chunk-child (parent_id set) rows
+  // keeps the derived_from graph consistent with the 'valid source' docstring
+  // and with gather mode's own bi-temporal filter (G3-F5).
   let linksCreated = 0;
   for (const sourceId of input.source_ids) {
     const exists = db
-      .prepare<[string], { id: string }>('SELECT id FROM memories WHERE id = ?')
+      .prepare<[string], { id: string }>(
+        `SELECT id FROM memories
+          WHERE id = ?
+            AND valid_to IS NULL
+            AND tx_expired IS NULL
+            AND parent_id IS NULL`,
+      )
       .get(sourceId);
     if (!exists) continue;
     createMemoryLink(db, {
