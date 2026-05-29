@@ -35,6 +35,7 @@ import {
   CoreMemoryAppendSchema,
   CoreMemoryReplaceSchema,
   MemoryReflectSchema,
+  MemoryCommunitiesSchema,
 } from './schemas/index.js';
 import { handleStore } from './tools/store.js';
 import { handleSearch } from './tools/search.js';
@@ -65,6 +66,7 @@ import {
   handleCoreMemoryReplace,
 } from './tools/core-memory.js';
 import { handleReflect } from './tools/reflect.js';
+import { handleCommunities } from './tools/communities.js';
 
 import { metrics } from './api/metrics.js';
 import { logger } from './lib/logger.js';
@@ -451,6 +453,17 @@ export function createServer(): McpServer {
     instrument('memory_reflect', async (input) => {
       const parsed = MemoryReflectSchema.parse(input);
       return handleReflect(getDb(), await getEmbedder(), parsed);
+    }),
+  );
+
+  // ── 28. memory_communities ────────────────────────────────────────────────
+  server.tool(
+    'memory_communities',
+    'GraphRAG global sensemaking (agent-driven, no LLM in the server). Detects communities (densely-connected entity clusters) over the entity graph on demand via weighted label propagation, and returns each community\'s top entities + linked memories. This is the corpus-level view that chunk-level search can\'t give — synthesize named themes from the communities to answer "what are the main themes?".',
+    MemoryCommunitiesSchema.shape,
+    instrument('memory_communities', async (input) => {
+      const parsed = MemoryCommunitiesSchema.parse(input);
+      return handleCommunities(getDb(), parsed);
     }),
   );
 

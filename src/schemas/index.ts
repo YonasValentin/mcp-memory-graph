@@ -893,6 +893,27 @@ export const MemoryReflectSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// 27. MemoryCommunitiesSchema (Pillar 5)
+// ---------------------------------------------------------------------------
+
+export const MemoryCommunitiesSchema = z.object({
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe('Maximum communities to return, largest first (default 20)'),
+  min_size: z
+    .number()
+    .int()
+    .min(1)
+    .max(1000)
+    .optional()
+    .describe('Drop communities with fewer than this many entities (default 1)'),
+});
+
+// ---------------------------------------------------------------------------
 // REST API query/body schemas — derived from the MCP schemas above.
 // Express query strings arrive as `string | string[] | undefined`, so each
 // field uses zod preprocess to coerce numbers/arrays out of strings before
