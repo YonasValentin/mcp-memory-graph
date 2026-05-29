@@ -86,6 +86,8 @@ export function handleQuestions(
            JOIN memories s ON s.id = l.source_memory_id
            JOIN memories t ON t.id = l.target_memory_id
           WHERE l.confidence = 'AMBIGUOUS'
+            AND l.valid_to IS NULL
+            AND l.tx_expired IS NULL
             AND ${live('s')}${s.sql}
             AND ${live('t')}${t.sql}
           ORDER BY l.id`,
@@ -101,19 +103,24 @@ export function handleQuestions(
   }
 
   // ── 2. gap — frequently mentioned but under-documented entities. ────────────
+  // A correlated subquery (not an INNER JOIN) computes the live-linked count so
+  // the STRONGEST gap case — a frequently-mentioned entity with ZERO currently-
+  // valid linked memories — is included instead of being dropped for yielding no
+  // join row (G3-F9b).
   {
     const f = scopeFilter('m', input);
     const rows = db
       .prepare<unknown[], { name: string; mention_count: number; linked: number }>(
         `SELECT e.name AS name, e.mention_count AS mention_count,
-                COUNT(DISTINCT m.id) AS linked
+                (SELECT COUNT(DISTINCT m.id)
+                   FROM memory_entities me
+                   JOIN memories m ON m.id = me.memory_id
+                  WHERE me.entity_id = e.id
+                    AND ${live('m')}${f.sql}) AS linked
            FROM entities e
-           JOIN memory_entities me ON me.entity_id = e.id
-           JOIN memories m ON m.id = me.memory_id
-          WHERE ${live('m')}${f.sql}
+          WHERE e.mention_count >= ${MIN_MENTIONS}
           GROUP BY e.id
-         HAVING e.mention_count >= ${MIN_MENTIONS}
-            AND COUNT(DISTINCT m.id) <= ${MAX_LINKED_MEMORIES}
+         HAVING linked <= ${MAX_LINKED_MEMORIES}
           ORDER BY e.name`,
       )
       .all(...f.params);
