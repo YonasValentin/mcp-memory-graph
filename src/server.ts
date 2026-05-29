@@ -86,10 +86,18 @@ import { handleHistory } from './tools/history.js';
 
 import { metrics } from './api/metrics.js';
 import { logger } from './lib/logger.js';
+import { sanitizeDeep } from './lib/sanitize.js';
 
-function formatResult(data: unknown): { content: Array<{ type: 'text'; text: string }> } {
+/**
+ * The single chokepoint for MCP tool output. Memory content is UNTRUSTED, so
+ * every result is run through {@link sanitizeDeep} here to neutralize ANSI/VT
+ * escapes, raw control chars, and zero-width / BiDi Trojan-Source spoofing
+ * chars before it leaves as MCP text content. This is OUTPUT-only — stored
+ * content stays raw at rest. Exported for direct testing of this boundary.
+ */
+export function formatResult(data: unknown): { content: Array<{ type: 'text'; text: string }> } {
   return {
-    content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
+    content: [{ type: 'text' as const, text: JSON.stringify(sanitizeDeep(data), null, 2) }],
   };
 }
 
