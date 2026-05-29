@@ -1031,6 +1031,32 @@ export const MemoryQuestionsSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// 32. MemoryForgetSchema (Pillar 8) — GDPR soft-delete/tombstone + hard erase
+// ---------------------------------------------------------------------------
+
+export const MemoryForgetSchema = z.object({
+  id: z.string().describe('Memory ID to forget'),
+  hard: z
+    .boolean()
+    .default(false)
+    .describe(
+      'Erasure mode. false (default): soft-delete/tombstone — stamps valid_to so ' +
+      'the memory is excluded from default retrieval but remains queryable via ' +
+      'as_of and is recoverable. true: hard erase — returns a portability export ' +
+      'copy FIRST (data-subject access), THEN permanently deletes (irreversible, ' +
+      'cascades). Additive — the existing memory_delete tool is unaffected.',
+    ),
+});
+
+// ---------------------------------------------------------------------------
+// 33. MemoryHistorySchema (Pillar 8) — point-in-time history surface
+// ---------------------------------------------------------------------------
+
+export const MemoryHistorySchema = z.object({
+  id: z.string().describe('Memory ID to get the bi-temporal timeline + version history for'),
+});
+
+// ---------------------------------------------------------------------------
 // REST API query/body schemas — derived from the MCP schemas above.
 // Express query strings arrive as `string | string[] | undefined`, so each
 // field uses zod preprocess to coerce numbers/arrays out of strings before

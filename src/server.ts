@@ -42,6 +42,8 @@ import {
   MemorySessionNoteSchema,
   MemoryAttributionSchema,
   MemoryQuestionsSchema,
+  MemoryForgetSchema,
+  MemoryHistorySchema,
 } from './schemas/index.js';
 import { handleStore } from './tools/store.js';
 import { handleSearch } from './tools/search.js';
@@ -79,6 +81,8 @@ import { handleTemplate } from './tools/templates.js';
 import { handleSessionNote } from './tools/session-note.js';
 import { handleAttribution } from './tools/attribution.js';
 import { handleQuestions } from './tools/questions.js';
+import { handleForget } from './tools/forget.js';
+import { handleHistory } from './tools/history.js';
 
 import { metrics } from './api/metrics.js';
 import { logger } from './lib/logger.js';
@@ -542,6 +546,28 @@ export function createServer(): McpServer {
     instrument('memory_questions', async (input) => {
       const parsed = MemoryQuestionsSchema.parse(input);
       return handleQuestions(getDb(), parsed);
+    }),
+  );
+
+  // ── 33. memory_forget ─────────────────────────────────────────────────────
+  server.tool(
+    'memory_forget',
+    'GDPR-grade forget (additive — does NOT replace memory_delete). hard:false (default) soft-deletes/tombstones: stamps valid_to so the memory is excluded from default retrieval but stays queryable via as_of and is recoverable. hard:true erases for real: returns a portability "export" copy FIRST (data-subject access), THEN permanently deletes (irreversible, cascades). Returns { forgotten, mode, recoverable, export? }.',
+    MemoryForgetSchema.shape,
+    instrument('memory_forget', async (input) => {
+      const parsed = MemoryForgetSchema.parse(input);
+      return handleForget(getDb(), parsed);
+    }),
+  );
+
+  // ── 34. memory_history ────────────────────────────────────────────────────
+  server.tool(
+    'memory_history',
+    'Point-in-time history surface for one memory: its current bi-temporal timeline (created_at/updated_at/valid_from/valid_to/tx_expired/superseded_at/version) plus the full memory_versions edit history. Returns { memory_id, exists, timeline, versions } or { memory_id, exists:false }.',
+    MemoryHistorySchema.shape,
+    instrument('memory_history', async (input) => {
+      const parsed = MemoryHistorySchema.parse(input);
+      return handleHistory(getDb(), parsed);
     }),
   );
 
