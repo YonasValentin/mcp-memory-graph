@@ -25,6 +25,21 @@ async function main(): Promise<void> {
       await runServe();
       break;
     }
+    case 'export-graph': {
+      const { runExportGraph } = await import('./cli/share.js');
+      runExportGraph(process.argv.slice(3));
+      break;
+    }
+    case 'merge-graphs': {
+      const { runMergeGraphs } = await import('./cli/share.js');
+      runMergeGraphs(process.argv.slice(3));
+      break;
+    }
+    case 'git-setup': {
+      const { runGitSetup } = await import('./cli/share.js');
+      await runGitSetup();
+      break;
+    }
     default: {
       // Default: start MCP server on stdio
       const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js');

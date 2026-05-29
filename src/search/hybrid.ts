@@ -3,6 +3,11 @@ import type { EmbeddingProvider, SearchOptions, SearchResult, SearchResultSummar
 import { applyTemporalDecay } from './temporal.js';
 import { computeConfidence, confidenceLabel } from './scoring.js';
 import { rowToMemory } from '../db/repository.js';
+import { extractEntitiesRegex } from '../graph/entity-extractor.js';
+import { normalizeName } from '../graph/entity-store.js';
+import { rankMemoriesByPPR } from '../graph/pagerank.js';
+import type { Reranker } from './reranker.js';
+import { logger } from '../lib/logger.js';
 
 // Smart/curly quotes that FTS5 can't parse and that users frequently paste.
 const SMART_QUOTES_RE = /[‘’‚‛“”„‟«»]/g;
@@ -39,10 +44,45 @@ export interface HybridSearchResponse {
   truncated: boolean;
 }
 
+/**
+ * Query → seed entity ids for HippoRAG PPR (T5).
+ *
+ * Two complementary candidate sources, both normalized via {@link normalizeName}
+ * and matched exactly against `entities.normalized_name`:
+ *   1. raw query tokens (so a bare "ReactService" links even though the regex
+ *      only fires on 2+ humps, which it does here, but tokens also cover
+ *      single-word tool/concept names already present as entities), and
+ *   2. {@link extractEntitiesRegex} candidates (PascalCase, tools, patterns…).
+ * Returns deduped entity ids; empty when nothing links (caller then skips PPR).
+ */
+function linkQueryEntities(db: Database.Database, query: string): string[] {
+  const candidates = new Set<string>();
+  for (const token of query.split(/\s+/)) {
+    const n = normalizeName(token);
+    if (n.length > 0) candidates.add(n);
+  }
+  for (const entity of extractEntitiesRegex(query)) {
+    const n = normalizeName(entity.name);
+    if (n.length > 0) candidates.add(n);
+  }
+  if (candidates.size === 0) return [];
+
+  const names = [...candidates];
+  const placeholders = names.map(() => '?').join(',');
+  const rows = db
+    .prepare<string[], { id: string }>(
+      `SELECT id FROM entities WHERE normalized_name IN (${placeholders})`,
+    )
+    .all(...names);
+
+  return [...new Set(rows.map((r) => r.id))];
+}
+
 export async function hybridSearch(
   db: Database.Database,
   embedder: EmbeddingProvider,
-  options: SearchOptions
+  options: SearchOptions,
+  reranker?: Reranker,
 ): Promise<HybridSearchResponse> {
   const doVector = options.search_mode === 'hybrid' || options.search_mode === 'vector';
   const doKeyword = options.search_mode === 'hybrid' || options.search_mode === 'keyword';
@@ -93,10 +133,36 @@ export async function hybridSearch(
     /* c8 ignore stop */
   }
 
+  // --- Graph search (HippoRAG Personalized PageRank) ---
+  // Opt-in via use_graph. Seeds the entity graph from the query's entities and
+  // ranks memories by PPR relevance — surfacing graph-reachable memories that
+  // vector/keyword missed (true multi-hop recall). pprRanking maps memory_id →
+  // rank (0-based) for the third RRF list; pprRowids carries the rowids to fold
+  // into the candidate set so those memories get fetched (subject to filters).
+  const pprRanking = new Map<number, number>();
+  const pprRowids: number[] = [];
+  if (options.use_graph) {
+    const seeds = linkQueryEntities(db, options.query);
+    if (seeds.length > 0) {
+      const memoryIdToRowid = db.prepare<[string], { rowid: number }>(
+        'SELECT rowid FROM memories WHERE id = ?',
+      );
+      const ranked = rankMemoriesByPPR(db, seeds, { limit: oversampleLimit });
+      let rank = 0;
+      for (const { memory_id } of ranked) {
+        const row = memoryIdToRowid.get(memory_id);
+        if (!row) continue;
+        pprRanking.set(row.rowid, rank++);
+        pprRowids.push(row.rowid);
+      }
+    }
+  }
+
   // --- Collect candidate rowids ---
   const candidateRowids = new Set<number>();
   for (const rowid of vectorResults.keys()) candidateRowids.add(rowid);
   for (const rowid of keywordResults.keys()) candidateRowids.add(rowid);
+  for (const rowid of pprRowids) candidateRowids.add(rowid);
 
   if (candidateRowids.size === 0) return { results: [], total: 0, truncated: false };
 
@@ -149,6 +215,16 @@ export async function hybridSearch(
   whereClauses.push("(expires_at IS NULL OR expires_at > datetime('now'))");
   whereClauses.push('superseded_at IS NULL');
 
+  // Bi-temporal: currently-valid by default; point-in-time when `as_of` is set.
+  if (options.as_of) {
+    whereClauses.push('valid_from <= ?');
+    whereClauses.push('(valid_to IS NULL OR valid_to > ?)');
+    whereClauses.push('(tx_expired IS NULL OR tx_expired > ?)');
+    params.push(options.as_of, options.as_of, options.as_of);
+  } else {
+    whereClauses.push('valid_to IS NULL AND tx_expired IS NULL');
+  }
+
   const sql = `SELECT *, rowid FROM memories WHERE ${whereClauses.join(' AND ')}`;
   const rows = db.prepare(sql).all(...params) as (MemoryRow & { rowid: number })[];
 
@@ -182,6 +258,14 @@ export async function hybridSearch(
     rrfScores.set(rowid, current + 1 / (K + rank));
   }
 
+  // Third RRF list: HippoRAG PPR. Same K=60 fusion as vector/keyword above, so
+  // graph-reachable memories blend into the ranking instead of overriding it.
+  for (const [rowid, rank] of pprRanking) {
+    if (!rowMap.has(rowid)) continue;
+    const current = rrfScores.get(rowid) ?? 0;
+    rrfScores.set(rowid, current + 1 / (K + rank));
+  }
+
   // Apply importance boost: RRF score * (1 + importance * 0.5)
   // This gives high-importance memories a ranking advantage without overwhelming relevance
   let ranked = Array.from(rrfScores.entries())
@@ -199,10 +283,40 @@ export async function hybridSearch(
       const row = rowMap.get(item.rowid)!;
       return {
         ...item,
-        score: applyTemporalDecay(item.score, row.created_at, options.temporal_decay!, row.access_count),
+        score: applyTemporalDecay(item.score, row.created_at, options.temporal_decay!, row.access_count, row.stability),
       };
     });
     ranked.sort((a, b) => b.score - a.score);
+  }
+
+  // --- Cross-encoder reranking (opt-in, pluggable) ---
+  // Rerank only the top-N candidates by joint (query, doc) relevance — the
+  // biggest precision win for a weak bi-encoder base. The reranker reorders
+  // those N in place; remaining candidates keep their fused order behind them.
+  // Robust by design: any failure logs a warn and falls back to fused order, so
+  // a missing/broken model never fails the search. Default path (no reranker /
+  // rerank!=true) is byte-identical to the prior behavior.
+  if (reranker && options.rerank) {
+    const topN = Math.min(options.rerank_top_n ?? 50, ranked.length);
+    const head = ranked.slice(0, topN);
+    const tail = ranked.slice(topN);
+    try {
+      const docs = head.map((item) => {
+        const row = rowMap.get(item.rowid)!;
+        return { id: row.id, text: row.content };
+      });
+      const scored = await reranker.rerank(options.query, docs);
+      const scoreById = new Map(scored.map((s) => [s.id, s.score]));
+      const reordered = [...head].sort((a, b) => {
+        const sa = scoreById.get(rowMap.get(a.rowid)!.id) ?? -Infinity;
+        const sb = scoreById.get(rowMap.get(b.rowid)!.id) ?? -Infinity;
+        return sb - sa;
+      });
+      ranked = [...reordered, ...tail];
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.warn({ event: 'rerank_failed', error: message });
+    }
   }
 
   // --- Confidence scoring ---

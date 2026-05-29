@@ -57,10 +57,12 @@ export function createMemoryLink(db: Database.Database, input: MemoryLinkInput):
   }
 
   const id = randomUUID();
+  // valid_from mirrors the edge's transaction-created time (bi-temporal v6);
+  // valid_to / tx_expired stay NULL (still valid, not retracted).
   db.prepare(
     `INSERT INTO memory_links
-       (id, source_memory_id, target_memory_id, relation, confidence, confidence_score, source_kind)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       (id, source_memory_id, target_memory_id, relation, confidence, confidence_score, source_kind, valid_from)
+     VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
   ).run(
     id,
     input.sourceId,

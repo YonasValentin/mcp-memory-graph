@@ -1,8 +1,16 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
+import {
+  runWizard,
+  buildConfig,
+  defaultAnswers,
+  createReadlinePrompter,
+  type WizardAnswers,
+} from './init-wizard.js';
+import type { ServerConfig } from '../types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const hooksSourceDir = join(__dirname, '..', 'hooks');
@@ -203,45 +211,64 @@ function mergeSettingsHooks(scope: Scope): void {
   success(`Updated settings.json (${addedCount} hook(s) added)`);
 }
 
-function createDefaultConfig(): void {
-  const home = homedir();
-  const configDir = join(home, '.mcp-memory');
+/**
+ * Resolves where the wizard config is written and confines it to a safe
+ * location: repo-local `.mcp-memory/config.json` under cwd for `--project`,
+ * otherwise `~/.mcp-memory/config.json`. Throws if the resolved path escapes
+ * the allowed root (defense-in-depth — paths here are not user-controlled).
+ */
+function resolveWizardConfigPath(projectScoped: boolean): { configDir: string; configPath: string } {
+  const root = projectScoped ? resolve(process.cwd()) : resolve(homedir());
+  const configDir = join(root, '.mcp-memory');
   const configPath = join(configDir, 'config.json');
-
-  if (existsSync(configPath)) {
-    dim(`Config already exists at ${configPath}`);
-    return;
+  if (!resolve(configPath).startsWith(configDir)) {
+    throw new Error(`Refusing to write config outside ${configDir}`);
   }
+  return { configDir, configPath };
+}
+
+/**
+ * Runs the interactive wizard (or uses all defaults when non-interactive),
+ * then writes the merged config. Preserves any existing config values not
+ * overwritten by the wizard, and prints a `git add` hint when committing the
+ * graph for team sharing.
+ */
+async function createConfig(opts: { projectScoped: boolean; interactive: boolean }): Promise<void> {
+  const { configDir, configPath } = resolveWizardConfigPath(opts.projectScoped);
+
+  let existing: Partial<ServerConfig> | undefined;
+  if (existsSync(configPath)) {
+    try {
+      existing = JSON.parse(readFileSync(configPath, 'utf-8')) as Partial<ServerConfig>;
+      dim(`Merging into existing config at ${configPath}`);
+    } catch {
+      warn(`Existing config at ${configPath} is not valid JSON — starting fresh`);
+    }
+  }
+
+  let answers: WizardAnswers;
+  if (opts.interactive) {
+    answers = await runWizard(createReadlinePrompter());
+  } else {
+    answers = defaultAnswers();
+    dim('Non-interactive (--yes): using default answers');
+  }
+
+  const config = buildConfig(answers, existing);
 
   if (!existsSync(configDir)) {
     mkdirSync(configDir, { recursive: true });
   }
-
-  const defaultConfig = {
-    defaults: {
-      scope: 'project',
-      namespace: 'auto',
-    },
-    projects: [],
-    consolidation: {
-      similarity_threshold: 0.85,
-      prune_after_days: 30,
-      min_importance_to_keep: 0.1,
-      max_operations: 100,
-    },
-    hooks: {
-      extract_on_compact: false,
-      extract_on_session_end: false,
-      track_searches: true,
-    },
-    extraction: {
-      categories: ['decision', 'pattern', 'error_fix', 'convention'],
-      min_confidence: 0.4,
-    },
-  };
-
-  writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2) + '\n', 'utf-8');
-  success(`Created default config at ${configPath}`);
+  writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
+  success(`Wrote config at ${configPath}`);
+  dim(`mode=${config.sharing.mode}  scope=${config.defaults.scope}  namespace=${config.defaults.namespace}  auto_capture=${config.capture.auto_capture}`);
+  if (config.sharing.remote_endpoint) {
+    dim(`remote_endpoint=${config.sharing.remote_endpoint}`);
+  }
+  if (config.sharing.commit_graph) {
+    info('Team sharing: commit the graph artifact so teammates share recall:');
+    dim('  git add .mcp-memory/ && git commit -m "chore: share memory graph"');
+  }
 }
 
 function installLaunchdPlist(): void {
@@ -359,6 +386,10 @@ export { CLAUDE_MD_MARKER };
 
 export async function runInit(): Promise<void> {
   const scope = parseScope();
+  // `--project` writes a repo-local config; otherwise it lands in ~/.mcp-memory.
+  const projectScoped = process.argv.includes('--project') || scope === 'project';
+  // `--yes`/`-y` skips prompts and writes an all-default (still valid) config.
+  const interactive = !process.argv.includes('--yes') && !process.argv.includes('-y');
 
   console.log(`\n${CYAN}MCP Memory Server — Init (${scope} scope)${RESET}\n`);
 
@@ -376,8 +407,8 @@ export async function runInit(): Promise<void> {
   }
 
   console.log('');
-  info('Step 3/5: Creating default config...');
-  createDefaultConfig();
+  info(`Step 3/5: Configuring memory (${interactive ? 'interactive wizard' : 'defaults'})...`);
+  await createConfig({ projectScoped, interactive });
 
   console.log('');
   info('Step 4/5: Setting up CLAUDE.md instructions...');

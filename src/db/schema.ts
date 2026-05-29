@@ -4,13 +4,16 @@ import type Database from 'better-sqlite3';
  * The current schema version baked into this codebase. Updated together with
  * a new entry in `runMigrations`.
  */
-export const CURRENT_SCHEMA_VERSION = 5;
+export const CURRENT_SCHEMA_VERSION = 9;
 
 /**
  * Persistent memory-to-memory edge store (Pillar 1). Edges carry a confidence
  * tag (EXTRACTED | INFERRED | AMBIGUOUS) and a source_kind (wikilink |
  * co_occurrence | similarity | typed). Shared verbatim by {@link initializeSchema}
  * (fresh DBs) and migration v5 (existing DBs) so the two paths never diverge.
+ * The bi-temporal validity columns (valid_from / valid_to / tx_expired, v6)
+ * are baked in here for fresh DBs; migration v6 ALTERs them onto edges that
+ * predate v6 (created_at is the transaction-created time, tx_created).
  */
 export const MEMORY_LINKS_DDL = `
   CREATE TABLE IF NOT EXISTS memory_links (
@@ -24,12 +27,35 @@ export const MEMORY_LINKS_DDL = `
     evidence_count INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
-    metadata TEXT
+    metadata TEXT,
+    valid_from TEXT,
+    valid_to TEXT,
+    tx_expired TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_mlinks_source ON memory_links(source_memory_id);
   CREATE INDEX IF NOT EXISTS idx_mlinks_target ON memory_links(target_memory_id);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_mlinks_pair
     ON memory_links(source_memory_id, target_memory_id, relation);
+`;
+
+/**
+ * MemGPT-style pinned "core memory" block per (scope, namespace) (Pillar 5).
+ * A small, bounded, always-in-context text block the agent reads each session
+ * and self-edits via tools — its working RAM, distinct from the large archival
+ * memory store. The namespace uses '' as a sentinel when none, so the composite
+ * (scope, namespace) primary key works without NULLs. Shared verbatim by
+ * {@link initializeSchema} (fresh DBs) and migration v8 (existing DBs) so the
+ * two paths never diverge.
+ */
+export const CORE_MEMORY_DDL = `
+  CREATE TABLE IF NOT EXISTS core_memory (
+    scope TEXT NOT NULL,
+    namespace TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL DEFAULT '',
+    char_limit INTEGER NOT NULL DEFAULT 2000,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (scope, namespace)
+  );
 `;
 
 /**
@@ -159,7 +185,12 @@ export function initializeSchema(db: Database.Database): void {
       condensation_level TEXT NOT NULL DEFAULT 'full',
       condensed_at TEXT,
       provenance TEXT NOT NULL DEFAULT 'manual',
-      provenance_detail TEXT
+      provenance_detail TEXT,
+      valid_from TEXT,
+      valid_to TEXT,
+      tx_expired TEXT,
+      stability REAL NOT NULL DEFAULT 1.0,
+      agent_id TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
@@ -321,6 +352,9 @@ export function initializeSchema(db: Database.Database): void {
 
   // Memory-to-memory edge store (Pillar 1).
   db.exec(MEMORY_LINKS_DDL);
+
+  // Pinned "core memory" block per (scope, namespace) (Pillar 5).
+  db.exec(CORE_MEMORY_DDL);
 
   // Stamp the schema version + embedding dimension for future opens.
   const haveVersion = !!db

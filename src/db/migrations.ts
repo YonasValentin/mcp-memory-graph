@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { CURRENT_SCHEMA_VERSION, MEMORY_LINKS_DDL } from './schema.js';
+import { CURRENT_SCHEMA_VERSION, MEMORY_LINKS_DDL, CORE_MEMORY_DDL } from './schema.js';
 
 interface Migration {
   version: number;
@@ -173,6 +173,70 @@ const migrations: Migration[] = [
     up: (db) => {
       // Pillar 1: persistent memory-to-memory edge store.
       db.exec(MEMORY_LINKS_DDL);
+    },
+  },
+  {
+    version: 6,
+    up: (db) => {
+      // Bi-temporal substrate: facts are invalidated, not deleted, so they can
+      // be queried point-in-time (Zep/Graphiti model). `valid_from` is when the
+      // fact became true, `valid_to` when it stopped (NULL = still valid), and
+      // `tx_expired` when the row was retracted (NULL = not retracted). The
+      // existing `created_at` is the transaction-created time (tx_created).
+      const addColumn = (sql: string) => {
+        try { db.exec(sql); } catch { /* column already exists */ }
+      };
+
+      addColumn('ALTER TABLE memories ADD COLUMN valid_from TEXT');
+      addColumn('ALTER TABLE memories ADD COLUMN valid_to TEXT');
+      addColumn('ALTER TABLE memories ADD COLUMN tx_expired TEXT');
+
+      addColumn('ALTER TABLE memory_links ADD COLUMN valid_from TEXT');
+      addColumn('ALTER TABLE memory_links ADD COLUMN valid_to TEXT');
+      addColumn('ALTER TABLE memory_links ADD COLUMN tx_expired TEXT');
+
+      // SQLite can't add a column with a non-constant default, so backfill the
+      // validity start from each row's transaction-created time after the fact.
+      db.exec(`
+        UPDATE memories SET valid_from = created_at WHERE valid_from IS NULL;
+        UPDATE memory_links SET valid_from = created_at WHERE valid_from IS NULL;
+      `);
+    },
+  },
+  {
+    version: 7,
+    up: (db) => {
+      // Spaced-repetition forgetting curve: each memory carries a `stability`
+      // that grows on access. retention = e^(-Δt/stability) powers an opt-in
+      // ranking multiplier and an opt-in prune signal. The NOT NULL DEFAULT
+      // backfills existing rows to 1.0 in the same ALTER (SQLite applies a
+      // constant default to all pre-existing rows).
+      const addColumn = (sql: string) => {
+        try { db.exec(sql); } catch { /* column already exists */ }
+      };
+
+      addColumn('ALTER TABLE memories ADD COLUMN stability REAL NOT NULL DEFAULT 1.0');
+    },
+  },
+  {
+    version: 8,
+    up: (db) => {
+      // Pillar 5: MemGPT-style pinned "core memory" block per (scope, namespace).
+      db.exec(CORE_MEMORY_DDL);
+    },
+  },
+  {
+    version: 9,
+    up: (db) => {
+      // Pillar 7: multi-agent / team attribution. `agent_id` records WHICH agent
+      // wrote a memory, distinct from `author` (the human/source). Nullable so
+      // pre-existing rows backfill to NULL automatically — additive and
+      // backward-compatible (a NULL agent_id is today's behaviour).
+      const addColumn = (sql: string) => {
+        try { db.exec(sql); } catch { /* column already exists */ }
+      };
+
+      addColumn('ALTER TABLE memories ADD COLUMN agent_id TEXT');
     },
   },
 ];

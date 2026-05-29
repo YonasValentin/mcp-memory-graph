@@ -4,7 +4,7 @@ export type AccessLevel = 'public' | 'internal' | 'confidential' | 'restricted';
 
 export type SearchMode = 'hybrid' | 'vector' | 'keyword';
 
-export type DecayType = 'exponential' | 'linear' | 'none';
+export type DecayType = 'exponential' | 'linear' | 'none' | 'forgetting';
 
 export type ContentType = 'text' | 'markdown' | 'code' | 'legal' | 'structured';
 
@@ -18,7 +18,7 @@ export type CondensationLevel = 'full' | 'summary' | 'one_liner';
 
 export type EntityType = 'person' | 'project' | 'tool' | 'concept' | 'organization' | 'file' | 'package' | 'pattern';
 
-export type ProvenanceType = 'manual' | 'vault_sync' | 'learning_extraction' | 'consolidation_merge' | 'import' | 'ingest';
+export type ProvenanceType = 'manual' | 'vault_sync' | 'learning_extraction' | 'consolidation_merge' | 'import' | 'ingest' | 'reflection';
 
 export interface Memory {
   readonly id: string;
@@ -44,6 +44,10 @@ export interface Memory {
   last_accessed_at: string | null;
   importance_score: number;
   confidence_score: number;
+  /** How this memory came to exist (manual, vault_sync, reflection, …). */
+  provenance: ProvenanceType;
+  /** Which agent wrote this memory (multi-agent attribution), distinct from `author`. */
+  agent_id: string | null;
 }
 
 export interface MemoryRow {
@@ -70,6 +74,12 @@ export interface MemoryRow {
   last_accessed_at: string | null;
   importance_score: number;
   confidence_score: number;
+  /** Spaced-repetition stability: grows on access, drives the forgetting curve. */
+  stability: number;
+  /** How this memory came to exist (manual, vault_sync, reflection, …). */
+  provenance?: string;
+  /** Which agent wrote this memory (multi-agent attribution), distinct from `author`. */
+  agent_id?: string | null;
   rowid?: number;
 }
 
@@ -88,6 +98,15 @@ export interface MemoryInput {
   metadata?: Record<string, unknown>;
   expires_at?: string;
   confidence_score?: number;
+  /** Identifier of the writing agent for multi-agent attribution (distinct from author). */
+  agent_id?: string;
+  /**
+   * mem0-style write policy on conflict. 'add' (default) preserves today's
+   * behaviour (NOOP on exact dup, otherwise ADD). 'update' merges into a
+   * superseded-band match; 'supersede' retires the conflicting match and adds
+   * the new memory. UPDATE/DELETE are strictly opt-in.
+   */
+  on_conflict?: 'add' | 'update' | 'supersede';
 }
 
 export interface MemoryUpdate {
@@ -115,6 +134,25 @@ export interface SearchOptions {
   date_from?: string;
   date_to?: string;
   min_confidence?: number;
+  /** ISO-8601 instant: return what was valid at this point in time instead of currently-valid. */
+  as_of?: string;
+  /**
+   * Opt-in HippoRAG multi-hop recall. When true, seed entities are linked from
+   * the query and Personalized PageRank fuses graph-reachable memories into the
+   * results as a third ranker. Default false — leaves the vector+keyword path
+   * unchanged.
+   */
+  use_graph?: boolean;
+  /**
+   * Opt-in local cross-encoder reranking of the top-N candidates. When true and
+   * a reranker is supplied to {@link hybridSearch}, the top `rerank_top_n`
+   * results are reordered by joint (query, doc) relevance — the biggest
+   * precision win for a weak bi-encoder. Default false — leaves fused order
+   * unchanged.
+   */
+  rerank?: boolean;
+  /** How many top candidates to rerank (default 50). Ignored unless `rerank`. */
+  rerank_top_n?: number;
 }
 
 export interface TemporalDecayConfig {
@@ -219,6 +257,8 @@ export interface ListOptions {
   offset: number;
   sort_by: SortField;
   sort_order: SortOrder;
+  /** ISO-8601 instant: return what was valid at this point in time instead of currently-valid. */
+  as_of?: string;
 }
 
 export interface PaginatedResult<T> {
@@ -337,6 +377,8 @@ export interface ConsolidationReport {
   duplicates_merged: number;
   expired_pruned: number;
   low_quality_pruned: number;
+  /** Memories pruned by the opt-in forgetting-curve pass (0 unless `forgetting_floor` set). */
+  forgetting_pruned: number;
   scores_updated: number;
   /** True execution failures only — see `knowledge_gaps` for missing-knowledge signals. */
   errors: string[];
@@ -383,5 +425,25 @@ export interface ServerConfig {
   extraction: {
     categories: ExtractedLearning['type'][];
     min_confidence: number;
+  };
+  /** Where the memory database lives (set by `memory init`). */
+  storage: {
+    db_path?: string;
+  };
+  /** Solo-vs-team sharing config written by the interactive init wizard. */
+  sharing: {
+    mode: 'solo' | 'team';
+    /** Commit the graph artifact to git so teammates share recall. */
+    commit_graph: boolean;
+    /** Optional remote MCP endpoint for team-shared memory. */
+    remote_endpoint?: string;
+  };
+  /** Optional Markdown vault for round-tripping memories to/from files. */
+  vault: {
+    path?: string;
+  };
+  /** Auto-capture (Claude Code hooks) preference from the init wizard. */
+  capture: {
+    auto_capture: boolean;
   };
 }

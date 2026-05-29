@@ -119,6 +119,7 @@ export async function handleImport(
           // identical scoring (was: hardcoded 0.5).
           importance_score: computeContentSignal(item.content),
           confidence_score: 0.5,
+          stability: 1.0,
         };
 
         insertMemory(db, row, embeddings[i]);

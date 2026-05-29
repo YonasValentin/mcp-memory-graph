@@ -51,4 +51,46 @@ describe('vault wikilink resolution (Pillar 1, slice 3)', () => {
       rmSync(vault, { recursive: true, force: true });
     }
   });
+
+  it('tolerates malformed metadata when resolving wikilinks (corrupt JSON + non-array links)', async () => {
+    const vault = makeVault();
+    try {
+      const db = createTestDb();
+      const embedder = new MockEmbeddingProvider();
+      await handleVaultSync(db, embedder, { vault_path: vault });
+
+      const auth = db.prepare("SELECT id, metadata FROM memories WHERE title = 'Auth'").get() as {
+        id: string;
+        metadata: string;
+      };
+      const jwt = db.prepare("SELECT id, metadata FROM memories WHERE title = 'JWT'").get() as {
+        id: string;
+        metadata: string;
+      };
+
+      // Auth: invalid JSON metadata → JSON.parse throws → row is skipped (not fatal).
+      db.prepare('UPDATE memories SET metadata = ? WHERE id = ?').run('{not valid json', auth.id);
+
+      // JWT: valid JSON, correct vault_path, but `links` is NOT an array → falls
+      // back to an empty link set rather than crashing.
+      const jwtMeta = JSON.parse(jwt.metadata) as Record<string, unknown>;
+      jwtMeta.links = 'definitely-not-an-array';
+      db.prepare('UPDATE memories SET metadata = ? WHERE id = ?').run(
+        JSON.stringify(jwtMeta),
+        jwt.id,
+      );
+
+      // Re-sync: resolveVaultWikilinks runs over the corrupted rows and must not
+      // throw — the corrupt-JSON row is skipped and the non-array `links` row is
+      // coerced to an empty link set. The Middleware row still resolves cleanly.
+      const result = await handleVaultSync(db, embedder, { vault_path: vault });
+      expect(result).toBeDefined();
+      const middleware = db
+        .prepare("SELECT id FROM memories WHERE title = 'Middleware'")
+        .get() as { id: string };
+      expect(getOutgoingLinks(db, middleware.id).length).toBeGreaterThan(0);
+    } finally {
+      rmSync(vault, { recursive: true, force: true });
+    }
+  });
 });

@@ -17,11 +17,14 @@ import {
   MemoryRelatedSchema,
   MemoryVersionsSchema,
   MemoryStatsSchema,
+  MemoryTiersSchema,
   MemoryExportSchema,
   MemoryImportSchema,
   VaultSyncSchema,
   VaultStatusSchema,
   VaultSearchSchema,
+  MemoryExportVaultSchema,
+  MemoryCanvasSchema,
   MemoryConsolidateSchema,
   MemoryExtractLearningsSchema,
   MemoryManifestSchema,
@@ -29,6 +32,18 @@ import {
   MemoryExtractEntitiesSchema,
   MemoryCondenseSchema,
   MemoryRestoreSchema,
+  MemoryQuerySchema,
+  CoreMemoryGetSchema,
+  CoreMemoryAppendSchema,
+  CoreMemoryReplaceSchema,
+  MemoryReflectSchema,
+  MemoryCommunitiesSchema,
+  MemoryTemplateSchema,
+  MemorySessionNoteSchema,
+  MemoryAttributionSchema,
+  MemoryQuestionsSchema,
+  MemoryForgetSchema,
+  MemoryHistorySchema,
 } from './schemas/index.js';
 import { handleStore } from './tools/store.js';
 import { handleSearch } from './tools/search.js';
@@ -40,24 +55,49 @@ import { handleIngest } from './tools/ingest.js';
 import { handleRelated } from './tools/related.js';
 import { handleVersions } from './tools/versions.js';
 import { handleStats } from './tools/stats.js';
+import { handleMemoryTiers } from './tools/tiers.js';
 import { handleExport } from './tools/export.js';
 import { handleImport } from './tools/import.js';
 import { handleVaultSync } from './tools/vault-sync.js';
 import { handleVaultStatus } from './tools/vault-status.js';
 import { handleVaultSearch } from './tools/vault-search.js';
+import { handleExportVault } from './tools/export-vault.js';
+import { handleCanvas } from './tools/canvas.js';
 import { handleConsolidate } from './tools/consolidate.js';
 import { handleExtractLearnings } from './tools/extract-learnings.js';
 import { handleManifest } from './tools/manifest.js';
 import { handleGraph } from './tools/graph.js';
 import { handleExtractEntities } from './tools/extract-entities.js';
 import { handleCondense, handleRestore } from './tools/condense.js';
+import { handleQuery } from './tools/query.js';
+import {
+  handleCoreMemoryGet,
+  handleCoreMemoryAppend,
+  handleCoreMemoryReplace,
+} from './tools/core-memory.js';
+import { handleReflect } from './tools/reflect.js';
+import { handleCommunities } from './tools/communities.js';
+import { handleTemplate } from './tools/templates.js';
+import { handleSessionNote } from './tools/session-note.js';
+import { handleAttribution } from './tools/attribution.js';
+import { handleQuestions } from './tools/questions.js';
+import { handleForget } from './tools/forget.js';
+import { handleHistory } from './tools/history.js';
 
 import { metrics } from './api/metrics.js';
 import { logger } from './lib/logger.js';
+import { sanitizeDeep } from './lib/sanitize.js';
 
-function formatResult(data: unknown): { content: Array<{ type: 'text'; text: string }> } {
+/**
+ * The single chokepoint for MCP tool output. Memory content is UNTRUSTED, so
+ * every result is run through {@link sanitizeDeep} here to neutralize ANSI/VT
+ * escapes, raw control chars, and zero-width / BiDi Trojan-Source spoofing
+ * chars before it leaves as MCP text content. This is OUTPUT-only — stored
+ * content stays raw at rest. Exported for direct testing of this boundary.
+ */
+export function formatResult(data: unknown): { content: Array<{ type: 'text'; text: string }> } {
   return {
-    content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
+    content: [{ type: 'text' as const, text: JSON.stringify(sanitizeDeep(data), null, 2) }],
   };
 }
 
@@ -242,6 +282,17 @@ export function createServer(): McpServer {
     }),
   );
 
+  // ── 10b. memory_tiers ─────────────────────────────────────────────────────
+  server.tool(
+    'memory_tiers',
+    'Show the MemGPT-style tier distribution (hot / recall / archival) of currently-valid, top-level memories and list the hot working set. Tiers are derived from access recency + frequency — hot = frequently or recently accessed, archival = old and rarely touched, recall = everything in between. Read-only; optional scope/namespace filter.',
+    MemoryTiersSchema.shape,
+    instrument('memory_tiers', async (input) => {
+      const parsed = MemoryTiersSchema.parse(input);
+      return handleMemoryTiers(getDb(), parsed);
+    }),
+  );
+
   // ── 11. memory_export ─────────────────────────────────────────────────────
   server.tool(
     'memory_export',
@@ -294,6 +345,28 @@ export function createServer(): McpServer {
     instrument('vault_search', async (input) => {
       const parsed = VaultSearchSchema.parse(input);
       return handleVaultSearch(getDb(), await getEmbedder(), parsed);
+    }),
+  );
+
+  // ── 15b. memory_export_vault ─────────────────────────────────────────────
+  server.tool(
+    'memory_export_vault',
+    'Write memories OUT to an Obsidian vault as .md files with YAML frontmatter — the reverse of vault_sync. Each currently-valid top-level memory becomes a plain markdown file a human can open and edit; namespaced memories land under <vault>/<namespace>/. Lossless: written files parse back via the vault parser. Optionally filter by scope/namespace.',
+    MemoryExportVaultSchema.shape,
+    instrument('memory_export_vault', async (input) => {
+      const parsed = MemoryExportVaultSchema.parse(input);
+      return handleExportVault(getDb(), parsed);
+    }),
+  );
+
+  // ── 15c. memory_canvas ────────────────────────────────────────────────────
+  server.tool(
+    'memory_canvas',
+    'Export the memory graph as a JSON Canvas 1.0 .canvas — opens as a spatial board in real Obsidian. Each currently-valid top-level memory becomes a text node on a deterministic grid; memory_links become labeled, arrow-tipped edges. Optionally filter by scope/namespace and cap with limit. When vault_path is given the canvas is written there (confined under the vault) and its path returned; otherwise only the canvas object.',
+    MemoryCanvasSchema.shape,
+    instrument('memory_canvas', async (input) => {
+      const parsed = MemoryCanvasSchema.parse(input);
+      return handleCanvas(getDb(), parsed);
     }),
   );
 
@@ -371,6 +444,138 @@ export function createServer(): McpServer {
     instrument('memory_restore', async (input) => {
       const parsed = MemoryRestoreSchema.parse(input);
       return handleRestore(getDb(), await getEmbedder(), parsed);
+    }),
+  );
+
+  // ── 23. memory_query ────────────────────────────────────────────────────
+  server.tool(
+    'memory_query',
+    'Answer a question with a TIGHT, relevant subgraph instead of flooding context. Seeds from hybrid search, walks the memory graph (hub-avoiding) up to max_hops, and returns a token-budgeted "context" string plus structured nodes — with an actionable hint when truncated.',
+    MemoryQuerySchema.shape,
+    instrument('memory_query', async (input) => {
+      const parsed = MemoryQuerySchema.parse(input);
+      return handleQuery(getDb(), await getEmbedder(), parsed);
+    }),
+  );
+
+  // ── 24. core_memory_get ───────────────────────────────────────────────────
+  server.tool(
+    'core_memory_get',
+    'Read the pinned "core memory" block for a (scope, namespace) — a small, bounded, always-in-context note the agent maintains about who it is and what matters now. Returns content, char_limit, and used (character count).',
+    CoreMemoryGetSchema.shape,
+    instrument('core_memory_get', async (input) => {
+      const parsed = CoreMemoryGetSchema.parse(input);
+      return handleCoreMemoryGet(getDb(), parsed);
+    }),
+  );
+
+  // ── 25. core_memory_append ────────────────────────────────────────────────
+  server.tool(
+    'core_memory_append',
+    'Append text to the pinned core-memory block (newline-separated when non-empty). If the result would exceed char_limit the write is refused (error: core_memory_full) so you compact via core_memory_replace instead of silently overflowing.',
+    CoreMemoryAppendSchema.shape,
+    instrument('core_memory_append', async (input) => {
+      const parsed = CoreMemoryAppendSchema.parse(input);
+      return handleCoreMemoryAppend(getDb(), parsed);
+    }),
+  );
+
+  // ── 26. core_memory_replace ───────────────────────────────────────────────
+  server.tool(
+    'core_memory_replace',
+    'Replace the first occurrence of old_text with new_text in the pinned core-memory block. Returns error: not_found if old_text is absent, or core_memory_full if the result would exceed char_limit. Use this to update or compact the block.',
+    CoreMemoryReplaceSchema.shape,
+    instrument('core_memory_replace', async (input) => {
+      const parsed = CoreMemoryReplaceSchema.parse(input);
+      return handleCoreMemoryReplace(getDb(), parsed);
+    }),
+  );
+
+  // ── 27. memory_reflect ────────────────────────────────────────────────────
+  server.tool(
+    'memory_reflect',
+    'Generative-Agents-style reflection (agent-driven, no LLM in the server). mode:"gather" (default) returns the most reflection-worthy memories (high importance × recent) as material plus an instruction to synthesize 1–3 higher-level insights. mode:"store" persists a synthesized insight (provenance="reflection") and "derived_from"-links it to its source memories.',
+    MemoryReflectSchema.shape,
+    instrument('memory_reflect', async (input) => {
+      const parsed = MemoryReflectSchema.parse(input);
+      return handleReflect(getDb(), await getEmbedder(), parsed);
+    }),
+  );
+
+  // ── 28. memory_communities ────────────────────────────────────────────────
+  server.tool(
+    'memory_communities',
+    'GraphRAG global sensemaking (agent-driven, no LLM in the server). Detects communities (densely-connected entity clusters) over the entity graph on demand via weighted label propagation, and returns each community\'s top entities + linked memories. This is the corpus-level view that chunk-level search can\'t give — synthesize named themes from the communities to answer "what are the main themes?".',
+    MemoryCommunitiesSchema.shape,
+    instrument('memory_communities', async (input) => {
+      const parsed = MemoryCommunitiesSchema.parse(input);
+      return handleCommunities(getDb(), parsed);
+    }),
+  );
+
+  // ── 29. memory_template ───────────────────────────────────────────────────
+  server.tool(
+    'memory_template',
+    'Fetch an Obsidian-style note scaffold for a document_type so stored memories stay structurally consistent. Returns a markdown template with ## Section headers (e.g., decision → Context/Decision/Consequences; incident → Symptom/Root Cause/Fix/Prevention; also learning, bug-fix, meeting, session). Unknown types get a generic Summary/Details/Notes scaffold (known:false). Read-only: fill the scaffold, then store it via memory_store.',
+    MemoryTemplateSchema.shape,
+    instrument('memory_template', async (input) => {
+      const parsed = MemoryTemplateSchema.parse(input);
+      return handleTemplate(parsed);
+    }),
+  );
+
+  // ── 30. memory_session_note ───────────────────────────────────────────────
+  server.tool(
+    'memory_session_note',
+    'Frictionless per-session capture ("daily note for agents"). Keyed by source "session:<session_id>": the first call creates one session memory (document_type "session"); every later call for the same session_id appends to that same memory (newline-joined, re-embedded and versioned). Different session_ids stay isolated. Returns { memory_id, created, appended }.',
+    MemorySessionNoteSchema.shape,
+    instrument('memory_session_note', async (input) => {
+      const parsed = MemorySessionNoteSchema.parse(input);
+      return handleSessionNote(getDb(), await getEmbedder(), parsed);
+    }),
+  );
+
+  // ── 31. memory_attribution ────────────────────────────────────────────────
+  server.tool(
+    'memory_attribution',
+    'Multi-agent / team attribution rollup. Returns how many currently-valid top-level memories each agent (agent_id, set at store time) wrote — { by_agent, by_author, total } — distinct from author (the human/source). Memories stored without an agent_id are bucketed under "unattributed". Optional scope/namespace filters scope the rollup.',
+    MemoryAttributionSchema.shape,
+    instrument('memory_attribution', async (input) => {
+      const parsed = MemoryAttributionSchema.parse(input);
+      return handleAttribution(getDb(), parsed);
+    }),
+  );
+
+  // ── 32. memory_questions ──────────────────────────────────────────────────
+  server.tool(
+    'memory_questions',
+    'Active "questions to ask" digest. Surfaces open questions / gaps the graph is uniquely positioned to find so you know what to verify or learn next: AMBIGUOUS inferred links to confirm (verify), frequently-mentioned but barely-documented entities (gap), and disconnected memories that may be stale or mis-scoped (orphan). Returns { questions: [{ question, type, evidence }], count } over currently-valid top-level memories. Optional scope/namespace filters and limit (default 20).',
+    MemoryQuestionsSchema.shape,
+    instrument('memory_questions', async (input) => {
+      const parsed = MemoryQuestionsSchema.parse(input);
+      return handleQuestions(getDb(), parsed);
+    }),
+  );
+
+  // ── 33. memory_forget ─────────────────────────────────────────────────────
+  server.tool(
+    'memory_forget',
+    'GDPR-grade forget (additive — does NOT replace memory_delete). hard:false (default) soft-deletes/tombstones: stamps valid_to so the memory is excluded from default retrieval but stays queryable via as_of and is recoverable. hard:true erases for real: returns a portability "export" copy FIRST (data-subject access), THEN permanently deletes (irreversible, cascades). Returns { forgotten, mode, recoverable, export? }.',
+    MemoryForgetSchema.shape,
+    instrument('memory_forget', async (input) => {
+      const parsed = MemoryForgetSchema.parse(input);
+      return handleForget(getDb(), parsed);
+    }),
+  );
+
+  // ── 34. memory_history ────────────────────────────────────────────────────
+  server.tool(
+    'memory_history',
+    'Point-in-time history surface for one memory: its current bi-temporal timeline (created_at/updated_at/valid_from/valid_to/tx_expired/superseded_at/version) plus the full memory_versions edit history. Returns { memory_id, exists, timeline, versions } or { memory_id, exists:false }.',
+    MemoryHistorySchema.shape,
+    instrument('memory_history', async (input) => {
+      const parsed = MemoryHistorySchema.parse(input);
+      return handleHistory(getDb(), parsed);
     }),
   );
 

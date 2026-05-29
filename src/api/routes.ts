@@ -13,6 +13,14 @@ import { handleStats } from '../tools/stats.js';
 import { handleManifest } from '../tools/manifest.js';
 import { getLinksAmong } from '../graph/memory-links.js';
 import {
+  getPublishedPages,
+  getPublishedPage,
+  getPublishedGraph,
+  getPublishedIdSet,
+  renderIndexHtml,
+  renderPageHtml,
+} from '../publish/wiki.js';
+import {
   ApiSearchQuerySchema,
   ApiListQuerySchema,
   ApiManifestQuerySchema,
@@ -24,6 +32,9 @@ import {
   ApiPatchBodySchema,
 } from '../schemas/index.js';
 import { logger } from '../lib/logger.js';
+import { ReloadGate, maybeBustGraphCache } from '../lib/hot-reload.js';
+import path from 'node:path';
+import os from 'node:os';
 import { metrics } from './metrics.js';
 
 type GetDb = () => Database.Database;
@@ -35,6 +46,17 @@ type GetEmbedder = () => Promise<EmbeddingProvider>;
 // free.
 const GRAPH_CACHE_TTL_MS = 60_000;
 const graphCache = new Map<string, { ts: number; payload: unknown }>();
+
+// (T26) Hot-reload gate over the DB file. SQLite already exposes committed
+// writes from other connections to our live connection, so query freshness is
+// automatic; the staleness risk is purely the derived `graphCache` above. When
+// the DB file is rewritten out-of-band (background writer / git-hook rebuild /
+// `git pull`), this gate detects it by (mtime_ns, size) and busts the cache —
+// without reopening the connection. Resolve the path once: if env is unset and
+// the default file is absent, the gate is a no-op (shouldReload stays false).
+const dbFilePath =
+  process.env.MCP_MEMORY_DB_PATH ?? path.join(os.homedir(), '.mcp-memory', 'memory.db');
+const graphReloadGate = new ReloadGate(dbFilePath);
 
 class HttpError extends Error {
   constructor(
@@ -223,6 +245,11 @@ export function registerApiRoutes(
     const cacheKey = `${q.limit}|${q.min_importance ?? 0}`;
     const now = Date.now();
 
+    // If the DB file changed on disk since the last request, every cached graph
+    // payload is potentially stale — drop them all before the TTL lookup so the
+    // dashboard reflects an external rebuild without ?refresh=1 or a restart.
+    maybeBustGraphCache(graphReloadGate, graphCache);
+
     const cached = !refresh ? graphCache.get(cacheKey) : undefined;
     if (cached && now - cached.ts < GRAPH_CACHE_TTL_MS) {
       res.json(cached.payload);
@@ -267,5 +294,75 @@ export function registerApiRoutes(
     const q = parseOrThrow(ApiManifestQuerySchema, req.query);
     const result = handleManifest(getDb(), q);
     res.json(result);
+  }));
+}
+
+/**
+ * Obsidian-Publish-style read-only "memory wiki" (Pillar 6 / T18).
+ *
+ * Mounted at /publish and intentionally NOT behind bearer auth — this is the
+ * public sharing surface. Access control is enforced in the data layer
+ * (`src/publish/wiki.ts`): every query is scoped to the namespace AND an
+ * `access_level` allowlist, and link traversal re-applies the filter, so a
+ * non-published memory is unreachable via the index, a direct page-by-id, the
+ * graph, backlinks, OR search. All user data is HTML-escaped at render time.
+ */
+export function registerPublishRoutes(
+  router: Application,
+  getDb: GetDb,
+  getEmbedder: GetEmbedder,
+): void {
+  // ── GET /publish/:namespace — HTML index ────────────────────────────────
+  router.get('/publish/:namespace', asyncHandler('GET /publish/:namespace', (req, res) => {
+    const namespace = param(req, 'namespace');
+    const pages = getPublishedPages(getDb(), { namespace });
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(renderIndexHtml(namespace, pages));
+  }));
+
+  // ── GET /publish/:namespace/graph — JSON (published only) ───────────────
+  router.get('/publish/:namespace/graph', asyncHandler('GET /publish/:namespace/graph', (req, res) => {
+    const namespace = param(req, 'namespace');
+    res.json(getPublishedGraph(getDb(), { namespace }));
+  }));
+
+  // ── GET /publish/:namespace/search?q= — JSON, published pages only ──────
+  router.get('/publish/:namespace/search', asyncHandler('GET /publish/:namespace/search', async (req, res) => {
+    const namespace = param(req, 'namespace');
+    const q = typeof req.query.q === 'string' ? req.query.q : '';
+    if (q.trim().length === 0) {
+      res.json({ results: [], total: 0 });
+      return;
+    }
+    const db = getDb();
+    // Access gating is the post-filter against the published id set — it is the
+    // single authority and honors the full MCP_PUBLISH_ACCESS_LEVELS allowlist
+    // (same gate as index/page/graph). We deliberately do NOT pass access_level
+    // to handleSearch: hardcoding 'public' would under-expose namespaces whose
+    // allowlist also includes 'internal'. Search only scopes by namespace; the
+    // intersection with publishedIds enforces which access levels are visible.
+    const publishedIds = getPublishedIdSet(db, { namespace });
+    const search = await handleSearch(db, await getEmbedder(), {
+      query: q,
+      namespace,
+      detail_level: 'summary',
+    });
+    const results = (search.results as Array<{ id: string }>).filter((r) =>
+      publishedIds.has(r.id),
+    );
+    res.json({ results, total: results.length });
+  }));
+
+  // ── GET /publish/:namespace/page/:id — HTML page or 404 JSON ────────────
+  router.get('/publish/:namespace/page/:id', asyncHandler('GET /publish/:namespace/page/:id', (req, res) => {
+    const namespace = param(req, 'namespace');
+    const id = param(req, 'id');
+    const page = getPublishedPage(getDb(), { namespace, id });
+    if (!page) {
+      res.status(404).json({ error: 'not_found' });
+      return;
+    }
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(renderPageHtml(namespace, page));
   }));
 }

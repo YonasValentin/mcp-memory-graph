@@ -8,7 +8,7 @@ import express from 'express';
 import { createServer } from '../server.js';
 import { closeDatabase } from '../db/connection.js';
 import { getReadWriteDb, getEmbedder } from '../lib/direct-access.js';
-import { registerApiRoutes } from '../api/routes.js';
+import { registerApiRoutes, registerPublishRoutes } from '../api/routes.js';
 import { rateLimitMiddleware, RateLimiter, defaultConfig as rateLimitDefaultConfig } from '../api/rate-limit.js';
 import { renderMetrics, METRICS_CONTENT_TYPE } from '../api/metrics.js';
 import { securityHeadersMiddleware } from '../api/security-headers.js';
@@ -270,6 +270,11 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
   // ── REST API endpoints ────────────────────────────────────────────────
   registerApiRoutes(app, deps.getDb, deps.getEmbedder);
 
+  // ── Public read-only memory wiki (T18) ────────────────────────────────
+  // Mounted OUTSIDE the /api and /mcp bearer prefixes — public by design,
+  // gated instead by access_level inside the publish data layer.
+  registerPublishRoutes(app, deps.getDb, deps.getEmbedder);
+
   // POST /mcp — main MCP handler
   app.post('/mcp', async (req: Request, res: Response) => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
@@ -351,6 +356,7 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
       if (
         req.path.startsWith('/api') ||
         req.path.startsWith('/mcp') ||
+        req.path.startsWith('/publish') ||
         req.path === '/health' ||
         req.path === '/live' ||
         req.path === '/ready' ||
