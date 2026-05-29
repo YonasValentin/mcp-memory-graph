@@ -12,6 +12,21 @@ import { contextualizeForEmbedding } from '../search/contextual.js';
 import { decideWriteOperation, type WriteOp } from '../graph/write-gate.js';
 import { logger } from '../lib/logger.js';
 
+/**
+ * Containment-aware merge for the UPDATE path. Mirrors consolidate's mergeContent
+ * (G3-F3): if `incoming` is already contained in `existing` (an empty string is
+ * contained in everything) the merge is a no-op (returns `existing`); if
+ * `existing` is contained in `incoming`, the fuller `incoming` wins; otherwise
+ * the two are concatenated. This stops repeated superseded-band stores of
+ * near-duplicate content from growing a memory's content (and degrading its
+ * re-embedded vector) unboundedly.
+ */
+function mergeUpdateContent(existing: string, incoming: string): string {
+  if (existing.includes(incoming)) return existing;
+  if (incoming.includes(existing)) return incoming;
+  return `${existing}\n\n${incoming}`;
+}
+
 interface StoreResult {
   stored: boolean;
   memory: Memory;
@@ -115,7 +130,18 @@ export async function handleStore(
   if (!nliContradiction && decision.op === 'UPDATE' && decision.targetId) {
     const existing = getMemoryById(db, decision.targetId);
     if (existing) {
-      const mergedContent = `${existing.content}\n\n${input.content}`;
+      const mergedContent = mergeUpdateContent(existing.content, input.content);
+      // Containment no-op: the incoming text adds nothing — skip the version
+      // bump + re-embed and just return the unchanged target (G3-F3).
+      if (mergedContent === existing.content) {
+        return {
+          stored: true,
+          memory: rowToMemory(existing),
+          operation: 'UPDATE',
+          operation_reason: decision.reason,
+          conflicts: conflictsOut,
+        };
+      }
       const mergedEmbedding = await embedder.embed(
         contextualizeForEmbedding(mergedContent, {
           title: existing.title,
