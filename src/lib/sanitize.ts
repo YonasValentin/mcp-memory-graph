@@ -22,31 +22,40 @@
  */
 
 // ESC-introduced sequences. Order in the alternation matters: match the
-// structured CSI/OSC forms first, then any remaining lone ESC + final byte.
+// structured CSI/OSC/string forms (incl. their payload) first, then any
+// remaining lone ESC + final byte. Each branch is anchored on a single-char
+// introducer with a lazy `[\s\S]*?` body and an explicit terminator set — no
+// nested quantifiers — so matching stays linear (ReDoS-safe).
 //   CSI: ESC [ <params/intermediates> <final 0x40–0x7E>
-//   OSC: ESC ] ... terminated by BEL (0x07) or ST (ESC \\)
+//   OSC: ESC ] ... payload ... terminated by BEL (0x07), 7-bit ST (ESC \\),
+//        or 8-bit ST (0x9C)
+//   String sequences DCS/SOS/PM/APC: ESC P|X|^|_ ... payload ... terminated
+//        by BEL, 7-bit ST, or 8-bit ST — whole sequence incl. payload stripped
 //   Other: ESC followed by a single byte (e.g. ESC c reset)
 const ANSI_ESCAPE_RE =
   // eslint-disable-next-line no-control-regex
-  /\x1B\[[0-?]*[ -/]*[@-~]|\x1B\][\s\S]*?(?:\x07|\x1B\\)|\x1B[@-Z\\-_]/g;
+  /\x1B\[[0-?]*[ -/]*[@-~]|\x1B[\]P^_X][\s\S]*?(?:\x07|\x1B\\|\x9C)|\x1B[@-Z\\-_]/g;
 
-// C1 control representations of CSI/OSC (single-byte 0x9B / 0x9D introducers)
-// and their payloads, removed before the bare-control pass strips leftovers.
-// C1 CSI requires at least one param/intermediate byte before the final byte so
-// a bare 0x9B (no real sequence) is left for the control-char pass to strip
-// rather than swallowing the following printable character.
+// C1 control representations of CSI/OSC/string introducers (single-byte 0x9B
+// CSI, 0x9D OSC, 0x90 DCS, 0x9E PM, 0x9F APC, 0x98 SOS) and their payloads,
+// removed before the bare-control pass strips leftovers. C1 CSI requires at
+// least one param/intermediate byte before the final byte so a bare 0x9B (no
+// real sequence) is left for the control-char pass to strip rather than
+// swallowing the following printable character.
 const C1_CSI_OSC_RE =
   // eslint-disable-next-line no-control-regex
-  /\x9B[0-?]*[ -/]+[@-~]|\x9B[0-?]+[@-~]|\x9D[\s\S]*?(?:\x07|\x9C)/g;
+  /\x9B[0-?]*[ -/]+[@-~]|\x9B[0-?]+[@-~]|[\x90\x98\x9D\x9E\x9F][\s\S]*?(?:\x07|\x1B\\|\x9C)/g;
 
-// Bare control chars: C0 (0x00–0x1F) and C1 (0x80–0x9F), keeping \t \n \r.
+// Bare control chars: C0 (0x00–0x1F), DEL (0x7F), and C1 (0x80–0x9F), keeping
+// \t \n \r.
 const CONTROL_CHARS_RE =
   // eslint-disable-next-line no-control-regex
-  /[\x00-\x08\x0B\x0C\x0E-\x1F\x80-\x9F]/g;
+  /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\x80-\x9F]/g;
 
 // Zero-width + BiDi control chars enabling Trojan-Source spoofing:
-// U+200B–U+200F, U+202A–U+202E, U+2066–U+2069, U+FEFF.
-const ZERO_WIDTH_BIDI_RE = /[​-‏‪-‮⁦-⁩﻿]/g;
+// U+200B–U+200F, U+202A–U+202E, U+2066–U+2069, U+FEFF. Written with explicit
+// escapes (not literal invisible chars) so the set is auditable in source.
+const ZERO_WIDTH_BIDI_RE = /[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
 
 /**
  * Strip terminal-injection and Trojan-Source control characters from a string,

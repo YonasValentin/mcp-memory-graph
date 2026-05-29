@@ -20,9 +20,20 @@ describe('sanitizeText', () => {
     expect(sanitizeText('\x1B]8;;http://evil\x07click')).toBe('click');
   });
 
-  it('strips C0 control chars (NUL, BEL) and C1 control chars', () => {
+  it('strips C0 control chars (NUL, BEL), DEL, and C1 control chars', () => {
     expect(sanitizeText('a\x00b\x07c')).toBe('abc');
+    expect(sanitizeText('a\x7Fb')).toBe('ab'); // DEL (0x7F)
     expect(sanitizeText('a\x9Bb')).toBe('ab'); // C1 CSI
+  });
+
+  it('strips OSC terminated by 8-bit ST (0x9C) including payload', () => {
+    expect(sanitizeText('\x1B]8;;u\x9Cz')).toBe('z');
+  });
+
+  it('strips DCS/APC/PM string sequences including their payload', () => {
+    expect(sanitizeText('\x1BPpay\x1B\\z')).toBe('z'); // DCS, 7-bit ST
+    expect(sanitizeText('\x1B_apc\x9Cz')).toBe('z'); // APC, 8-bit ST
+    expect(sanitizeText('\x1B^pm\x07z')).toBe('z'); // PM, BEL terminator
   });
 
   it('strips zero-width and BiDi-override Trojan-Source chars', () => {
