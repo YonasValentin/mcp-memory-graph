@@ -33,7 +33,8 @@ export async function handleStore(
   // (title / document_type / namespace) so the vector captures context the bare
   // chunk loses. No-ops to bare content when there is no meaningful context.
   // The RAW content (input.content) is what gets stored — the prefix is
-  // embed-time only. (TODO: extend to ingest.ts / vault sync chunk paths.)
+  // embed-time only. (ingest.ts and vault/sync.ts use the same contextualization
+  // so the whole corpus shares one vector space.)
   const embedding = await embedder.embed(
     contextualizeForEmbedding(input.content, {
       title: input.title,

@@ -14,6 +14,7 @@ import { parseVaultFile } from './parser.js';
 import { scanVault } from './scanner.js';
 import { chunkContent } from '../chunking/chunker.js';
 import { createMemoryLink } from '../graph/memory-links.js';
+import { contextualizeForEmbedding } from '../search/contextual.js';
 
 const BATCH_SIZE = 50;
 
@@ -129,7 +130,16 @@ export async function syncVault(
 
     if (smallFiles.length > 0) {
       try {
-        const contents = smallFiles.map((item) => item.file.content);
+        // Contextual indexing: embed each note with the same context prefix
+        // handleStore uses (title / document_type='note' / namespace=vault) so
+        // the corpus stays in one vector space. STORED content stays RAW.
+        const contents = smallFiles.map((item) =>
+          contextualizeForEmbedding(item.file.content, {
+            title: item.file.title,
+            document_type: 'note',
+            namespace: vaultName,
+          }),
+        );
         const embeddings = await embedder.embedBatch(contents);
 
         const insertBatch = db.transaction(() => {
@@ -331,9 +341,20 @@ async function ingestLargeFile(
     overlap: chunkOverlap,
   });
 
+  // Contextual indexing: embed the parent summary and each chunk with the same
+  // context prefix handleStore uses (title / document_type='note' /
+  // namespace=vault) so the corpus stays in one vector space. STORED content
+  // (parentRow / chunkRow) stays RAW — only the embedded text is contextualized.
+  const ctx = {
+    title: parsed.title,
+    document_type: 'note',
+    namespace: vaultName,
+  };
   const summaryText = parsed.content.slice(0, 512);
-  const parentEmbedding = await embedder.embed(summaryText);
-  const chunkEmbeddings = await embedder.embedBatch(chunks.map((c) => c.content));
+  const parentEmbedding = await embedder.embed(contextualizeForEmbedding(summaryText, ctx));
+  const chunkEmbeddings = await embedder.embedBatch(
+    chunks.map((c) => contextualizeForEmbedding(c.content, ctx)),
+  );
 
   const parentRow = buildMemoryRow(parsed, vaultName, vaultPath);
 

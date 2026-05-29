@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { EmbeddingProvider, IngestResult, MemoryRow, ContentType, MemoryScope } from '../types.js';
 import { insertMemory } from '../db/repository.js';
 import { chunkContent } from '../chunking/chunker.js';
+import { contextualizeForEmbedding } from '../search/contextual.js';
 
 interface IngestInput {
   content: string;
@@ -41,8 +42,20 @@ export async function handleIngest(
     overlap: chunkOverlap,
   });
 
-  const parentEmbedding = await embedder.embed(summaryText);
-  const chunkEmbeddings = await embedder.embedBatch(chunks.map(c => c.content));
+  // Contextual indexing: embed the doc summary and each chunk with the same
+  // deterministic context prefix handleStore uses (title / document_type /
+  // namespace) so the whole corpus lives in one vector space. Chunks inherit
+  // the parent doc's metadata. The STORED content stays RAW — only the embedded
+  // text is contextualized. No-ops to bare content when no context is present.
+  const ctx = {
+    title: input.title,
+    document_type: input.document_type,
+    namespace: input.namespace,
+  };
+  const parentEmbedding = await embedder.embed(contextualizeForEmbedding(summaryText, ctx));
+  const chunkEmbeddings = await embedder.embedBatch(
+    chunks.map((c) => contextualizeForEmbedding(c.content, ctx)),
+  );
 
   const chunkIds: string[] = [];
 
