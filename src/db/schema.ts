@@ -119,10 +119,13 @@ function ensureV4MemoryColumns(db: Database.Database): void {
 /**
  * Initializes a fresh DB or validates an existing one. Idempotent.
  * Behavior:
- *   - Empty DB: creates the full v4 schema and stamps schema_version=4.
- *   - DB at v4: no-op.
- *   - DB at any partial/legacy state: throws a clear error pointing at the
- *     migrate command. Never silently marks a partial DB as current.
+ *   - Empty DB: creates the full current schema and stamps schema_version=CURRENT.
+ *   - Existing DB passing the v4 floor with NO schema_version row: stamps the
+ *     verified floor (schema_version=4) so the caller's runMigrations applies
+ *     v5–v9 and converges it with a fresh DB. (Never stamps CURRENT here — that
+ *     would skip later migrations and brick the first write.)
+ *   - DB at any partial/legacy state below v4: throws a clear error pointing at
+ *     the `migrate` command. Never silently marks a partial DB as current.
  *   - DB with a different embedding_dim: throws (set MCP_MEMORY_DIMENSIONS to
  *     match the value stored in schema_meta).
  */
@@ -146,10 +149,14 @@ export function initializeSchema(db: Database.Database): void {
       .prepare<[string], { value: string }>('SELECT value FROM schema_meta WHERE key = ?')
       .get('schema_version');
     if (!versionRow) {
-      // Schema_meta is fresh on an existing DB. Stamp it from observed shape.
+      // Schema_meta is fresh on an existing DB. We can only verify the v4 floor
+      // (ensureV4MemoryColumns above), so stamp the verified floor (4) — NOT
+      // CURRENT_SCHEMA_VERSION. The caller then runs runMigrations, which applies
+      // v5–v9 to converge a true v4 DB with a fresh one. Stamping CURRENT here
+      // would skip every later migration and brick the first write.
       db.prepare('INSERT INTO schema_meta (key, value) VALUES (?, ?)').run(
         'schema_version',
-        String(CURRENT_SCHEMA_VERSION),
+        '4',
       );
     }
     return;
