@@ -64,24 +64,30 @@ export async function handleStore(
   // is blind to. Any contradicted memory is invalidated (bi-temporal retire) and
   // the new memory is added anew — operation reported as DELETE. When `nli` is
   // undefined this whole block is skipped, so the default path is unchanged.
+  //
+  // NLI classify() is async, so it cannot live inside better-sqlite3's sync
+  // persist() transaction. We compute the contradicted-id list HERE, then defer
+  // the actual invalidateMemory calls into persist() (alongside insertMemory) so
+  // a failed insert rolls the retire back atomically (G3-F1).
   const nliInvalidated: string[] = [];
   if (nli && (input.on_conflict ?? 'add') === 'supersede') {
     const shortlist = findNearDuplicates(db, embedding, 0.5, 5);
     const candidates: { id: string; content: string }[] = [];
     for (const hit of shortlist) {
-      // Only consider still-valid facts as contradiction candidates.
+      // Only consider still-valid, TOP-LEVEL facts as contradiction candidates —
+      // `parent_id IS NULL` mirrors detectConflicts' guard so the NLI path can't
+      // retire a single chunk child of a chunked document (G3-F2).
       const row = db
-        .prepare<[string], { content: string; valid_to: string | null }>(
-          'SELECT content, valid_to FROM memories WHERE id = ?',
+        .prepare<[string], { content: string; valid_to: string | null; parent_id: string | null }>(
+          'SELECT content, valid_to, parent_id FROM memories WHERE id = ?',
         )
         .get(hit.id);
-      if (row && row.valid_to === null) {
+      if (row && row.valid_to === null && row.parent_id === null) {
         candidates.push({ id: hit.id, content: row.content });
       }
     }
     const contradicted = await detectContradictions(nli, input.content, candidates);
     for (const c of contradicted) {
-      invalidateMemory(db, c.id);
       nliInvalidated.push(c.id);
     }
   }
@@ -139,10 +145,11 @@ export async function handleStore(
   }
 
   // ── DELETE: invalidate (retire) the conflicting target, then ADD anew. ──
-  if (!nliContradiction && decision.op === 'DELETE' && decision.targetId) {
-    invalidateMemory(db, decision.targetId);
-    // new row goes through the normal ADD post-steps below.
-  }
+  // The retire is DEFERRED into persist() (alongside insertMemory) so a failed
+  // insert rolls it back atomically — never retiring the old fact without a
+  // replacement (G3-F1).
+  const deleteTargetId =
+    !nliContradiction && decision.op === 'DELETE' && decision.targetId ? decision.targetId : null;
 
   // ── ADD (and DELETE's follow-on insert). ──
   const row: MemoryRow = {
@@ -176,8 +183,18 @@ export async function handleStore(
     agent_id: input.agent_id ?? process.env.MCP_AGENT_ID ?? null,
   };
 
-  // Atomically: insert the memory, record conflicts (FK now valid), extract entities.
+  // Atomically: retire any contradicted/superseded facts, insert the memory,
+  // record conflicts (FK now valid), extract entities. The invalidations live
+  // INSIDE this transaction so a failed insert rolls the retire back with the
+  // insert — the old fact is never left retired with no replacement (G3-F1).
   const persist = db.transaction(() => {
+    for (const id of nliInvalidated) {
+      invalidateMemory(db, id);
+    }
+    if (deleteTargetId) {
+      invalidateMemory(db, deleteTargetId);
+    }
+
     insertMemory(db, row, embedding);
 
     try {
