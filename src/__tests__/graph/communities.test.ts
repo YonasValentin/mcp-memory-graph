@@ -202,7 +202,7 @@ describe('GraphRAG community detection over the entity graph (Pillar 5, T15)', (
     expect(limited).toHaveLength(1);
   });
 
-  it('handleCommunities returns communities, total, and a non-empty instruction', () => {
+  it('handleCommunities returns communities, total, returned, and a non-empty instruction', () => {
     const db = createTestDb();
     buildTwoClusters(db);
 
@@ -210,6 +210,7 @@ describe('GraphRAG community detection over the entity graph (Pillar 5, T15)', (
 
     expect(result.communities).toHaveLength(2);
     expect(result.total_communities).toBe(2);
+    expect(result.returned).toBe(2);
     expect(typeof result.instruction).toBe('string');
     expect(result.instruction.length).toBeGreaterThan(0);
   });
@@ -224,6 +225,30 @@ describe('GraphRAG community detection over the entity graph (Pillar 5, T15)', (
 
     const filtered = handleCommunities(db, { min_size: 2 });
     expect(filtered.communities).toHaveLength(2);
-    expect(filtered.total_communities).toBe(2);
+  });
+
+  it('handleCommunities reports the TRUE total (pre-filter) separately from returned (post-filter)', () => {
+    const db = createTestDb();
+    buildTwoClusters(db); // two triangles
+    findOrCreateEntity(db, 'WidowIsolated', 'concept'); // singleton → 3 communities total
+
+    // No filter: total and returned both reflect all 3 communities.
+    const all = handleCommunities(db);
+    expect(all.total_communities).toBe(3);
+    expect(all.returned).toBe(3);
+    expect(all.communities).toHaveLength(3);
+
+    // min_size drops the singleton from the returned array, but total_communities
+    // still reports the TRUE corpus-wide count of detected communities.
+    const filtered = handleCommunities(db, { min_size: 2 });
+    expect(filtered.total_communities).toBe(3); // true total, NOT 2
+    expect(filtered.returned).toBe(2); // after the minSize filter
+    expect(filtered.communities).toHaveLength(2);
+
+    // limit caps the returned array but not the true total.
+    const limited = handleCommunities(db, { limit: 1 });
+    expect(limited.total_communities).toBe(3); // true total, NOT 1
+    expect(limited.returned).toBe(1); // after the limit cap
+    expect(limited.communities).toHaveLength(1);
   });
 });

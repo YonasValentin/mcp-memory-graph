@@ -337,3 +337,18 @@ export function summarizeCommunities(
 
   return summaries.slice(0, limit);
 }
+
+/**
+ * The TRUE count of all communities detected in the graph — BEFORE any minSize
+ * filter or limit cap. A caller doing global sensemaking needs this corpus-wide
+ * count (for completeness / pagination) separately from how many summaries a
+ * filtered/capped {@link summarizeCommunities} call returned. Read-only.
+ *
+ * Community ids are densely renumbered 0..k-1, so the total is simply the
+ * number of distinct community ids.
+ */
+export function countCommunities(db: Database.Database): number {
+  const communities = detectCommunities(db);
+  if (communities.size === 0) return 0;
+  return new Set(communities.values()).size;
+}

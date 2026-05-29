@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import {
   summarizeCommunities,
+  countCommunities,
   type CommunitySummary,
 } from '../graph/communities.js';
 
@@ -12,8 +13,16 @@ interface CommunitiesInput {
 }
 
 interface CommunitiesResult {
+  /** Per-community summaries AFTER the min_size filter and limit cap. */
   communities: CommunitySummary[];
+  /**
+   * The TRUE count of all communities detected in the graph — BEFORE the
+   * min_size filter and limit cap. Use this for corpus-wide completeness /
+   * pagination, NOT `returned`.
+   */
   total_communities: number;
+  /** How many summaries actually came back (`communities.length`, post-filter). */
+  returned: number;
   instruction: string;
 }
 
@@ -41,7 +50,10 @@ export function handleCommunities(
 
   return {
     communities,
-    total_communities: communities.length,
+    // True corpus-wide total (pre-filter, pre-limit) so the agent isn't misled
+    // about completeness; `returned` is the post-filter/limit row count.
+    total_communities: countCommunities(db),
+    returned: communities.length,
     instruction:
       'Each community is a densely-connected cluster of entities — a candidate ' +
       'corpus-level theme. For global sensemaking ("what are the main themes?"), ' +
