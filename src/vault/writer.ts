@@ -23,6 +23,21 @@ const UNSAFE_FILENAME_CHARS = /[\x00-\x1f<>:"/\\|?*]/g;
 const MAX_FILENAME_STEM = 80;
 
 /**
+ * Resolve `relPath` under the (already real, symlink-free) `vaultRoot` and
+ * return the absolute target IFF it stays inside the vault — otherwise `null`.
+ * Single source of truth for path confinement: every vault write (markdown
+ * export, JSON Canvas) routes through this so an untrusted, traversal-bearing
+ * input can never escape the vault dir.
+ */
+export function confineToVault(vaultRoot: string, relPath: string): string | null {
+  const absTarget = path.resolve(vaultRoot, relPath);
+  if (absTarget !== vaultRoot && !absTarget.startsWith(vaultRoot + path.sep)) {
+    return null;
+  }
+  return absTarget;
+}
+
+/**
  * Serialize a memory to Obsidian markdown: `---` fenced YAML frontmatter
  * followed by the raw memory content as the body. Frontmatter keys are emitted
  * in a deterministic order; optional fields are omitted when absent/empty so the
@@ -136,16 +151,13 @@ export function exportMemoriesToVault(
     const subdir = memory.namespace ? safeSubdir(memory.namespace) : '';
     const relPath = subdir ? path.join(subdir, filename) : filename;
 
-    // Confine the write under the real vault root. Resolve the absolute target
-    // and verify it stays inside before touching the filesystem. Defence in
-    // depth: sanitization above already prevents escape, so this guard never
-    // trips in practice.
-    const absTarget = path.resolve(vaultRoot, relPath);
-    /* c8 ignore start */
-    if (absTarget !== vaultRoot && !absTarget.startsWith(vaultRoot + path.sep)) {
-      continue;
-    }
-    /* c8 ignore stop */
+    // Confine the write under the real vault root. Defence in depth:
+    // sanitization above already prevents escape, so this guard never trips in
+    // practice.
+    /* c8 ignore next */
+    const absTarget = confineToVault(vaultRoot, relPath);
+    /* c8 ignore next */
+    if (absTarget === null) continue;
 
     fs.mkdirSync(path.dirname(absTarget), { recursive: true });
     fs.writeFileSync(absTarget, memoryToMarkdown(memory), 'utf-8');

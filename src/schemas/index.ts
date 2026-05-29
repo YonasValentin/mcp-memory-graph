@@ -629,6 +629,39 @@ export const MemoryExportVaultSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// 15c. MemoryCanvasSchema (Pillar 6) — export the memory graph as a JSON Canvas
+// ---------------------------------------------------------------------------
+
+export const MemoryCanvasSchema = z.object({
+  scope: scopeField(false),
+  namespace: namespaceField(),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(500)
+    .default(50)
+    .describe('Maximum memories to include as canvas nodes (default 50)'),
+  vault_path: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Absolute path to an Obsidian vault directory (created if missing). When ' +
+      'given, the canvas is written there as a .canvas file (confined under the ' +
+      'vault) and its path is returned; otherwise only the canvas object is returned.',
+    ),
+  name: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Filename stem for the written .canvas (default "memory-graph"). ' +
+      'Sanitized — path separators and ".." can never escape the vault.',
+    ),
+});
+
+// ---------------------------------------------------------------------------
 // 16. MemoryConsolidateSchema
 // ---------------------------------------------------------------------------
 

@@ -24,6 +24,7 @@ import {
   VaultStatusSchema,
   VaultSearchSchema,
   MemoryExportVaultSchema,
+  MemoryCanvasSchema,
   MemoryConsolidateSchema,
   MemoryExtractLearningsSchema,
   MemoryManifestSchema,
@@ -55,6 +56,7 @@ import { handleVaultSync } from './tools/vault-sync.js';
 import { handleVaultStatus } from './tools/vault-status.js';
 import { handleVaultSearch } from './tools/vault-search.js';
 import { handleExportVault } from './tools/export-vault.js';
+import { handleCanvas } from './tools/canvas.js';
 import { handleConsolidate } from './tools/consolidate.js';
 import { handleExtractLearnings } from './tools/extract-learnings.js';
 import { handleManifest } from './tools/manifest.js';
@@ -334,6 +336,17 @@ export function createServer(): McpServer {
     instrument('memory_export_vault', async (input) => {
       const parsed = MemoryExportVaultSchema.parse(input);
       return handleExportVault(getDb(), parsed);
+    }),
+  );
+
+  // ── 15c. memory_canvas ────────────────────────────────────────────────────
+  server.tool(
+    'memory_canvas',
+    'Export the memory graph as a JSON Canvas 1.0 .canvas — opens as a spatial board in real Obsidian. Each currently-valid top-level memory becomes a text node on a deterministic grid; memory_links become labeled, arrow-tipped edges. Optionally filter by scope/namespace and cap with limit. When vault_path is given the canvas is written there (confined under the vault) and its path returned; otherwise only the canvas object.',
+    MemoryCanvasSchema.shape,
+    instrument('memory_canvas', async (input) => {
+      const parsed = MemoryCanvasSchema.parse(input);
+      return handleCanvas(getDb(), parsed);
     }),
   );
 
