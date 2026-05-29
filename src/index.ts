@@ -19,6 +19,18 @@ async function main(): Promise<void> {
       await runConsolidate();
       break;
     }
+    case 'migrate': {
+      // Upgrade an existing DB to the current schema version. Bypasses
+      // initializeSchema's v4-floor throw so a genuinely pre-v4 DB can be
+      // brought forward (the remedy the v4-floor error message points at).
+      const { getDatabase, closeDatabase } = await import('./db/connection.js');
+      const { migrateDatabase, CURRENT_SCHEMA_VERSION } = await import('./db/migrations.js');
+      const db = getDatabase();
+      migrateDatabase(db);
+      closeDatabase();
+      console.error(`Migration complete — database is at schema version ${CURRENT_SCHEMA_VERSION}.`);
+      break;
+    }
     case 'serve':
     case 'http': {
       const { runServe } = await import('./cli/serve.js');

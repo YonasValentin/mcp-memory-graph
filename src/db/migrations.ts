@@ -265,3 +265,34 @@ export function runMigrations(db: Database.Database): void {
 
   applyMigrations();
 }
+
+/**
+ * The `migrate` CLI command's core. Upgrades a database from its observed
+ * version to CURRENT, bypassing {@link initializeSchema}'s v4-floor throw so a
+ * genuinely pre-v4 DB (original base shape, missing v3/v4 columns) can be
+ * brought forward. Steps:
+ *   1. Ensure `schema_meta` and a `schema_version` row exist (seeded to the
+ *      observed value, or 0 when absent) — `runMigrations` only UPDATEs the row,
+ *      so a missing row would otherwise leave the version unstamped.
+ *   2. Run all pending migrations from that version up to CURRENT.
+ * Idempotent: a no-op on an already-current DB.
+ */
+export function migrateDatabase(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_meta (
+      key TEXT PRIMARY KEY NOT NULL,
+      value TEXT NOT NULL
+    );
+  `);
+
+  const row = db
+    .prepare<[string], { value: string }>('SELECT value FROM schema_meta WHERE key = ?')
+    .get('schema_version');
+  if (!row) {
+    // No recorded version → treat as the pre-schema_meta floor (0) so every
+    // migration applies. Seed the row so runMigrations' UPDATE can stamp it.
+    db.prepare("INSERT INTO schema_meta (key, value) VALUES ('schema_version', '0')").run();
+  }
+
+  runMigrations(db);
+}

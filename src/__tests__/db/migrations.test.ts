@@ -14,7 +14,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import { initializeSchema, configuredDimensions, CURRENT_SCHEMA_VERSION } from '../../db/schema.js';
-import { runMigrations } from '../../db/migrations.js';
+import { runMigrations, migrateDatabase } from '../../db/migrations.js';
 
 function freshDb(): Database.Database {
   const db = new Database(':memory:');
@@ -228,6 +228,86 @@ describe('migration v6 — bi-temporal backfill (pre-v6 upgrade path)', () => {
     expect(edge?.tx_expired).toBeNull();
 
     // The whole DB is now stamped at the current version.
+    const version = db
+      .prepare<[string], { value: string }>('SELECT value FROM schema_meta WHERE key = ?')
+      .get('schema_version');
+    expect(version?.value).toBe(String(CURRENT_SCHEMA_VERSION));
+  });
+});
+
+describe('migrateDatabase — the `migrate` CLI command path', () => {
+  it('upgrades a genuine pre-v4 DB (original base shape, no schema_version row) all the way to CURRENT', () => {
+    const db = freshDb();
+
+    // The original v1/v2 base `memories` table: full original column set up to
+    // expires_at, but NONE of the v3 columns (access_count, importance_score…)
+    // or v4 columns (superseded_at, provenance…). This is the DB that
+    // initializeSchema's v4-floor check throws on — the exact case the error
+    // message tells the user to fix with `node dist/index.js migrate`.
+    db.exec(`
+      CREATE TABLE memories (
+        id TEXT PRIMARY KEY NOT NULL,
+        scope TEXT NOT NULL DEFAULT 'global',
+        namespace TEXT,
+        title TEXT,
+        content TEXT NOT NULL,
+        document_type TEXT,
+        source TEXT,
+        author TEXT,
+        department TEXT,
+        tags TEXT,
+        access_level TEXT NOT NULL DEFAULT 'public',
+        language TEXT NOT NULL DEFAULT 'en',
+        metadata TEXT,
+        parent_id TEXT REFERENCES memories(id) ON DELETE CASCADE,
+        chunk_index INTEGER,
+        version INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        expires_at TEXT
+      );
+    `);
+    db.exec(`
+      CREATE TABLE schema_meta (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);
+    `);
+
+    // Pre-state: missing v3 + v4 columns; entity/links tables absent.
+    const colNames = () =>
+      new Set((db.prepare('PRAGMA table_info(memories)').all() as Array<{ name: string }>).map((c) => c.name));
+    const objExists = (name: string) =>
+      !!db.prepare('SELECT name FROM sqlite_master WHERE name = ?').get(name);
+    expect(colNames().has('access_count')).toBe(false);
+    expect(colNames().has('superseded_at')).toBe(false);
+    expect(colNames().has('agent_id')).toBe(false);
+    expect(objExists('entities')).toBe(false);
+
+    // The `migrate` command bypasses the v4-floor throw and runs all migrations.
+    migrateDatabase(db);
+
+    const names = colNames();
+    for (const col of [
+      'access_count', 'last_accessed_at', 'importance_score', 'confidence_score',
+      'superseded_at', 'condensation_level', 'condensed_at', 'provenance', 'provenance_detail',
+      'valid_from', 'valid_to', 'tx_expired', 'stability', 'agent_id',
+    ]) {
+      expect(names.has(col)).toBe(true);
+    }
+    for (const tbl of ['entities', 'entity_relationships', 'memory_entities', 'memory_links', 'core_memory']) {
+      expect(objExists(tbl)).toBe(true);
+    }
+
+    const version = db
+      .prepare<[string], { value: string }>('SELECT value FROM schema_meta WHERE key = ?')
+      .get('schema_version');
+    expect(version?.value).toBe(String(CURRENT_SCHEMA_VERSION));
+  });
+
+  it('is a no-op on an already-current DB (idempotent)', () => {
+    const db = freshDb();
+    initializeSchema(db);
+    runMigrations(db);
+
+    expect(() => migrateDatabase(db)).not.toThrow();
     const version = db
       .prepare<[string], { value: string }>('SELECT value FROM schema_meta WHERE key = ?')
       .get('schema_version');
