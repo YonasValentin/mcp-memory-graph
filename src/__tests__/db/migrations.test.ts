@@ -84,14 +84,99 @@ describe('initializeSchema — legacy DB (E1 regression)', () => {
     expect(version).toBeUndefined();
   });
 
-  it('accepts a complete v4 DB with no schema_meta row and stamps the version', () => {
+  it('accepts a complete (current-shape) DB with no schema_meta row and stamps the verified floor (4), NOT current', () => {
     const db = freshDb();
-    initializeSchema(db); // fresh — produces full v4 schema + schema_meta
+    initializeSchema(db); // fresh — produces full schema + schema_meta
 
     // Wipe the version row to simulate an upgrade from a pre-schema_meta build.
     db.prepare("DELETE FROM schema_meta WHERE key = 'schema_version'").run();
 
     expect(() => initializeSchema(db)).not.toThrow();
+    // initializeSchema can only verify the v4 floor, so it must stamp 4 — never
+    // CURRENT — otherwise a true v4 DB would skip v5–v9 migrations and brick on
+    // the first write (the CRITICAL bug).
+    const version = db
+      .prepare<[string], { value: string }>('SELECT value FROM schema_meta WHERE key = ?')
+      .get('schema_version');
+    expect(version?.value).toBe('4');
+
+    // runMigrations then converges it back to CURRENT (all objects already exist
+    // via IF NOT EXISTS / duplicate-column ignore, so this is a safe no-op).
+    runMigrations(db);
+    const after = db
+      .prepare<[string], { value: string }>('SELECT value FROM schema_meta WHERE key = ?')
+      .get('schema_version');
+    expect(after?.value).toBe(String(CURRENT_SCHEMA_VERSION));
+  });
+
+  it('CRITICAL: a true v4-only DB (no v5–v9 objects, no schema_version row) converges to CURRENT after initializeSchema+runMigrations', () => {
+    const db = freshDb();
+
+    // Build a genuine v4-shaped `memories` table: every v4-floor column, but
+    // NONE of the v5–v9 additions (valid_from/valid_to/tx_expired/stability/
+    // agent_id columns, and the memory_links / core_memory tables).
+    db.exec(`
+      CREATE TABLE memories (
+        id TEXT PRIMARY KEY NOT NULL,
+        scope TEXT NOT NULL DEFAULT 'global',
+        namespace TEXT,
+        title TEXT,
+        content TEXT NOT NULL,
+        document_type TEXT,
+        source TEXT,
+        author TEXT,
+        department TEXT,
+        tags TEXT,
+        access_level TEXT NOT NULL DEFAULT 'public',
+        language TEXT NOT NULL DEFAULT 'en',
+        metadata TEXT,
+        parent_id TEXT REFERENCES memories(id) ON DELETE CASCADE,
+        chunk_index INTEGER,
+        version INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        expires_at TEXT,
+        access_count INTEGER NOT NULL DEFAULT 0,
+        last_accessed_at TEXT,
+        importance_score REAL NOT NULL DEFAULT 0.5,
+        confidence_score REAL NOT NULL DEFAULT 0.5,
+        superseded_at TEXT,
+        condensation_level TEXT NOT NULL DEFAULT 'full',
+        condensed_at TEXT,
+        provenance TEXT NOT NULL DEFAULT 'manual',
+        provenance_detail TEXT
+      );
+      CREATE VIRTUAL TABLE memories_vec USING vec0(
+        embedding float[384],
+        scope TEXT,
+        namespace TEXT
+      );
+    `);
+
+    const colNames = () =>
+      new Set((db.prepare('PRAGMA table_info(memories)').all() as Array<{ name: string }>).map((c) => c.name));
+    const objExists = (name: string) =>
+      !!db.prepare("SELECT name FROM sqlite_master WHERE name = ?").get(name);
+
+    // Pre-state: none of the v5–v9 objects exist yet.
+    expect(colNames().has('valid_from')).toBe(false);
+    expect(colNames().has('stability')).toBe(false);
+    expect(colNames().has('agent_id')).toBe(false);
+    expect(objExists('memory_links')).toBe(false);
+    expect(objExists('core_memory')).toBe(false);
+
+    // The fix: initializeSchema stamps the verified floor (4), then runMigrations
+    // applies v5–v9. It must NOT stamp CURRENT and skip them.
+    initializeSchema(db);
+    runMigrations(db);
+
+    const names = colNames();
+    for (const col of ['valid_from', 'valid_to', 'tx_expired', 'stability', 'agent_id']) {
+      expect(names.has(col)).toBe(true);
+    }
+    expect(objExists('memory_links')).toBe(true);
+    expect(objExists('core_memory')).toBe(true);
+
     const version = db
       .prepare<[string], { value: string }>('SELECT value FROM schema_meta WHERE key = ?')
       .get('schema_version');
