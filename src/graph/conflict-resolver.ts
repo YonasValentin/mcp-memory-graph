@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
+import { cosineSimFromL2 } from '../search/scoring.js';
 
 export type ConflictType = 'superseded' | 'contradicted' | 'duplicate';
 
@@ -77,7 +78,7 @@ export function detectConflicts(
     if (row.superseded_at !== null) continue;
     if (excludeMemoryId && row.id === excludeMemoryId) continue;
 
-    const vectorSim = Math.max(0, 1 - candidate.distance / 2);
+    const vectorSim = cosineSimFromL2(candidate.distance);
     const existingWords = extractSignificantWords(row.content);
     const keywordOverlap = jaccardSimilarity(newWords, existingWords);
     const overlapScore = 0.5 * vectorSim + 0.5 * keywordOverlap;

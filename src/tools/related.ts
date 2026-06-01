@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { EmbeddingProvider, SearchResult, MemoryRow } from '../types.js';
 import { getMemoryById, getMemoryRowid, rowToMemory, recordAccess } from '../db/repository.js';
+import { cosineSimFromL2 } from '../search/scoring.js';
 
 interface VecMatch {
   rowid: number;
@@ -50,7 +51,7 @@ export async function handleRelated(
     const rowid = Number(match.rowid);
     if (rowid === targetRowid || childRowids.has(rowid)) continue;
 
-    const similarity = 1 - match.distance / 2;
+    const similarity = cosineSimFromL2(match.distance);
     if (similarity < minSimilarity) continue;
 
     const row = db

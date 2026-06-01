@@ -14,6 +14,7 @@ import {
 import { getConfig } from '../config/loader.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
 import { computeRetention } from '../search/temporal.js';
+import { l2FromCosineSim } from '../search/scoring.js';
 
 /**
  * Below this access count a memory is "weakly held" and eligible for the
@@ -132,7 +133,11 @@ export async function handleConsolidate(
   const dryRun = input.dry_run ?? false;
   const maxOps = input.max_operations ?? Infinity;
   const similarityThreshold = input.similarity_threshold ?? 0.85;
-  const distanceThreshold = (1 - similarityThreshold) * 2;
+  // Convert the cosine-similarity threshold to the exact L2 distance cutoff the
+  // vec0 KNN scans in. Embeddings are unit-normalized, so d = sqrt(2(1-cos)).
+  // (Previously `(1 - sim) * 2`, the inverse of a linear approximation, which
+  // made dedup far too strict — sim 0.85 mapped to d 0.3 ≈ true-cos 0.955.)
+  const distanceThreshold = l2FromCosineSim(similarityThreshold);
   const { clause: filterClause, params: filterParams } = buildFilterClause(
     input.scope,
     input.namespace,

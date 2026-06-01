@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import { findNearDuplicates } from '../db/repository.js';
+import { cosineSimFromL2 } from '../search/scoring.js';
 import { createMemoryLink, type EdgeConfidence } from './memory-links.js';
 
 export interface SimilarityEdgeOptions {
@@ -59,7 +60,7 @@ export function buildSimilarityEdges(
 
   for (const neighbor of neighbors) {
     if (neighbor.id === memoryId) continue;
-    const score = Math.max(0, Math.min(1, 1 - neighbor.distance / 2));
+    const score = cosineSimFromL2(neighbor.distance);
     const confidence: EdgeConfidence =
       neighbor.distance <= AMBIGUOUS_DISTANCE_FLOOR ? 'INFERRED' : 'AMBIGUOUS';
     createMemoryLink(db, {
