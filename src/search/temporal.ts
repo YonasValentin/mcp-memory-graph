@@ -20,6 +20,11 @@ export function computeRetention(ageDays: number, stability: number): number {
   return Math.min(1, Math.max(Number.MIN_VALUE, r));
 }
 
+/** Return `v` only when it is a finite positive number; otherwise `fallback`. */
+function positiveOrDefault(v: number | undefined, fallback: number): number {
+  return v !== undefined && Number.isFinite(v) && v > 0 ? v : fallback;
+}
+
 export function applyTemporalDecay(
   score: number,
   createdAt: string,
@@ -38,11 +43,14 @@ export function applyTemporalDecay(
 
   switch (config.type) {
     case 'exponential': {
-      const halfLifeDays = (config.half_life_days ?? 30) * accessBoost;
+      // Defense in depth: the schema rejects non-positive half_life_days, but
+      // guard here too so a degenerate value can never produce -Infinity/NaN
+      // (e.g. 0 → division by zero) regardless of call path.
+      const halfLifeDays = positiveOrDefault(config.half_life_days, 30) * accessBoost;
       return score * Math.exp(-Math.LN2 / halfLifeDays * ageDays);
     }
     case 'linear': {
-      const maxAgeDays = (config.max_age_days ?? 365) * accessBoost;
+      const maxAgeDays = positiveOrDefault(config.max_age_days, 365) * accessBoost;
       return score * Math.max(0, 1 - ageDays / maxAgeDays);
     }
     case 'forgetting':

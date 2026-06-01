@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
+import { chunkIds } from './communities.js';
 
 /** Provenance of an inferred edge — graphify's honest audit model. */
 export type EdgeConfidence = 'EXTRACTED' | 'INFERRED' | 'AMBIGUOUS';
@@ -102,15 +103,35 @@ export function getBacklinks(db: Database.Database, memoryId: string): MemoryLin
  * subgraph of the given nodes (e.g. the dashboard graph view). Edges pointing
  * outside the set are excluded so the rendered graph stays internally consistent.
  */
-export function getLinksAmong(db: Database.Database, memoryIds: string[]): MemoryLinkRow[] {
+export function getLinksAmong(
+  db: Database.Database,
+  memoryIds: string[],
+  chunkSize?: number,
+): MemoryLinkRow[] {
   if (memoryIds.length === 0) return [];
-  const placeholders = memoryIds.map(() => '?').join(',');
-  return db
-    .prepare<string[], MemoryLinkRow>(
-      `SELECT * FROM memory_links
-        WHERE source_memory_id IN (${placeholders})
-          AND target_memory_id IN (${placeholders})
-        ORDER BY confidence_score DESC, evidence_count DESC`,
-    )
-    .all(...memoryIds, ...memoryIds);
+
+  // The id set can exceed SQLite's ~32k bound-parameter limit. The old query
+  // bound the set TWICE (source IN (…) AND target IN (…)), so it crashed past
+  // ~16k ids. Chunk over the SOURCE set only — one IN-clause per batch — then
+  // filter targets in JS against the full set. (Chunking BOTH IN-clauses would
+  // drop edges whose source and target fall in different chunks.) Re-sort in JS
+  // to preserve the global confidence_score DESC, evidence_count DESC order the
+  // single-query version guaranteed.
+  const idSet = new Set(memoryIds);
+  const rows: MemoryLinkRow[] = [];
+  for (const batch of chunkIds(memoryIds, chunkSize)) {
+    const placeholders = batch.map(() => '?').join(',');
+    const batchRows = db
+      .prepare<string[], MemoryLinkRow>(
+        `SELECT * FROM memory_links WHERE source_memory_id IN (${placeholders})`,
+      )
+      .all(...batch);
+    for (const r of batchRows) {
+      if (idSet.has(r.target_memory_id)) rows.push(r);
+    }
+  }
+  rows.sort(
+    (a, b) => b.confidence_score - a.confidence_score || b.evidence_count - a.evidence_count,
+  );
+  return rows;
 }

@@ -155,16 +155,20 @@ export const MemorySearchSchema = z.object({
   temporal_decay: z
     .object({
       type: z
-        .enum(['exponential', 'linear', 'none'])
-        .describe('Decay function type'),
+        .enum(['exponential', 'linear', 'none', 'forgetting'])
+        .describe('Decay function type (forgetting = Ebbinghaus spaced-repetition curve)'),
       half_life_days: z
         .number()
+        .positive()
+        .finite()
         .optional()
-        .describe('Half-life in days for exponential decay'),
+        .describe('Half-life in days for exponential decay (must be > 0)'),
       max_age_days: z
         .number()
+        .positive()
+        .finite()
         .optional()
-        .describe('Maximum age in days for linear decay'),
+        .describe('Maximum age in days for linear decay (must be > 0)'),
     })
     .optional()
     .describe('Apply time-based decay to favor recent memories'),

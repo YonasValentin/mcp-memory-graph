@@ -214,3 +214,34 @@ Claims scorecard: **46 delivered / 10 partial / 2 false**.
 - **File**: src/api/rate-limit.ts:53, 65-88
 - **Problem**: The `buckets` Map (rate-limit.ts:53) gains a permanent entry per distinct key in consume() (lines 67, 77, 81) and is only ever cleared via the test-only reset() helper. Combined with the X-Forwarded-For key-control issue above, an attacker can mint unlimited distinct keys and grow the map without bound, a slow memory-exhaustion vector; even without spoofing, long-running servers accumulate idle buckets forever.
 - **Fix**: Add lazy eviction: when consume() refills a bucket to full (tokens back at capacity) drop it from the map, and/or run a periodic sweep removing buckets whose lastRefillMs is older than capacity/refillPerSec seconds. Cap the map size as a backstop.
+
+---
+
+## P0 Audit Disposition (2026-06)
+
+Findings from the docs-vs-implementation audit (49 confirmed). Resolved in the
+`fix/p0-correctness-hardening` branch unless marked deferred.
+
+### Resolved
+- **DB-1/DB-2/DB-4 (HIGH)** — vec0 L2 distance treated as cosine. Fixed via exact
+  `cosineSimFromL2`/`l2FromCosineSim` helpers in `src/search/scoring.ts`, applied
+  at related/similarity-edges/conflict-resolver/consolidate/scoring.
+- **HTTP-1/2/3** — express declared as a direct dep; JSON 404 + 4-arg error
+  handler added; dead urlencoded parser dropped.
+- **SEARCH-1** — temporal_decay half_life_days/max_age_days now `.positive().finite()`
+  in schema + `positiveOrDefault` guard in `applyTemporalDecay`.
+- **SEARCH-2** — `'forgetting'` added to the search temporal_decay enum.
+- **GRAPH-1** — `getLinksAmong` chunks the source IN-clause via `chunkIds`, filters
+  targets in JS, re-sorts; no longer crashes past ~16k ids.
+
+### Deferred to P1 (chunker rework)
+The chunking findings are bounded-impact and the chunker's overlap/offset model is
+being redesigned in P1 (lossless vault round-trip work). Tracking here:
+- **CHK-1** — overlap injection breaks the `start_offset`/`end_offset` invariant.
+- **CHK-2** — `overlap >= chunk_size` allowed; prepends up to a full previous chunk
+  (bounded ≤ chunk_size, not unbounded). Clamp `overlap < chunk_size` during rework.
+- **CHK-3** — overlap applied across semantic (markdown/code) boundaries.
+- **CHK-4** — long heading makes effective markdown sub-chunk size ≤ 0; needs a floor.
+- **CHK-5** — split-section synthetic heading prefix inconsistent with reported offsets.
+Rationale: all require offset-contract changes best done together with the P1
+chunker; the public chunker surface is covered end-to-end and impact is bounded.
