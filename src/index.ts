@@ -47,6 +47,16 @@ async function main(): Promise<void> {
       await runRebuild(process.argv.slice(3));
       break;
     }
+    case 'vault-init': {
+      const { runVaultInit } = await import('./cli/vault-init.js');
+      await runVaultInit(process.argv.slice(3));
+      break;
+    }
+    case 'sync': {
+      const { runSync } = await import('./cli/sync.js');
+      await runSync(process.argv.slice(3));
+      break;
+    }
     case 'export-graph': {
       const { runExportGraph } = await import('./cli/share.js');
       runExportGraph(process.argv.slice(3));

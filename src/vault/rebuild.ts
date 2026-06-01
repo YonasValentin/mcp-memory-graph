@@ -9,6 +9,7 @@ import { extractEntitiesRegex } from '../graph/entity-extractor.js';
 import { storeExtractedEntities } from '../graph/entity-store.js';
 import { buildSimilarityEdges } from '../graph/similarity-edges.js';
 import { parseMemoryFile, type ParsedMemoryFile } from './memory-file.js';
+import { loadGraphSidecar, restoreLinksFromSidecar } from './sidecar.js';
 import { logger } from '../lib/logger.js';
 
 /**
@@ -31,6 +32,8 @@ import { logger } from '../lib/logger.js';
  */
 export interface RebuildResult {
   memories: number;
+  /** memory↔memory links restored from the .memory/graph.json sidecar. */
+  linksRestored: number;
 }
 
 export async function rebuildFromVault(
@@ -78,8 +81,15 @@ export async function rebuildFromVault(
     /* c8 ignore stop */
   }
 
-  logger.info({ event: 'rebuild_complete', memories: indexed.length, vault: vaultRoot });
-  return { memories: indexed.length };
+  // Restore the resolved memory↔memory links the sidecar holds (agent-extracted
+  // / typed / co-occurrence edges that aren't regenerable from content alone).
+  // Content-derived similarity edges are already rebuilt above; this is additive.
+  let linksRestored = 0;
+  const sidecar = loadGraphSidecar(vaultRoot);
+  if (sidecar) linksRestored = restoreLinksFromSidecar(db, sidecar);
+
+  logger.info({ event: 'rebuild_complete', memories: indexed.length, links_restored: linksRestored, vault: vaultRoot });
+  return { memories: indexed.length, linksRestored };
 }
 
 /** Build a MemoryRow from parsed authored fields; derived columns get defaults. */

@@ -29,6 +29,8 @@ export default defineConfig({
         'src/cli/serve.ts', // exercised end-to-end via api/auth/observability tests
         'src/cli/backup.ts', // thin CLI/IO wiring around the tested backupDatabase core
         'src/cli/rebuild.ts', // thin CLI/IO + real-model wiring around the tested rebuildFromVault core
+        'src/cli/vault-init.ts', // git + filesystem wiring; pure content + sidecar core tested
+        'src/cli/sync.ts', // thin CLI/IO over tested exportMemoriesToVault + writeGraphSidecar
         'src/cli/cleanup-extracted.ts', // ad-hoc maintenance script
         'src/cli/extract-from-transcript.ts', // background CLI; tested via the transcript suite
         'src/cli/review-and-store.ts', // spawns claude-p; integration only
