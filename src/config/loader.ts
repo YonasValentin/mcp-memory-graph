@@ -61,6 +61,9 @@ const ServerConfigSchema = z.object({
   vault: z
     .object({
       path: z.string().optional(),
+      // When a vault path is set, mirror every top-level memory write to a
+      // per-memory .md file (Bruno model: files are the source of truth).
+      write_through: z.boolean().default(true),
     })
     .default({}),
   capture: z

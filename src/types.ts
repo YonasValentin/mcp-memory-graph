@@ -441,6 +441,8 @@ export interface ServerConfig {
   /** Optional Markdown vault for round-tripping memories to/from files. */
   vault: {
     path?: string;
+    /** Mirror every top-level memory write to a per-memory .md file. */
+    write_through: boolean;
   };
   /** Auto-capture (Claude Code hooks) preference from the init wizard. */
   capture: {

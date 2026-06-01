@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { EmbeddingProvider, Memory, MemoryRow, MemoryUpdate } from '../types.js';
 import { getMemoryById, updateMemory, rowToMemory } from '../db/repository.js';
+import { mirrorMemoryWrite } from '../vault/write-through.js';
 
 export async function handleUpdate(
   db: Database.Database,
@@ -49,6 +50,9 @@ export async function handleUpdate(
   if (!updatedRow) {
     return null;
   }
+
+  // Write-through: refresh the vault .md file (no-op unless a vault is configured).
+  mirrorMemoryWrite(db, input.id);
 
   return rowToMemory(updatedRow);
 }

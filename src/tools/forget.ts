@@ -6,6 +6,7 @@ import {
   deleteMemory,
   rowToMemory,
 } from '../db/repository.js';
+import { mirrorMemoryWrite, mirrorMemoryRemove } from '../vault/write-through.js';
 
 export interface ForgetResult {
   forgotten: boolean;
@@ -96,6 +97,9 @@ export function handleForget(
 
   if (mode === 'soft') {
     invalidateMemory(db, input.id);
+    // Write-through: mirrorMemoryWrite sees the now-stamped valid_to and moves
+    // the file to .memory/deleted/ so the tombstone travels through git.
+    mirrorMemoryWrite(db, input.id);
     return { forgotten: true, mode: 'soft', recoverable: true };
   }
 
@@ -113,6 +117,7 @@ export function handleForget(
     deleteMemory(db, input.id);
   });
   erase();
+  mirrorMemoryRemove(exported);
 
   return { forgotten: true, mode: 'hard', recoverable: false, export: exported, versions };
 }

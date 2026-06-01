@@ -219,7 +219,7 @@ export function exportMemoriesToVault(
  * Sanitize a namespace into a single safe path segment. Strips separators and
  * `..` so a hostile namespace can never traverse out of the vault root.
  */
-function safeSubdir(namespace: string): string {
+export function safeSubdir(namespace: string): string {
   const seg = namespace
     .replace(UNSAFE_FILENAME_CHARS, ' ')
     .replace(/\.+/g, ' ')

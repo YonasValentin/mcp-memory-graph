@@ -11,6 +11,7 @@ import { buildSimilarityEdges } from '../graph/similarity-edges.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
 import { decideWriteOperation, type WriteOp } from '../graph/write-gate.js';
 import { logger } from '../lib/logger.js';
+import { mirrorMemoryWrite } from '../vault/write-through.js';
 
 /**
  * Containment-aware merge for the UPDATE path. Mirrors consolidate's mergeContent
@@ -254,6 +255,10 @@ export async function handleStore(
     logger.warn({ event: 'similarity_edge_failed', memory_id: row.id, err: err instanceof Error ? err.message : String(err) });
   }
   /* c8 ignore stop */
+
+  // Write-through: mirror the new top-level memory to its vault .md file (no-op
+  // unless a vault is configured). After the insert so the row is committed.
+  mirrorMemoryWrite(db, row.id);
 
   return {
     stored: true,

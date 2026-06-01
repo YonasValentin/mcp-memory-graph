@@ -160,6 +160,7 @@ export function buildConfig(
     },
     vault: {
       ...(answers.vaultPath ? { path: answers.vaultPath } : {}),
+      write_through: true,
     },
     capture: {
       auto_capture: answers.autoCapture,
