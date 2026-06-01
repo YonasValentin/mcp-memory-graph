@@ -514,10 +514,16 @@ export function findNearDuplicates(
     const results: Array<{ rowid: number; id: string; distance: number }> = [];
     for (const row of rows) {
       if (row.distance > distanceThreshold) break;
+      // vec0 rows are only removed on hard delete, not on bi-temporal
+      // invalidation (which just stamps valid_to / tx_expired). Exclude
+      // invalidated rows here so every consumer (dedup, consolidation,
+      // similarity edges) ignores tombstoned/superseded memories uniformly.
       const mem = db
-        .prepare<[number], { id: string }>('SELECT id FROM memories WHERE rowid = ?')
+        .prepare<[number], { id: string; valid_to: string | null; tx_expired: string | null }>(
+          'SELECT id, valid_to, tx_expired FROM memories WHERE rowid = ?',
+        )
         .get(Number(row.rowid));
-      if (mem) {
+      if (mem && mem.valid_to === null && mem.tx_expired === null) {
         results.push({ rowid: Number(row.rowid), id: mem.id, distance: row.distance });
       }
     }

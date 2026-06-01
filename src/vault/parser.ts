@@ -29,7 +29,7 @@ export function parseVaultFile(
       try {
         const parsed = parseYaml(yamlStr);
         if (parsed && typeof parsed === 'object') {
-          frontmatter = parsed as Record<string, unknown>;
+          frontmatter = sanitizeFrontmatter(parsed as Record<string, unknown>);
         }
       } catch /* c8 ignore start */ {
         // Invalid YAML -- fall through with empty frontmatter
@@ -59,6 +59,23 @@ export function parseVaultFile(
     absolutePath,
     mtimeMs,
   };
+}
+
+/**
+ * Frontmatter is untrusted YAML. yaml.parse does not pollute Object.prototype,
+ * but it CAN return an object carrying an own `__proto__` (or `constructor` /
+ * `prototype`) key, which a downstream merge/spread could turn into prototype
+ * pollution. Return a copy with those dangerous own keys dropped; benign keys
+ * pass through unchanged.
+ */
+const DANGEROUS_FRONTMATTER_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+function sanitizeFrontmatter(obj: Record<string, unknown>): Record<string, unknown> {
+  const clean: Record<string, unknown> = {};
+  for (const key of Object.keys(obj)) {
+    if (DANGEROUS_FRONTMATTER_KEYS.has(key)) continue;
+    clean[key] = obj[key];
+  }
+  return clean;
 }
 
 function extractLinks(body: string): string[] {

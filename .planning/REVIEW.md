@@ -245,3 +245,23 @@ being redesigned in P1 (lossless vault round-trip work). Tracking here:
 - **CHK-5** — split-section synthetic heading prefix inconsistent with reported offsets.
 Rationale: all require offset-contract changes best done together with the P1
 chunker; the public chunker surface is covered end-to-end and impact is bounded.
+
+### Also resolved (P0.4 batch)
+- **MCP-2/MCP-3** — server version now sourced from package.json; unused `logging`
+  capability dropped (`src/server.ts`).
+- **DB-7** — `findNearDuplicates` excludes rows with `valid_to`/`tx_expired` set.
+- **CFG-3** — frontmatter parse strips `__proto__`/`constructor`/`prototype` keys.
+- **CFG-4** — `sanitizePath` rejects DEL (0x7f) in addition to C0 controls.
+- **EMB-3** — `TransformersEmbeddingProvider` reuses `configuredDimensions()` (guards NaN/range).
+- **ZOD-1/CFG-5** — bumped declared floors: zod ^3.25, @types/picomatch ^4.
+
+### Deferred (low value / high churn)
+- **MCP-1** — migrate 37 `server.tool()` calls to `registerTool()`. Pure deprecation
+  hygiene (tool() still works in SDK 1.28); large mechanical churn with no functional
+  change. Do as a single isolated commit later.
+- **DB-5** — `Buffer.from(emb.buffer)` → offset/length-aware form at 6 sites. Safe today
+  (embedder returns packed, tightly-allocated Float32Arrays); harden during the P1 rebuild.
+- **EMB-1** — re-normalize (or hard-assert) when truncating an embedding to fewer dims than
+  the model emits. Only triggers if MCP_MEMORY_DIMENSIONS < model output; default 384 is exact.
+- Long tail (entity-extractor comma terminator GRAPH-3, normalizeName aliasing GRAPH-4,
+  RRF 1-based SEARCH-3, rate-limit header trio HTTP-4) — cosmetic; fix opportunistically.

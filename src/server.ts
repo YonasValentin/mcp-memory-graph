@@ -1,4 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { createRequire } from 'node:module';
 import type Database from 'better-sqlite3';
 import { getDatabase, closeDatabase } from './db/connection.js';
 import { initializeSchema } from './db/schema.js';
@@ -137,11 +138,16 @@ function instrument<I>(
   };
 }
 
+// Source the advertised server version from package.json so the MCP initialize
+// handshake reports the real published version instead of a stale literal.
+const { version: SERVER_VERSION } = createRequire(import.meta.url)('../package.json') as {
+  version: string;
+};
+
 export function createServer(): McpServer {
-  const server = new McpServer(
-    { name: 'mcp-memory-server', version: '1.0.0' },
-    { capabilities: { logging: {} } },
-  );
+  // No `logging` capability is advertised: the server never emits
+  // notifications/message, so advertising it would overstate what it supports.
+  const server = new McpServer({ name: 'mcp-memory-server', version: SERVER_VERSION });
 
   let db: Database.Database | null = null;
   let embedder: EmbeddingProvider | null = null;
