@@ -69,22 +69,36 @@ export function confineToVault(vaultRoot: string, relPath: string): string | nul
  * in a deterministic order; optional fields are omitted when absent/empty so the
  * file stays clean and the round-trip is stable.
  */
-export function memoryToMarkdown(memory: Memory): string {
-  // Deterministic field order. Only include optional keys when present.
+export function memoryToMarkdown(memory: Memory & { valid_to?: string | null }): string {
+  // Deterministic field order. Every AUTHORED field is emitted so the file is a
+  // lossless source of truth (parseMemoryFile reproduces all of these). Only
+  // optional keys are omitted when absent/empty to keep the file clean. Derived
+  // state (embeddings, FTS, access stats, resolved links) is never written — it
+  // is recomputed by `memory rebuild`.
   const front: Record<string, unknown> = { id: memory.id };
   if (memory.title) front.title = memory.title;
   front.scope = memory.scope;
   if (memory.namespace) front.namespace = memory.namespace;
   if (memory.document_type) front.document_type = memory.document_type;
-  // Emit tags lowercased so the round-trip is lossless: parseVaultFile ->
-  // normalizeFrontmatterTags lowercases every tag, so emitting mixed-case here
-  // (e.g. 'Infra') would parse back as 'infra' and break equivalence.
+  if (memory.source) front.source = memory.source;
+  if (memory.author) front.author = memory.author;
+  if (memory.department) front.department = memory.department;
+  // Emit tags lowercased so the round-trip is lossless: normalizeFrontmatterTags
+  // lowercases every tag, so emitting mixed-case (e.g. 'Infra') would parse back
+  // as 'infra' and break equivalence.
   if (memory.tags.length > 0) front.tags = memory.tags.map((t) => t.toLowerCase());
   front.access_level = memory.access_level;
   front.language = memory.language;
+  front.importance_score = memory.importance_score;
+  if (memory.expires_at) front.expires_at = memory.expires_at;
+  if (memory.agent_id) front.agent_id = memory.agent_id;
+  if (memory.metadata && Object.keys(memory.metadata).length > 0) front.metadata = memory.metadata;
   front.created_at = memory.created_at;
   front.updated_at = memory.updated_at;
   front.provenance = memory.provenance;
+  // Deletion tombstone (set on soft-delete/forget) travels with the file so a
+  // git merge can suppress another branch's live copy instead of resurrecting it.
+  if (memory.valid_to) front.valid_to = memory.valid_to;
 
   // yaml.stringify ends with a trailing newline.
   const yaml = stringifyYaml(front);

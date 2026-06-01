@@ -1,0 +1,70 @@
+import type { AccessLevel, MemoryScope, ProvenanceType } from '../types.js';
+import { splitFrontmatter, normalizeFrontmatterTags } from './parser.js';
+
+/**
+ * The authored fields of a memory as recovered from its markdown file. This is
+ * the parse half of the lossless round-trip with {@link memoryToMarkdown}: every
+ * field a human/agent sets is here; derived state (embeddings, FTS, access
+ * stats, resolved links) is intentionally absent and recomputed on rebuild.
+ */
+export interface ParsedMemoryFile {
+  id: string;
+  scope: MemoryScope;
+  namespace: string | null;
+  title: string | null;
+  content: string;
+  document_type: string | null;
+  source: string | null;
+  author: string | null;
+  department: string | null;
+  tags: string[];
+  access_level: AccessLevel;
+  language: string;
+  metadata: Record<string, unknown> | null;
+  expires_at: string | null;
+  importance_score: number;
+  provenance: ProvenanceType;
+  agent_id: string | null;
+  created_at: string;
+  updated_at: string;
+  valid_to: string | null;
+}
+
+/**
+ * Pure parse of a memory markdown file (frontmatter + body) into typed authored
+ * fields. The inverse of {@link memoryToMarkdown}; together they guarantee the
+ * lossless round-trip the vault-as-source-of-truth model depends on. Operates on
+ * a raw string (no disk) so it is reusable by `memory rebuild` and unit tests.
+ */
+export function parseMemoryFile(raw: string): ParsedMemoryFile {
+  const { frontmatter: fm, body } = splitFrontmatter(raw);
+  const str = (k: string): string | null => (typeof fm[k] === 'string' ? (fm[k] as string) : null);
+  const num = (k: string, dflt: number): number =>
+    typeof fm[k] === 'number' ? (fm[k] as number) : dflt;
+
+  return {
+    id: str('id') ?? '',
+    scope: (str('scope') ?? 'global') as MemoryScope,
+    namespace: str('namespace'),
+    title: str('title'),
+    content: body,
+    document_type: str('document_type'),
+    source: str('source'),
+    author: str('author'),
+    department: str('department'),
+    tags: normalizeFrontmatterTags(fm.tags),
+    access_level: (str('access_level') ?? 'internal') as AccessLevel,
+    language: str('language') ?? 'en',
+    metadata:
+      fm.metadata && typeof fm.metadata === 'object' && !Array.isArray(fm.metadata)
+        ? (fm.metadata as Record<string, unknown>)
+        : null,
+    expires_at: str('expires_at'),
+    importance_score: num('importance_score', 0),
+    provenance: (str('provenance') ?? 'manual') as ProvenanceType,
+    agent_id: str('agent_id'),
+    created_at: str('created_at') ?? '',
+    updated_at: str('updated_at') ?? '',
+    valid_to: str('valid_to'),
+  };
+}
