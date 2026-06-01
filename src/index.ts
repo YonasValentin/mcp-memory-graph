@@ -42,6 +42,11 @@ async function main(): Promise<void> {
       await runBackup(process.argv.slice(3));
       break;
     }
+    case 'rebuild': {
+      const { runRebuild } = await import('./cli/rebuild.js');
+      await runRebuild(process.argv.slice(3));
+      break;
+    }
     case 'export-graph': {
       const { runExportGraph } = await import('./cli/share.js');
       runExportGraph(process.argv.slice(3));
