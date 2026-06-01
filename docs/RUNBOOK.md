@@ -70,25 +70,39 @@ The logger writes one JSON line per event to stderr. Useful event names:
 curl -s -H "Authorization: Bearer $MCP_AUTH_TOKEN" http://127.0.0.1:3200/metrics
 ```
 
+Info gauge: `mcp_build_info{version,node}` — constant 1; the labels pin which
+version/runtime is live (use it for "version deployed" panels and alert annotations).
 Counters: `mcp_tool_calls_total{tool,outcome}`, `api_requests_total{route,method,status}`.
 Histograms: `mcp_tool_latency_seconds`, `api_request_latency_seconds`.
 
-Wire into Grafana on MS-01 for production dashboards.
+Wire into Grafana on MS-01 for production dashboards. Suggested panels:
+`rate(mcp_tool_calls_total{outcome="error"}[5m])` (tool error rate),
+`histogram_quantile(0.95, rate(api_request_latency_seconds_bucket[5m]))` (p95 latency),
+and a stat panel on `mcp_build_info` to show the running version.
 
 ## Backups
 
-The DB is a single SQLite file. Use the online backup API:
+The DB is a single SQLite file. Preferred: the built-in WAL-safe online backup
+(uses SQLite's Online Backup API — consistent snapshot, no writer blocking, no
+checkpoint required):
 
 ```bash
-docker compose exec memory-server \
-  sqlite3 /data/memory.db ".backup /data/backup-$(date +%Y%m%d).db"
-
+# Writes <db>.backup-<ISO> next to the DB, or pass --out.
+docker compose exec memory-server node dist/index.js backup --out /data/backup-$(date +%Y%m%d).db
 docker compose cp memory-server:/data/backup-$(date +%Y%m%d).db /opt/backups/
 ```
 
-Or via the host volume (volumes are mounted from named volume `mcp-data`):
+Restore: stop the server, copy the backup file over `MCP_MEMORY_DB_PATH`
+(`/data/memory.db`), and start again. The backup is a standalone `.db` — no
+`-wal`/`-shm` sidecars needed.
+
+Equivalent ad-hoc options (no running container):
 
 ```bash
+# Online backup via sqlite3 CLI inside the container
+docker compose exec memory-server sqlite3 /data/memory.db ".backup /data/backup-$(date +%Y%m%d).db"
+
+# Or from the named volume directly
 docker run --rm -v mcp-data:/data -v $(pwd):/dump alpine \
   sh -c 'apk add --no-cache sqlite && sqlite3 /data/memory.db ".backup /dump/backup.db"'
 ```

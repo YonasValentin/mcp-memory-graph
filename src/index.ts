@@ -37,6 +37,11 @@ async function main(): Promise<void> {
       await runServe();
       break;
     }
+    case 'backup': {
+      const { runBackup } = await import('./cli/backup.js');
+      await runBackup(process.argv.slice(3));
+      break;
+    }
     case 'export-graph': {
       const { runExportGraph } = await import('./cli/share.js');
       runExportGraph(process.argv.slice(3));

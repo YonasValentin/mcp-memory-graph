@@ -27,6 +27,7 @@ export default defineConfig({
         'src/cli/init.ts', // touches global filesystem; covered by manual install
         'src/cli/uninstall.ts', // touches global filesystem; covered by manual install
         'src/cli/serve.ts', // exercised end-to-end via api/auth/observability tests
+        'src/cli/backup.ts', // thin CLI/IO wiring around the tested backupDatabase core
         'src/cli/cleanup-extracted.ts', // ad-hoc maintenance script
         'src/cli/extract-from-transcript.ts', // background CLI; tested via the transcript suite
         'src/cli/review-and-store.ts', // spawns claude-p; integration only

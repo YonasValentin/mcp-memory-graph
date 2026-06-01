@@ -1,0 +1,37 @@
+import path from 'node:path';
+import os from 'node:os';
+import { getReadOnlyDb } from '../lib/direct-access.js';
+import { backupDatabase } from '../db/backup.js';
+
+/* c8 ignore start — thin CLI/IO wiring around the tested backupDatabase core. */
+
+/** Parses `--flag value` pairs from a raw argv slice. */
+function parseFlags(args: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith('--')) {
+      out[a.slice(2)] = args[i + 1] ?? '';
+      i++;
+    }
+  }
+  return out;
+}
+
+/**
+ * `memory backup [--out <path>]` — write a WAL-safe online snapshot of the
+ * database. Defaults to `<db>.backup-<ISO>` next to the configured DB file.
+ * Restore: stop the server and copy the backup back over MCP_MEMORY_DB_PATH.
+ */
+export async function runBackup(argv: string[]): Promise<void> {
+  const flags = parseFlags(argv);
+  const dbPath =
+    process.env.MCP_MEMORY_DB_PATH ?? path.join(os.homedir(), '.mcp-memory', 'memory.db');
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const out = flags.out || `${dbPath}.backup-${stamp}`;
+
+  const db = getReadOnlyDb();
+  const { dest, bytes } = await backupDatabase(db, out);
+  console.error(`Backup written → ${dest} (${(bytes / 1024).toFixed(1)} KB)`);
+}
+/* c8 ignore stop */
