@@ -197,7 +197,8 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
   app.use(securityHeadersMiddleware({ isRemote }));
   app.use(localhostHostValidation(host));
   app.use(express.json({ limit: bodyLimit() }));
-  app.use(express.urlencoded({ extended: false, limit: '64kb' }));
+  // No route consumes application/x-www-form-urlencoded bodies; the parser was
+  // dead surface (and its 64kb cap diverged from MCP_BODY_LIMIT). Dropped.
   app.use(corsMiddleware(allowed));
 
   const transports: Record<string, StreamableHTTPServerTransport> = {};
@@ -404,6 +405,52 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
       }
     });
   }
+
+  // ── JSON 404 + error envelopes (must be LAST) ─────────────────────────────
+  // Any request that matched no route gets a structured JSON 404 instead of
+  // Express's default HTML page.
+  app.use((req: Request, res: Response) => {
+    res.status(404).json({
+      error: 'Not found',
+      code: 'NOT_FOUND',
+      requestId: res.locals.requestId,
+    });
+  });
+
+  // Final 4-arg error handler: turns thrown/forwarded errors (notably
+  // express.json's parse failure and body-too-large) into the same JSON
+  // envelope the route layer uses — never an HTML stack-trace page. Safe by
+  // default: the raw message is only surfaced when NODE_ENV=development.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
+    const requestId = res.locals.requestId as string | undefined;
+    const e = err as { type?: string; status?: number; statusCode?: number; message?: string };
+    const status = e.status ?? e.statusCode ?? 500;
+
+    if (e.type === 'entity.parse.failed') {
+      res.status(400).json({ error: 'Malformed JSON body', code: 'INVALID_JSON', requestId });
+      return;
+    }
+    if (e.type === 'entity.too.large') {
+      res.status(413).json({ error: 'Request body too large', code: 'PAYLOAD_TOO_LARGE', requestId });
+      return;
+    }
+    if (status >= 400 && status < 500) {
+      res.status(status).json({ error: 'Bad request', code: 'BAD_REQUEST', requestId });
+      return;
+    }
+    logger.error({
+      event: 'unhandled_error',
+      requestId,
+      err: e.message ?? String(err),
+    });
+    res.status(500).json({
+      error: 'Internal Server Error',
+      code: 'INTERNAL',
+      requestId,
+      detail: process.env.NODE_ENV === 'development' ? (e.message ?? String(err)) : undefined,
+    });
+  });
 
   return { app, transports, servers };
 }
