@@ -154,8 +154,10 @@ describe('connection / direct-access', () => {
   });
 
   it('getReadOnlyDb and getReadWriteDb return the same DB after init', () => {
-    const ro = getReadOnlyDb();
+    // getReadWriteDb is the only migrating path — initialize through it first,
+    // then the read-only accessor returns the same (now current) connection.
     const rw = getReadWriteDb();
+    const ro = getReadOnlyDb();
     expect(ro).toBe(rw);
     const versionRow = ro
       .prepare<[string], { value: string }>('SELECT value FROM schema_meta WHERE key = ?')
@@ -906,10 +908,13 @@ describe('handleStats branches', () => {
     expect(stats.by_document_type.note).toBeGreaterThanOrEqual(1);
   });
 
-  it('reports 0 db size when DB file path is missing', () => {
+  it('derives db size from the live connection, independent of the env path', () => {
+    // Size now comes from page_count * page_size of the open connection, so it
+    // is correct for `:memory:` (and a stale/missing MCP_MEMORY_DB_PATH no
+    // longer forces a misleading 0). See BATTLE-PLAN #4.
     process.env.MCP_MEMORY_DB_PATH = '/no/such/path-xyz.db';
     const stats = handleStats(db, {});
-    expect(stats.database_size_bytes).toBe(0);
+    expect(stats.database_size_bytes).toBeGreaterThan(0);
     delete process.env.MCP_MEMORY_DB_PATH;
   });
 });

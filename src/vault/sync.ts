@@ -15,6 +15,7 @@ import { scanVault } from './scanner.js';
 import { chunkContent } from '../chunking/chunker.js';
 import { createMemoryLink } from '../graph/memory-links.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
+import { SCOPES } from '../constants/enums.js';
 
 const BATCH_SIZE = 50;
 
@@ -294,7 +295,7 @@ function deleteOldMemory(
   );
 }
 
-const VALID_SCOPES = new Set(['global', 'project', 'user', 'team', 'department']);
+const VALID_SCOPES = new Set<string>(SCOPES);
 /** Reads a string frontmatter field, or null when absent/non-string. */
 function fmString(fm: Record<string, unknown>, key: string): string | null {
   const v = fm[key];

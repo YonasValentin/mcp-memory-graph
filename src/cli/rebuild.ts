@@ -5,8 +5,7 @@ import { getDatabase, closeDatabase } from '../db/connection.js';
 import { initializeSchema } from '../db/schema.js';
 import { runMigrations } from '../db/migrations.js';
 import { getConfig } from '../config/loader.js';
-import { TransformersEmbeddingProvider } from '../embeddings/transformers.js';
-import { CachedEmbeddingProvider } from '../embeddings/cache.js';
+import { getEmbedder } from '../lib/direct-access.js';
 import { rebuildFromVault } from '../vault/rebuild.js';
 
 /* c8 ignore start — CLI/IO + real-model wiring around the tested rebuildFromVault core. */
@@ -58,9 +57,7 @@ export async function runRebuild(argv: string[]): Promise<void> {
   initializeSchema(db);
   runMigrations(db);
 
-  const inner = new TransformersEmbeddingProvider();
-  await inner.initialize();
-  const embedder = new CachedEmbeddingProvider(inner);
+  const embedder = await getEmbedder();
 
   console.error(`Rebuilding index from ${vaultRoot} …`);
   const result = await rebuildFromVault(db, embedder, vaultRoot);

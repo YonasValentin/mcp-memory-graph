@@ -1,31 +1,18 @@
 import type Database from 'better-sqlite3';
-import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
 import type { MemoryStats } from '../types.js';
+import { liveConditions, scopeConditions } from '../db/predicates.js';
 
 export function handleStats(
   db: Database.Database,
   input: { scope?: string; namespace?: string; department?: string },
 ): MemoryStats {
-  const conditions: string[] = [];
-  const params: unknown[] = [];
+  // Count only currently-live rows so stats agree with memory_list/search and
+  // don't drift upward with every supersede/soft-delete (BATTLE-PLAN #4).
+  const scope = scopeConditions(input);
+  const conditions = [...liveConditions(), ...scope.conditions];
+  const params = scope.params;
 
-  if (input.scope !== undefined) {
-    conditions.push('scope = ?');
-    params.push(input.scope);
-  }
-  if (input.namespace !== undefined) {
-    conditions.push('namespace = ?');
-    params.push(input.namespace);
-  }
-  if (input.department !== undefined) {
-    conditions.push('department = ?');
-    params.push(input.department);
-  }
-
-  const whereClause =
-    conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const whereClause = `WHERE ${conditions.join(' AND ')}`;
   const docWhereClause =
     conditions.length > 0
       ? `WHERE parent_id IS NULL AND ${conditions.join(' AND ')}`
@@ -101,12 +88,15 @@ export function handleStats(
     .get(...params);
   const totalContentBytes = bytesRow?.total ?? 0;
 
-  const dbPath =
-    process.env.MCP_MEMORY_DB_PATH ??
-    path.join(os.homedir(), '.mcp-memory', 'memory.db');
+  // Derive size from the live connection (page_count * page_size) so it is
+  // correct for both file-backed and `:memory:` databases — fs.statSync on the
+  // env path returned 0 for `:memory:` and could read the wrong file
+  // (BATTLE-PLAN #4).
   let databaseSizeBytes = 0;
   try {
-    databaseSizeBytes = fs.statSync(dbPath).size;
+    const pageCount = db.pragma('page_count', { simple: true }) as number;
+    const pageSize = db.pragma('page_size', { simple: true }) as number;
+    databaseSizeBytes = pageCount * pageSize;
   } catch {
     databaseSizeBytes = 0;
   }

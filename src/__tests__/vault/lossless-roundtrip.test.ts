@@ -56,6 +56,22 @@ describe('memory markdown round-trip is lossless (P1.1)', () => {
     expect(parsed.content.trim()).toBe(m.content.trim());
   });
 
+  it('round-trips content byte-exactly with no trailing-newline drift', () => {
+    // The writer strips trailing whitespace and appends one "\n"; the parser
+    // must mirror that so content does not gain a "\n" on every rebuild
+    // (which silently re-embeds and breaks exact-content equality on a team's
+    // git round-trip).
+    const m = makeMemory({ content: 'Exactly this — no trailing newline.' });
+    const parsed = parseMemoryFile(memoryToMarkdown(m));
+    expect(parsed.content).toBe('Exactly this — no trailing newline.');
+  });
+
+  it('preserves internal blank lines while not adding trailing whitespace', () => {
+    const m = makeMemory(); // content has an internal "\n\n", no trailing ws
+    const parsed = parseMemoryFile(memoryToMarkdown(m));
+    expect(parsed.content).toBe(m.content);
+  });
+
   it('round-trips a minimal memory (nulls/empties) without inventing values', () => {
     const m = makeMemory({
       namespace: null, title: null, document_type: null, source: null,

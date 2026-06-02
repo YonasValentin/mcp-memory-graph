@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { EmbeddingProvider, Memory, MemoryRow, MemoryUpdate } from '../types.js';
 import { getMemoryById, updateMemory, rowToMemory } from '../db/repository.js';
+import { contextualizeForEmbedding } from '../search/contextual.js';
 import { mirrorMemoryWrite } from '../vault/write-through.js';
 
 export async function handleUpdate(
@@ -39,7 +40,16 @@ export async function handleUpdate(
 
   let newEmbedding: Float32Array | undefined;
   if (input.content !== undefined && input.content !== existing.content) {
-    newEmbedding = await embedder.embed(input.content);
+    // Embed the SAME contextualized text store/ingest/vault use, with the
+    // post-update fields, so an edit keeps the memory in one vector space
+    // instead of degrading its own retrievability (BATTLE-PLAN #5).
+    newEmbedding = await embedder.embed(
+      contextualizeForEmbedding(input.content, {
+        title: input.title ?? existing.title,
+        document_type: existing.document_type,
+        namespace: existing.namespace,
+      }),
+    );
   }
 
   // updateMemory itself wraps in db.transaction — so the version-log insert

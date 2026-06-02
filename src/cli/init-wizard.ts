@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { ServerConfig, MemoryScope } from '../types.js';
+import { SCOPES } from '../constants/enums.js';
 
 // ── Public types ─────────────────────────────────────────────────────────
 
@@ -28,7 +29,7 @@ export interface Prompter {
   close?(): void;
 }
 
-const SCOPE_CHOICES = ['global', 'project', 'user', 'team', 'department'];
+const SCOPE_CHOICES: string[] = [...SCOPES];
 const MODE_CHOICES = ['solo', 'team'];
 
 /** The default db path, also the default the wizard offers for storage. */

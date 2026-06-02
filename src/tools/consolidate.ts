@@ -15,6 +15,7 @@ import { getConfig } from '../config/loader.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
 import { computeRetention } from '../search/temporal.js';
 import { l2FromCosineSim } from '../search/scoring.js';
+import { DEDUP_COSINE_SIMILARITY } from '../constants/thresholds.js';
 
 /**
  * Below this access count a memory is "weakly held" and eligible for the
@@ -63,7 +64,10 @@ function buildFilterClause(
 
 interface SearchLogEntry {
   query: string;
-  results: number;
+  /** Real key written by src/hooks/memory-post-search.ts. */
+  results_count?: number;
+  /** Legacy key from older logs — kept for backward compatibility. */
+  results?: number;
   timestamp: string;
 }
 
@@ -80,7 +84,8 @@ function readKnowledgeGaps(): string[] {
   for (const line of lines) {
     try {
       const entry = JSON.parse(line) as SearchLogEntry;
-      if (entry.results === 0) {
+      const count = entry.results_count ?? entry.results;
+      if (count === 0) {
         const normalized = entry.query.trim().toLowerCase();
         zeroCounts.set(normalized, (zeroCounts.get(normalized) ?? 0) + 1);
       }
@@ -132,7 +137,7 @@ export async function handleConsolidate(
 
   const dryRun = input.dry_run ?? false;
   const maxOps = input.max_operations ?? Infinity;
-  const similarityThreshold = input.similarity_threshold ?? 0.85;
+  const similarityThreshold = input.similarity_threshold ?? DEDUP_COSINE_SIMILARITY;
   // Convert the cosine-similarity threshold to the exact L2 distance cutoff the
   // vec0 KNN scans in. Embeddings are unit-normalized, so d = sqrt(2(1-cos)).
   // (Previously `(1 - sim) * 2`, the inverse of a linear approximation, which

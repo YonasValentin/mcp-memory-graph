@@ -26,12 +26,15 @@ interface EntityNode {
 }
 
 /**
- * Derives a relationship strength in (0,1) from its evidence_count (G3-F10).
- * `findOrCreateRelationship` only ever bumps evidence_count and never updates the
- * schema-default strength (0.5), so the stored strength carried no information.
- * A saturating 1 - 1/(1 + evidence_count) maps evidence 1 -> 0.5 (the historical
- * default), 2 -> 0.667, 5 -> 0.833, asymptoting to 1, so a pair witnessed by many
- * memories reads stronger than one seen once.
+ * Derives a graph-view relationship strength in (0,1) from its evidence_count
+ * (G3-F10). A saturating 1 - 1/(1 + evidence_count) maps evidence 1 -> 0.5,
+ * 2 -> 0.667, 5 -> 0.833, asymptoting to 1, so a pair witnessed by many memories
+ * reads stronger than one seen once.
+ *
+ * Note: `findOrCreateRelationship` now also persists a meaningful IDF-weighted
+ * `strength` column (R2 item 1) used by PageRank, but the graph view keeps this
+ * pure evidence-count read so a pair's displayed strength is stable regardless
+ * of how common its endpoints have since become.
  */
 function strengthFromEvidence(evidenceCount: number): number {
   const n = Math.max(1, evidenceCount);

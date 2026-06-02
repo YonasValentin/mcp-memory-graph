@@ -4,9 +4,14 @@ import type Database from 'better-sqlite3';
 import { getDatabase, closeDatabase } from './db/connection.js';
 import { initializeSchema } from './db/schema.js';
 import { runMigrations } from './db/migrations.js';
-import { TransformersEmbeddingProvider } from './embeddings/transformers.js';
-import { CachedEmbeddingProvider } from './embeddings/cache.js';
 import type { EmbeddingProvider } from './types.js';
+import { getEmbedder as buildSharedEmbedder } from './lib/direct-access.js';
+// T1: shared MCP_API_NAMESPACE tenancy policy (one source for MCP + REST).
+import {
+  scopeToNamespace,
+  scopeFilterToNamespace,
+  idIsInForcedNamespace,
+} from './lib/tenancy.js';
 import {
   MemoryStoreSchema,
   MemorySearchSchema,
@@ -171,23 +176,22 @@ export function createServer(): McpServer {
   }
 
   function getEmbedder(): Promise<EmbeddingProvider> {
-    // Memoize the in-flight promise (not just the resolved value): concurrent
-    // first-use would otherwise each construct + initialize a separate model.
+    // M1: the embedder is constructed in exactly one place
+    // (lib/direct-access.getEmbedder, which is itself promise-memoized). Keep a
+    // per-server reference so the lifecycle stays scoped to this McpServer.
     if (!embedderPromise) {
-      embedderPromise = (async () => {
-        const inner = new TransformersEmbeddingProvider();
-        await inner.initialize();
-        return new CachedEmbeddingProvider(inner);
-      })();
+      embedderPromise = buildSharedEmbedder();
     }
     return embedderPromise;
   }
 
   function getNli(): NliClassifier {
     // Lazy proxy: constructing CrossEncoderNli downloads nothing — the model
-    // loads only when classify() actually runs (the on_conflict=supersede
-    // contradiction path), so the common add path pays zero cost. Wiring this
-    // is what makes the self-correcting NLI invalidation real in production.
+    // loads only when classify() actually runs. R3 runs the contradiction gate
+    // on EVERY store (not just on_conflict=supersede), but handleStore only calls
+    // classify() when the near-dup shortlist is non-empty, so a store with no
+    // near neighbors still pays zero cost. Wiring this is what makes the
+    // self-correcting NLI invalidation real on the default production path.
     if (!nli) nli = new CrossEncoderNli();
     return nli;
   }
@@ -195,24 +199,11 @@ export function createServer(): McpServer {
   // Tenancy for a shared/remote server: when MCP_API_NAMESPACE is set, every
   // read/query tool is forced to that namespace (overriding any caller value),
   // matching the REST API's forced scoping. Unset (the local stdio default) → no
-  // scoping, so single-user setups are unchanged.
-  const forcedNs = (): string | undefined => process.env.MCP_API_NAMESPACE || undefined;
-  function withForcedNs<T extends { namespace?: string }>(parsed: T): T {
-    const ns = forcedNs();
-    return ns ? { ...parsed, namespace: ns } : parsed;
-  }
-  /**
-   * For by-id reads: returns true when the memory may be served. A scoped
-   * instance must not reveal a memory belonging to another namespace by id.
-   */
-  function idInForcedNs(id: string): boolean {
-    const ns = forcedNs();
-    if (!ns) return true;
-    const row = getDb()
-      .prepare<[string], { namespace: string | null }>('SELECT namespace FROM memories WHERE id = ?')
-      .get(id);
-    return !!row && row.namespace === ns;
-  }
+  // scoping, so single-user setups are unchanged. T1: the policy itself lives in
+  // lib/tenancy.ts (shared with the REST API); these thin aliases keep the call
+  // sites below unchanged.
+  const withForcedNs = scopeToNamespace;
+  const idInForcedNs = (id: string): boolean => idIsInForcedNamespace(getDb(), id);
 
   // ── 1. memory_store ──────────────────────────────────────────────────────
   server.tool(
@@ -655,9 +646,8 @@ export function createServer(): McpServer {
     MemoryQueryStructuredSchema.shape,
     instrument('memory_query_structured', async (input) => {
       const parsed = MemoryQueryStructuredSchema.parse(input);
-      const ns = forcedNs();
-      // query_structured carries namespace under `filter`, not top-level.
-      const scoped = ns ? { ...parsed, filter: { ...parsed.filter, namespace: ns } } : parsed;
+      // T1: query_structured carries namespace under `filter`, not top-level.
+      const scoped = scopeFilterToNamespace(parsed);
       return runStructuredQuery(getDb(), scoped);
     }),
   );
