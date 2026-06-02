@@ -45,6 +45,7 @@ import {
   MemoryQuestionsSchema,
   MemoryForgetSchema,
   MemoryHistorySchema,
+  MemoryUnlinkedMentionsSchema,
 } from './schemas/index.js';
 import { handleStore } from './tools/store.js';
 import { handleSearch } from './tools/search.js';
@@ -84,6 +85,7 @@ import { handleAttribution } from './tools/attribution.js';
 import { handleQuestions } from './tools/questions.js';
 import { handleForget } from './tools/forget.js';
 import { handleHistory } from './tools/history.js';
+import { handleUnlinkedMentions } from './tools/unlinked-mentions.js';
 
 import { metrics } from './api/metrics.js';
 import { logger } from './lib/logger.js';
@@ -582,6 +584,17 @@ export function createServer(): McpServer {
     instrument('memory_history', async (input) => {
       const parsed = MemoryHistorySchema.parse(input);
       return handleHistory(getDb(), parsed);
+    }),
+  );
+
+  // ── 35. memory_unlinked_mentions ──────────────────────────────────────────
+  server.tool(
+    'memory_unlinked_mentions',
+    'Surface "unlinked mentions" for a memory — other memories that are semantically related (vector-near + shared entities) but that you have NOT explicitly linked yet. This is Obsidian\'s killer feature, automated: instead of matching note titles as literal text, it uses embeddings + the entity graph to propose latent connections the agent never made. Auto "similar_to" suggestions are surfaced; existing wikilink/co-occurrence/typed links are excluded. Use it to discover and then confirm real connections (e.g. via memory_extract_entities or a stored link).',
+    MemoryUnlinkedMentionsSchema.shape,
+    instrument('memory_unlinked_mentions', async (input) => {
+      const parsed = MemoryUnlinkedMentionsSchema.parse(input);
+      return handleUnlinkedMentions(getDb(), await getEmbedder(), parsed);
     }),
   );
 

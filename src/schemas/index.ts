@@ -423,6 +423,27 @@ export const MemoryRelatedSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// 8b. MemoryUnlinkedMentionsSchema
+// ---------------------------------------------------------------------------
+
+export const MemoryUnlinkedMentionsSchema = z.object({
+  id: z.string().describe('Memory ID to surface unlinked mentions for'),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .default(10)
+    .describe('Maximum number of unlinked mentions to return'),
+  min_similarity: z
+    .number()
+    .min(0)
+    .max(1)
+    .default(0.6)
+    .describe('Minimum cosine similarity for a mention (0-1)'),
+});
+
+// ---------------------------------------------------------------------------
 // 9. MemoryVersionsSchema
 // ---------------------------------------------------------------------------
 
