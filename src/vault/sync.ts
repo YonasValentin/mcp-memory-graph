@@ -9,7 +9,7 @@ import type {
   ParsedVaultFile,
   VaultFileEntry,
 } from '../types.js';
-import { insertMemory, deleteMemory } from '../db/repository.js';
+import { insertMemory, deleteMemory, getMemoryById } from '../db/repository.js';
 import { parseVaultFile } from './parser.js';
 import { scanVault } from './scanner.js';
 import { chunkContent } from '../chunking/chunker.js';
@@ -155,6 +155,13 @@ export async function syncVault(
           for (let i = 0; i < smallFiles.length; i++) {
             const { file, isNew, entry } = smallFiles[i];
             const row = buildMemoryRow(file, vaultName, options.vaultPath);
+            // Reconcile by identity: a vault file carrying a frontmatter id that
+            // already exists (e.g. a memory_export_vault → vault_sync round-trip)
+            // must UPDATE that memory in place, not collide on UNIQUE(id) or fork
+            // a duplicate. Delete the prior row first, then re-insert.
+            if (getMemoryById(db, row.id)) {
+              deleteMemory(db, row.id);
+            }
             insertMemory(db, row, embeddings[i]);
             upsertSyncMeta(db, options.vaultPath, entry.relativePath, entry.mtimeMs, row.id);
             totalMemories++;
@@ -381,6 +388,11 @@ async function ingestLargeFile(
   const parentRow = buildMemoryRow(parsed, vaultName, vaultPath);
 
   const insertAll = db.transaction(() => {
+    // Reconcile by identity (see smallFiles path): replace an existing memory
+    // with the same frontmatter id rather than colliding on UNIQUE(id).
+    if (getMemoryById(db, parentRow.id)) {
+      deleteMemory(db, parentRow.id);
+    }
     insertMemory(db, parentRow, parentEmbedding);
 
     for (let i = 0; i < chunks.length; i++) {

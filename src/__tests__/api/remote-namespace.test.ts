@@ -79,4 +79,27 @@ describe('read API force-scopes to MCP_API_NAMESPACE (P2.5)', () => {
     expect(namespaces.every((n: string) => n === 'nsA')).toBe(true);
     delete process.env.MCP_AUTH_OPTIONAL;
   });
+
+  it('GET /api/memories/:id 404s for an id in another namespace (no by-id tenancy bypass)', async () => {
+    process.env.MCP_AUTH_OPTIONAL = '1';
+    process.env.MCP_API_NAMESPACE = 'nsA';
+    db = createTestDb();
+    const embedder = new CachedEmbeddingProvider(new MockEmbeddingProvider());
+    const a = await handleStore(db, embedder, { content: 'alpha in A', namespace: 'nsA', scope: 'project' });
+    const b = await handleStore(db, embedder, { content: 'secret in B', namespace: 'nsB', scope: 'project' });
+
+    const { app } = buildApp({
+      getDb: () => db,
+      getEmbedder: async () => embedder,
+      rateLimiter: new RateLimiter({ capacity: 1000, refillPerSec: 1000 }),
+    });
+    await new Promise<void>((r) => { server = app.listen(0, '127.0.0.1', () => r()); });
+    const port = (server!.address() as AddressInfo).port;
+
+    const own = await get(port, `/api/memories/${a.memory.id}`);
+    expect(own.status).toBe(200);
+    const cross = await get(port, `/api/memories/${b.memory.id}`);
+    expect(cross.status).toBe(404); // foreign-namespace id must not be served by id
+    delete process.env.MCP_AUTH_OPTIONAL;
+  });
 });

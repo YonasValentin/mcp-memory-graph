@@ -5,6 +5,8 @@ import { join, basename } from 'node:path';
 import { createTestDb } from '../../testing/test-db.js';
 import { MockEmbeddingProvider } from '../../testing/mock-embedder.js';
 import { syncVault } from '../../vault/sync.js';
+import { handleStore } from '../../tools/store.js';
+import { handleExportVault } from '../../tools/export-vault.js';
 
 const embedder = new MockEmbeddingProvider();
 
@@ -50,6 +52,28 @@ describe('vault_sync — frontmatter identity round-trip', () => {
     expect(row.scope).toBe('project');
     expect(row.namespace).toBe(basename(vault));
     expect(row.document_type).toBe('note');
+    rmSync(vault, { recursive: true, force: true });
+  });
+
+  it('export_vault → sync reconciles to the source memory (no UNIQUE crash, no duplicate)', async () => {
+    const db = createTestDb();
+    const embedder = new MockEmbeddingProvider();
+    const vault = mkdtempSync(join(tmpdir(), 'vrt-'));
+    const s = await handleStore(db, embedder, {
+      content: 'Chose pgBouncer pooling for Postgres.',
+      title: 'Pooling',
+      scope: 'project',
+      namespace: 'acme',
+      document_type: 'decision',
+    });
+    handleExportVault(db, { vault_path: vault });
+
+    const r = await syncVault(db, embedder, { vaultPath: vault });
+    expect(r.files_errored).toBe(0); // was: UNIQUE constraint failed on the round-trip
+
+    const rows = db.prepare('SELECT id FROM memories').all() as { id: string }[];
+    expect(rows.length).toBe(1); // reconciled in place, not duplicated
+    expect(rows[0].id).toBe(s.memory.id); // same identity preserved
     rmSync(vault, { recursive: true, force: true });
   });
 });
