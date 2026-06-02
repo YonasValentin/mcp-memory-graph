@@ -248,7 +248,12 @@ async function createConfig(opts: { projectScoped: boolean; interactive: boolean
 
   let answers: WizardAnswers;
   if (opts.interactive) {
-    answers = await runWizard(createReadlinePrompter());
+    const prompter = createReadlinePrompter();
+    try {
+      answers = await runWizard(prompter);
+    } finally {
+      prompter.close?.();
+    }
   } else {
     answers = defaultAnswers();
     dim('Non-interactive (--yes): using default answers');

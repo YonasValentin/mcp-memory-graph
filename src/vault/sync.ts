@@ -99,22 +99,31 @@ export async function syncVault(
     }> = [];
 
     for (const { entry, isNew } of batch) {
+      let file: ParsedVaultFile;
       try {
-        // Parse FIRST — before deleting old memory
-        const file = parseVaultFile(entry.absolutePath, entry.relativePath, entry.mtimeMs);
-
-        // Only delete old memory AFTER successful parse
-        if (!isNew) {
-          const meta = syncMeta.get(entry.relativePath);
-          if (meta) {
-            deleteOldMemory(db, meta.memory_id, options.vaultPath, entry.relativePath);
-          }
-        }
-
-        parsed.push({ file, isNew, entry });
+        // Parse FIRST — before deleting old memory.
+        file = parseVaultFile(entry.absolutePath, entry.relativePath, entry.mtimeMs);
       } catch (err) {
         errors.push(`Parse failed for ${entry.relativePath}: ${errorMessage(err)}`);
+        continue;
       }
+
+      // Only delete old memory AFTER a successful parse. Reported under its OWN
+      // label — a DB delete failure here is NOT a parse problem, and mislabeling
+      // it sent operators chasing phantom frontmatter bugs.
+      if (!isNew) {
+        const meta = syncMeta.get(entry.relativePath);
+        if (meta) {
+          try {
+            deleteOldMemory(db, meta.memory_id, options.vaultPath, entry.relativePath);
+          } catch (err) {
+            errors.push(`Update (delete old) failed for ${entry.relativePath}: ${errorMessage(err)}`);
+            continue;
+          }
+        }
+      }
+
+      parsed.push({ file, isNew, entry });
     }
 
     const smallFiles: typeof parsed = [];
@@ -278,19 +287,32 @@ function deleteOldMemory(
   );
 }
 
+const VALID_SCOPES = new Set(['global', 'project', 'user', 'team', 'department']);
+/** Reads a string frontmatter field, or null when absent/non-string. */
+function fmString(fm: Record<string, unknown>, key: string): string | null {
+  const v = fm[key];
+  return typeof v === 'string' && v.length > 0 ? v : null;
+}
+
 function buildMemoryRow(
   parsed: ParsedVaultFile,
   vaultName: string,
   vaultPath: string,
 ): MemoryRow {
   const now = new Date().toISOString();
+  const fm = parsed.frontmatter;
+  // Honor identity/placement from frontmatter so a memory_export_vault → vault_sync
+  // round-trip reconciles back to the ORIGINATING memory instead of minting a
+  // randomUUID duplicate under namespace=<vault>. Falls back to vault defaults
+  // for hand-authored notes that carry no such frontmatter.
+  const fmScope = fmString(fm, 'scope');
   return {
-    id: randomUUID(),
-    scope: 'project',
-    namespace: vaultName,
+    id: fmString(fm, 'id') ?? randomUUID(),
+    scope: fmScope && VALID_SCOPES.has(fmScope) ? fmScope : 'project',
+    namespace: fmString(fm, 'namespace') ?? vaultName,
     title: parsed.title,
     content: parsed.content,
-    document_type: 'note',
+    document_type: fmString(fm, 'document_type') ?? 'note',
     source: parsed.relativePath,
     author:
       typeof parsed.frontmatter.author === 'string' ? parsed.frontmatter.author : null,

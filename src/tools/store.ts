@@ -35,6 +35,8 @@ interface StoreResult {
   operation: WriteOp;
   /** Human-readable reason for the chosen operation. */
   operation_reason: string;
+  /** True when on_conflict=supersede was asked but nothing matched to retire. */
+  superseded_nothing?: boolean;
   conflicts?: ConflictResult[];
 }
 
@@ -87,7 +89,12 @@ export async function handleStore(
   // a failed insert rolls the retire back atomically (G3-F1).
   const nliInvalidated: string[] = [];
   if (nli && (input.on_conflict ?? 'add') === 'supersede') {
-    const shortlist = findNearDuplicates(db, embedding, 0.5, 5);
+    // Wider net than the dedup heuristic: a real reversal ("we moved OFF X to Y")
+    // deliberately uses new vocabulary and embeds FURTHER from the old fact, so a
+    // tight shortlist never reaches NLI. distanceThreshold is a MAX distance, so
+    // raise it (0.5 → 0.7) + more candidates and let NLI (the actual contradiction
+    // gate) decide — non-contradictions are simply not retired.
+    const shortlist = findNearDuplicates(db, embedding, 0.7, 10);
     const candidates: { id: string; content: string }[] = [];
     for (const hit of shortlist) {
       // Only consider still-valid, TOP-LEVEL facts as contradiction candidates —
@@ -260,13 +267,25 @@ export async function handleStore(
   // unless a vault is configured). After the insert so the row is committed.
   mirrorMemoryWrite(db, row.id);
 
+  // Surface a supersede that found nothing to retire. A natural-language
+  // reversal often uses new vocabulary, so neither the heuristic nor NLI matches
+  // an older fact — without this signal the caller sees a clean ADD and assumes
+  // the old decision was replaced, leaving two contradictory "current" facts
+  // (and, via git sync, the stale one resurrected team-wide).
+  const supersedeRequested = (input.on_conflict ?? 'add') === 'supersede';
+  const supersedeRetiredNothing =
+    supersedeRequested && !nliContradiction && decision.op !== 'DELETE' && decision.op !== 'UPDATE';
+
   return {
     stored: true,
     memory: rowToMemory(row),
     operation: nliContradiction || decision.op === 'DELETE' ? 'DELETE' : 'ADD',
     operation_reason: nliContradiction
       ? `NLI contradiction — retired ${nliInvalidated.join(', ')} (on_conflict=supersede)`
-      : decision.reason,
+      : supersedeRetiredNothing
+        ? `on_conflict=supersede but no existing memory matched closely enough to retire — stored as new (nothing superseded). ${decision.reason}`
+        : decision.reason,
+    superseded_nothing: supersedeRetiredNothing || undefined,
     conflicts: conflictsOut,
   };
 }
