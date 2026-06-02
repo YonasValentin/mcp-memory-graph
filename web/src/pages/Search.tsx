@@ -53,6 +53,8 @@ export function Search() {
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [searched, setSearched] = useState(false)
+  // Monotonic id of the most recent search; results from older ones are dropped.
+  const searchReqIdRef = useRef(0)
 
   // ── Fuzzy suggestion state ──────────────────────────────────────────
   const [allMemories, setAllMemories] = useState<Suggestion[]>([])
@@ -129,15 +131,19 @@ export function Search() {
     setLoading(true)
     // Persist query + mode to the URL so refresh keeps the result set.
     setParams({ q: query, mode }, { replace: true })
+    // Latest-request guard: only the most recent search applies, so a slow
+    // earlier query can't overwrite a newer one's results (WEB-3).
+    const myId = ++searchReqIdRef.current
     try {
       const data = await searchMemories({ q: query, mode, limit: 30 })
+      if (searchReqIdRef.current !== myId) return
       setResults(data.results)
       setTotal(data.total)
       setSearched(true)
     } catch (err) {
-      toastError(err, "Search failed")
+      if (searchReqIdRef.current === myId) toastError(err, "Search failed")
     } finally {
-      setLoading(false)
+      if (searchReqIdRef.current === myId) setLoading(false)
     }
   }, [query, mode, setParams])
 
