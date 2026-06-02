@@ -112,6 +112,15 @@ export const MemoryStoreSchema = z.object({
     .describe(
       'ISO 8601 expiration date (memory auto-excluded from search after this)',
     ),
+  importance_score: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe(
+      'Explicit importance 0-1 (governance/criticality). When omitted it is ' +
+      'derived from content; min_importance filters operate on this value.',
+    ),
   on_conflict: z
     .enum(['add', 'update', 'supersede'])
     .default('add')
@@ -302,6 +311,12 @@ export const MemoryUpdateSchema = z.object({
     .string()
     .optional()
     .describe('Who made this change (for version history)'),
+  importance_score: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe('Reassign importance 0-1 (governance/criticality)'),
 });
 
 // ---------------------------------------------------------------------------

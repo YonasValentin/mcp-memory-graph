@@ -37,6 +37,9 @@ export async function handleUpdate(
   if (input.changed_by !== undefined) {
     updates.author = input.changed_by;
   }
+  if (input.importance_score !== undefined) {
+    updates.importance_score = input.importance_score;
+  }
 
   let newEmbedding: Float32Array | undefined;
   if (input.content !== undefined && input.content !== existing.content) {
