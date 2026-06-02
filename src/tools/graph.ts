@@ -22,6 +22,8 @@ interface EntityNode {
     strength: number;
     /** How many memories witnessed this entity pair — the real co-occurrence signal. */
     evidence_count: number;
+    /** The IDF-weighted edge strength PageRank ranks on (entity_relationships.strength, R2). */
+    idf_strength: number;
   }>;
 }
 
@@ -122,14 +124,15 @@ export function handleGraph(db: Database.Database, input: GraphInput): GraphResu
   const idPlaceholders = entityIds.map(() => '?').join(',');
 
   // Get relationships between visible entities. We surface evidence_count (the
-  // real, growing co-occurrence signal) and derive strength from it — the stored
-  // `strength` column is never updated past its 0.5 default, so it is ignored.
+  // raw co-occurrence signal), a stable evidence-derived display `strength`, and
+  // the real IDF-weighted `strength` column (written by findOrCreateRelationship
+  // per R2 — the value PageRank ranks on) exposed separately as `idf_strength`.
   const rels = db.prepare(`
-    SELECT source_entity_id, target_entity_id, type, evidence_count
+    SELECT source_entity_id, target_entity_id, type, evidence_count, strength
     FROM entity_relationships
     WHERE source_entity_id IN (${idPlaceholders}) AND target_entity_id IN (${idPlaceholders})
   `).all(...entityIds, ...entityIds) as Array<{
-    source_entity_id: string; target_entity_id: string; type: string; evidence_count: number;
+    source_entity_id: string; target_entity_id: string; type: string; evidence_count: number; strength: number;
   }>;
 
   const entityIdToName = new Map(entityRows.map(e => [e.id, e.name]));
@@ -149,6 +152,7 @@ export function handleGraph(db: Database.Database, input: GraphInput): GraphResu
         type: r.type,
         strength: strengthFromEvidence(r.evidence_count),
         evidence_count: r.evidence_count,
+        idf_strength: r.strength,
       })),
   }));
 
