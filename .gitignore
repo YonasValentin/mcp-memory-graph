@@ -27,3 +27,5 @@ coverage/
 
 # Battle-test runtime artifacts (DBs, vault scratch) — keep plans + harnesses, drop data
 .battle/artifacts/
+# Web-dashboard verification screenshots (regenerable by scripts/battle/verify-web.mjs)
+scripts/battle/web-shots/

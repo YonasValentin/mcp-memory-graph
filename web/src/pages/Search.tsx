@@ -64,9 +64,12 @@ export function Search() {
   const inputRef = useRef<HTMLInputElement>(null)
   const suggestionsRef = useRef<HTMLDivElement>(null)
 
-  // Load all memory titles once for fuzzy index
+  // Load memory titles once for the fuzzy index. The /api/memories endpoint
+  // caps `limit` at 100 (ApiListQuerySchema) — requesting more returns a 400
+  // INVALID_INPUT, which silently broke the type-ahead suggestion index. Pull
+  // the top 100 most-accessed memories, which is the relevant suggestion set.
   useEffect(() => {
-    listMemories({ limit: 500, sort_by: "access_count", sort_order: "desc" })
+    listMemories({ limit: 100, sort_by: "access_count", sort_order: "desc" })
       .then((data) => {
         setAllMemories(
           data.items.map((m) => ({
