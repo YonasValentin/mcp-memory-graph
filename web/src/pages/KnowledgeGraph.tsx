@@ -38,17 +38,24 @@ export function KnowledgeGraph() {
   const [loading, setLoading] = useState(true)
   const [minImportance, setMinImportance] = useState(0)
 
-  // Keep navigate ref current without it being an effect dependency
+  // Keep navigate ref current without it being an effect dependency. Assign in
+  // an effect (not during render — a ref must not be mutated while rendering).
   const navigate = useNavigate()
-  navigateRef.current = navigate
+  useEffect(() => {
+    navigateRef.current = navigate
+  }, [navigate])
 
   // ── Fetch data ────────────────────────────────────────────────────
+  // Guard against stale responses: a fast slider change can resolve an older
+  // request after a newer one, clobbering state. `ignore` drops late results.
   useEffect(() => {
     setLoading(true)
+    let ignore = false
     getGraphData({ limit: 150, min_importance: minImportance })
-      .then(setData)
-      .catch((err) => toastError(err, "Couldn't load knowledge graph"))
-      .finally(() => setLoading(false))
+      .then((d) => { if (!ignore) setData(d) })
+      .catch((err) => { if (!ignore) toastError(err, "Couldn't load knowledge graph") })
+      .finally(() => { if (!ignore) setLoading(false) })
+    return () => { ignore = true }
   }, [minImportance])
 
   // ── Build graph ONCE when data arrives ────────────────────────────
