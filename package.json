@@ -42,7 +42,7 @@
     "@modelcontextprotocol/sdk": "^1.28.0",
     "better-sqlite3": "^12.8.0",
     "express": "^5.2.1",
-    "express-rate-limit": "^8.3.1",
+    "express-rate-limit": "^8.5.2",
     "picomatch": "^4.0.4",
     "sqlite-vec": "^0.1.7",
     "yaml": "^2.8.3",
