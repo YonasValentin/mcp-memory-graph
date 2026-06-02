@@ -47,6 +47,8 @@ import {
   MemoryHistorySchema,
   MemoryUnlinkedMentionsSchema,
   MemoryQueryStructuredSchema,
+  MemoryVersionDiffSchema,
+  MemoryVersionRestoreSchema,
 } from './schemas/index.js';
 import { handleStore } from './tools/store.js';
 import { handleSearch } from './tools/search.js';
@@ -88,6 +90,7 @@ import { handleForget } from './tools/forget.js';
 import { handleHistory } from './tools/history.js';
 import { handleUnlinkedMentions } from './tools/unlinked-mentions.js';
 import { runStructuredQuery } from './search/structured-query.js';
+import { handleVersionDiff, handleVersionRestore } from './tools/version-history.js';
 
 import { metrics } from './api/metrics.js';
 import { logger } from './lib/logger.js';
@@ -608,6 +611,28 @@ export function createServer(): McpServer {
     instrument('memory_query_structured', async (input) => {
       const parsed = MemoryQueryStructuredSchema.parse(input);
       return runStructuredQuery(getDb(), parsed);
+    }),
+  );
+
+  // ── 37. memory_version_diff ───────────────────────────────────────────────
+  server.tool(
+    'memory_version_diff',
+    'Show a line-by-line diff between two revisions of a memory (Obsidian-Sync-grade trust). `to` defaults to the current version. Use it to audit exactly what an edit changed — added/removed lines plus a summary count.',
+    MemoryVersionDiffSchema.shape,
+    instrument('memory_version_diff', async (input) => {
+      const parsed = MemoryVersionDiffSchema.parse(input);
+      return handleVersionDiff(getDb(), parsed);
+    }),
+  );
+
+  // ── 38. memory_version_restore ────────────────────────────────────────────
+  server.tool(
+    'memory_version_restore',
+    'Roll a memory back to a prior version\'s content. The restore is itself a versioned, re-embedded edit (the pre-restore state is snapshotted, the vault file re-mirrored) — never a destructive overwrite. Returns the restored memory.',
+    MemoryVersionRestoreSchema.shape,
+    instrument('memory_version_restore', async (input) => {
+      const parsed = MemoryVersionRestoreSchema.parse(input);
+      return handleVersionRestore(getDb(), await getEmbedder(), parsed);
     }),
   );
 

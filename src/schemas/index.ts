@@ -473,6 +473,22 @@ export const MemoryQueryStructuredSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// 8d. Version diff + restore (P2.3)
+// ---------------------------------------------------------------------------
+
+export const MemoryVersionDiffSchema = z.object({
+  id: z.string().describe('Memory ID'),
+  from: z.number().int().min(1).describe('Version number to diff from'),
+  to: z.number().int().min(1).optional().describe('Version to diff to (defaults to current)'),
+});
+
+export const MemoryVersionRestoreSchema = z.object({
+  id: z.string().describe('Memory ID'),
+  version: z.number().int().min(1).describe('Version number to restore content from'),
+  changed_by: z.string().optional().describe('Who performed the restore'),
+});
+
+// ---------------------------------------------------------------------------
 // 9. MemoryVersionsSchema
 // ---------------------------------------------------------------------------
 
