@@ -166,6 +166,25 @@ export function registerApiRoutes(
   getDb: GetDb,
   getEmbedder: GetEmbedder,
 ): void {
+  /**
+   * Enforce MCP_API_NAMESPACE tenancy on by-ID routes. The list/search/stats
+   * endpoints already force the namespace into their query, but by-ID
+   * read/update/delete bypassed that — a namespace-scoped instance must not
+   * read, mutate, or delete a memory belonging to another namespace. Returns
+   * 404 (not 403) so a scoped instance does not even confirm the id exists.
+   */
+  function assertNamespaceAllowed(id: string): void {
+    const forced = forcedApiNamespace();
+    if (!forced) return;
+    const row = getDb()
+      .prepare<[string], { namespace: string | null }>(
+        'SELECT namespace FROM memories WHERE id = ?',
+      )
+      .get(id);
+    if (!row || row.namespace !== forced) {
+      throw new HttpError(404, 'NOT_FOUND', 'Memory not found');
+    }
+  }
   // ── GET /api/stats ──────────────────────────────────────────────────────
   router.get('/api/stats', asyncHandler('GET /api/stats', (req, res) => {
     const q = parseOrThrow(ApiStatsQuerySchema, req.query);
@@ -204,6 +223,7 @@ export function registerApiRoutes(
   // ── GET /api/memories/:id ───────────────────────────────────────────────
   router.get('/api/memories/:id', asyncHandler('GET /api/memories/:id', (req, res) => {
     const q = parseOrThrow(ApiGetQuerySchema, req.query);
+    assertNamespaceAllowed(param(req, 'id'));
     const result = handleGet(getDb(), {
       id: param(req, 'id'),
       include_chunks: q.include_chunks ?? false,
@@ -217,6 +237,7 @@ export function registerApiRoutes(
   // ── GET /api/memories/:id/versions ──────────────────────────────────────
   router.get('/api/memories/:id/versions', asyncHandler('GET /api/memories/:id/versions', (req, res) => {
     const q = parseOrThrow(ApiVersionsQuerySchema, req.query);
+    assertNamespaceAllowed(param(req, 'id'));
     const result = handleVersions(getDb(), {
       id: param(req, 'id'),
       limit: q.limit,
@@ -227,6 +248,7 @@ export function registerApiRoutes(
   // ── GET /api/memories/:id/related ───────────────────────────────────────
   router.get('/api/memories/:id/related', asyncHandler('GET /api/memories/:id/related', async (req, res) => {
     const q = parseOrThrow(ApiRelatedQuerySchema, req.query);
+    assertNamespaceAllowed(param(req, 'id'));
     const result = await handleRelated(getDb(), await getEmbedder(), {
       id: param(req, 'id'),
       limit: q.limit,
@@ -238,6 +260,7 @@ export function registerApiRoutes(
   // ── PATCH /api/memories/:id ─────────────────────────────────────────────
   router.patch('/api/memories/:id', asyncHandler('PATCH /api/memories/:id', async (req, res) => {
     const body = parseOrThrow(ApiPatchBodySchema, req.body);
+    assertNamespaceAllowed(param(req, 'id'));
     const result = await handleUpdate(getDb(), await getEmbedder(), {
       id: param(req, 'id'),
       content: body.content,
@@ -255,6 +278,7 @@ export function registerApiRoutes(
 
   // ── DELETE /api/memories/:id ────────────────────────────────────────────
   router.delete('/api/memories/:id', asyncHandler('DELETE /api/memories/:id', (req, res) => {
+    assertNamespaceAllowed(param(req, 'id'));
     const result = handleDelete(getDb(), { id: param(req, 'id') });
     if (result.deleted === 0) {
       throw new HttpError(404, 'NOT_FOUND', 'Memory not found');

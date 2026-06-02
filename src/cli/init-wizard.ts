@@ -24,6 +24,8 @@ export interface Prompter {
   select(question: string, choices: string[], def: string): Promise<string>;
   input(question: string, def?: string): Promise<string>;
   confirm(question: string, def: boolean): Promise<boolean>;
+  /** Release any underlying IO (e.g. the readline interface). Optional. */
+  close?(): void;
 }
 
 const SCOPE_CHOICES = ['global', 'project', 'user', 'team', 'department'];
@@ -172,49 +174,80 @@ export function buildConfig(
 
 /* c8 ignore start -- readline TTY IO; logic lives in runWizard/buildConfig */
 /**
- * Real `node:readline/promises` Prompter. The parsing/normalization that we can
- * test lives in runWizard + the `parse*` helpers above; this wrapper is just the
- * stdin/stdout plumbing, so it is excluded from coverage.
+ * Real Prompter. Two paths because `readline/promises` `question()` serves only
+ * the FIRST line on a non-TTY (piped) stdin and then hangs — so a scripted setup
+ * (`printf '...' | memory init`, CI) aborted after one prompt with no config.
+ *
+ *  - TTY (a human typing): one shared readline.Interface, closed once via
+ *    {@link Prompter.close}. Works line-by-line as the user answers.
+ *  - non-TTY (piped/scripted): buffer ALL of stdin up front and dequeue one
+ *    answer per prompt (blank/exhausted → the prompt's default). Prompts are
+ *    still echoed so a scripted run is readable.
  */
 export function createReadlinePrompter(): Prompter {
-  // Lazy import keeps the test path (which never calls this) free of TTY setup.
+  if (!process.stdin.isTTY) {
+    let lines: string[] | null = null;
+    let i = 0;
+    async function next(prompt: string): Promise<string> {
+      if (lines === null) {
+        const chunks: Buffer[] = [];
+        for await (const c of process.stdin) chunks.push(Buffer.from(c));
+        lines = Buffer.concat(chunks).toString('utf8').split('\n');
+      }
+      process.stdout.write(prompt);
+      const raw = (lines[i++] ?? '').trim();
+      process.stdout.write(`${raw}\n`);
+      return raw;
+    }
+    return {
+      async select(question, choices, def) {
+        const a = (await next(`${question} [${choices.join(', ')}] (${def}): `)).toLowerCase();
+        return choices.includes(a) ? a : def;
+      },
+      async input(question, def) {
+        const a = await next(`${question}${def ? ` (${def})` : ''} `);
+        return a.length > 0 ? a : (def ?? '');
+      },
+      async confirm(question, def) {
+        const a = (await next(`${question} (${def ? 'Y/n' : 'y/N'}): `)).toLowerCase();
+        if (a === '') return def;
+        return a === 'y' || a === 'yes';
+      },
+      close() {},
+    };
+  }
+
+  let rl: import('node:readline/promises').Interface | undefined;
+  async function getRl(): Promise<import('node:readline/promises').Interface> {
+    if (!rl) {
+      const readline = await import('node:readline/promises');
+      rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    }
+    return rl;
+  }
   return {
     async select(question, choices, def) {
-      const readline = await import('node:readline/promises');
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      try {
-        const list = choices.join(', ');
-        const answer = await rl.question(`${question} [${list}] (${def}): `);
-        const normalized = answer.trim().toLowerCase();
-        return choices.includes(normalized) ? normalized : def;
-      } finally {
-        rl.close();
-      }
+      const list = choices.join(', ');
+      const answer = await (await getRl()).question(`${question} [${list}] (${def}): `);
+      const normalized = answer.trim().toLowerCase();
+      return choices.includes(normalized) ? normalized : def;
     },
     async input(question, def) {
-      const readline = await import('node:readline/promises');
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      try {
-        const suffix = def ? ` (${def})` : '';
-        const answer = await rl.question(`${question}${suffix} `);
-        const trimmed = answer.trim();
-        return trimmed.length > 0 ? trimmed : (def ?? '');
-      } finally {
-        rl.close();
-      }
+      const suffix = def ? ` (${def})` : '';
+      const answer = await (await getRl()).question(`${question}${suffix} `);
+      const trimmed = answer.trim();
+      return trimmed.length > 0 ? trimmed : (def ?? '');
     },
     async confirm(question, def) {
-      const readline = await import('node:readline/promises');
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      try {
-        const hint = def ? 'Y/n' : 'y/N';
-        const answer = await rl.question(`${question} (${hint}): `);
-        const normalized = answer.trim().toLowerCase();
-        if (normalized === '') return def;
-        return normalized === 'y' || normalized === 'yes';
-      } finally {
-        rl.close();
-      }
+      const hint = def ? 'Y/n' : 'y/N';
+      const answer = await (await getRl()).question(`${question} (${hint}): `);
+      const normalized = answer.trim().toLowerCase();
+      if (normalized === '') return def;
+      return normalized === 'y' || normalized === 'yes';
+    },
+    close() {
+      rl?.close();
+      rl = undefined;
     },
   };
 }
