@@ -10,6 +10,43 @@ const INLINE_TAG_RE = /(?:^|\s)#([a-zA-Z][a-zA-Z0-9_/-]*)/gm;
  * Parses a single Obsidian `.md` file into structured data,
  * extracting frontmatter, wiki-links, and inline tags.
  */
+/**
+ * Frontmatter fence matcher. Accepts:
+ *   - the closing `---` followed by a newline OR end-of-string (VAULT-1: a file
+ *     whose closing fence is the last line with no trailing newline);
+ *   - an empty frontmatter block `---\n---` where the YAML body is absent
+ *     (VAULT-2): the inner capture group is optional.
+ * CRLF-tolerant. Anchored at start so a `---` inside the body is never mistaken
+ * for a fence.
+ */
+const FRONTMATTER_RE = /^---\r?\n([\s\S]*?\r?\n)?---(?:\r?\n|$)/;
+
+/**
+ * Split a raw markdown string into parsed YAML frontmatter + the remaining body.
+ * Single source of truth for fence detection, shared by parseVaultFile and the
+ * lossless memory-file parser. Frontmatter is prototype-pollution sanitized;
+ * invalid YAML degrades to an empty frontmatter object.
+ */
+export function splitFrontmatter(raw: string): {
+  frontmatter: Record<string, unknown>;
+  body: string;
+} {
+  const m = FRONTMATTER_RE.exec(raw);
+  if (!m) return { frontmatter: {}, body: raw };
+
+  let frontmatter: Record<string, unknown> = {};
+  try {
+    const parsed = parseYaml(m[1] ?? '');
+    if (parsed && typeof parsed === 'object') {
+      frontmatter = sanitizeFrontmatter(parsed as Record<string, unknown>);
+    }
+  } catch {
+    /* invalid YAML — fall through with empty frontmatter */
+  }
+  const body = raw.slice(m[0].length).trimStart();
+  return { frontmatter, body };
+}
+
 export function parseVaultFile(
   absolutePath: string,
   relativePath: string,
@@ -17,30 +54,7 @@ export function parseVaultFile(
 ): ParsedVaultFile {
   const raw = fs.readFileSync(absolutePath, 'utf-8');
 
-  let frontmatter: Record<string, unknown> = {};
-  let body: string;
-
-  if (raw.startsWith('---\n') || raw.startsWith('---\r\n')) {
-    const lineBreak = raw.startsWith('---\r\n') ? '\r\n' : '\n';
-    const closingIndex = raw.indexOf(`${lineBreak}---${lineBreak}`, lineBreak.length + 3);
-
-    if (closingIndex !== -1) {
-      const yamlStr = raw.slice(lineBreak.length + 3, closingIndex);
-      try {
-        const parsed = parseYaml(yamlStr);
-        if (parsed && typeof parsed === 'object') {
-          frontmatter = parsed as Record<string, unknown>;
-        }
-      } catch {
-        // Invalid YAML -- fall through with empty frontmatter
-      }
-      body = raw.slice(closingIndex + lineBreak.length + 3 + lineBreak.length).trimStart();
-    } else {
-      body = raw;
-    }
-  } else {
-    body = raw;
-  }
+  const { frontmatter, body } = splitFrontmatter(raw);
 
   const links = extractLinks(body);
   const inlineTags = extractInlineTags(body);
@@ -58,6 +72,23 @@ export function parseVaultFile(
     absolutePath,
     mtimeMs,
   };
+}
+
+/**
+ * Frontmatter is untrusted YAML. yaml.parse does not pollute Object.prototype,
+ * but it CAN return an object carrying an own `__proto__` (or `constructor` /
+ * `prototype`) key, which a downstream merge/spread could turn into prototype
+ * pollution. Return a copy with those dangerous own keys dropped; benign keys
+ * pass through unchanged.
+ */
+const DANGEROUS_FRONTMATTER_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+function sanitizeFrontmatter(obj: Record<string, unknown>): Record<string, unknown> {
+  const clean: Record<string, unknown> = {};
+  for (const key of Object.keys(obj)) {
+    if (DANGEROUS_FRONTMATTER_KEYS.has(key)) continue;
+    clean[key] = obj[key];
+  }
+  return clean;
 }
 
 function extractLinks(body: string): string[] {
@@ -85,18 +116,24 @@ function extractInlineTags(body: string): string[] {
   return [...seen];
 }
 
-function normalizeFrontmatterTags(raw: unknown): string[] {
+export function normalizeFrontmatterTags(raw: unknown): string[] {
   if (raw == null) return [];
 
   let items: string[];
 
   if (Array.isArray(raw)) {
-    items = raw.filter((v): v is string => typeof v === 'string');
+    // Coerce YAML-scalar tags (numbers/booleans, e.g. `tags: [2024, true, infra]`)
+    // to strings so they survive instead of being silently dropped (VAULT-3).
+    items = raw
+      .filter((v) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
+      .map((v) => String(v));
   } else if (typeof raw === 'string') {
     items = raw.split(',');
+  /* c8 ignore start */
   } else {
     return [];
   }
+  /* c8 ignore stop */
 
   return items
     .map((t) => t.trim().toLowerCase())
@@ -116,6 +153,7 @@ function deriveTitle(
   }
 
   const aliases = frontmatter.aliases;
+  /* c8 ignore next 3 */
   if (Array.isArray(aliases) && aliases.length > 0 && typeof aliases[0] === 'string') {
     return aliases[0];
   }

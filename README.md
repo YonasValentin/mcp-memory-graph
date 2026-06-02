@@ -9,15 +9,15 @@ AI assistants lose context between sessions. Your decisions, patterns, and insti
 - **Survives across sessions** — Knowledge stored today is searchable tomorrow
 - **Understands meaning** — "contract notice period" finds "90-day renewal clause" even without exact keyword match
 - **Improves itself** — Tracks what gets accessed, scores quality, extracts learnings from sessions, and consolidates knowledge automatically
-- **Stays private** — Everything runs locally. No cloud APIs, no telemetry, no data leaving your machine
+- **Stays private** — The core path runs entirely locally: local embeddings, no cloud APIs, no telemetry. The only exception is the **optional** Stop hook (opt-in via `init`), which sends your session transcript to your locally-installed Claude Code (`claude -p`) for learning extraction — disable it with `review_on_stop: false`
 - **Works for any team** — Engineers store architectural decisions, lawyers store contract patterns, accountants store audit procedures
 
 ## Features
 
 ### Core Capabilities
 
-- **17 MCP tools** — 12 core memory tools + 3 Obsidian vault tools + 2 self-improvement tools
-- **Hybrid search** — Combines vector similarity (semantic meaning) with keyword matching (exact terms) using Reciprocal Rank Fusion (RRF) for best-of-both-worlds retrieval
+- **37 MCP tools** — core CRUD + retrieval, a confidence-tagged knowledge graph, a self-correcting write gate, Agent-OS memory tiers, Obsidian-grade vault round-tripping, and GDPR-grade forget/history (full list below)
+- **Hybrid search** — Combines vector similarity (semantic meaning) with keyword matching (exact terms) using Reciprocal Rank Fusion (RRF) for best-of-both-worlds retrieval. Opt-in `rerank: true` adds a cross-encoder rerank pass; `use_graph: true` blends in HippoRAG Personalized-PageRank multi-hop scores; `as_of: <timestamp>` runs the search against the graph as it stood at a past point in time
 - **Local embeddings** — Transformers.js with all-MiniLM-L6-v2 (384 dimensions) runs entirely in Node.js. No Python, no cloud API, no GPU required
 - **SQLite storage** — Single-file database using better-sqlite3 with two extensions:
   - **sqlite-vec** for vector nearest-neighbor search
@@ -67,6 +67,46 @@ Every memory supports rich metadata for cross-department use:
 | `author` | Creator attribution | person or system name |
 | `metadata` | Domain-specific JSON | `{contract_type: "NDA", parties: ["A","B"]}` |
 | `expires_at` | Auto-expiration date | ISO 8601 timestamp |
+
+### Knowledge graph + bi-temporal model
+
+- **Bi-temporal validity** — Every memory carries valid-time (`valid_from`/`valid_to`) alongside transaction-time. Updates *invalidate-don't-delete*: the prior fact is stamped `valid_to` instead of being overwritten, so history is never lost. `memory_search` and most reads default to currently-valid rows, but accept `as_of: <timestamp>` for point-in-time recall, and `memory_history` returns one memory's full bi-temporal timeline plus its edit versions.
+- **Confidence-tagged links** — `memory_links` connect memories via wikilink, co-occurrence, and similarity edges, each carrying a confidence weight. `memory_graph` traverses entities and their relationships (multi-hop, depth 1–3); `memory_extract_entities` stores LLM-extracted entities/relationships.
+- **HippoRAG multi-hop** — `use_graph: true` on search runs Personalized PageRank over the entity/link graph for associative, multi-hop retrieval.
+- **Token-budgeted traversal** — `memory_query` answers a question with a *tight* subgraph: it seeds from hybrid search, walks the graph hub-avoiding up to `max_hops`, and returns a token-budgeted context string with a truncation hint — instead of flooding the window.
+- **GraphRAG communities** — `memory_communities` detects densely-connected entity clusters via weighted label propagation for corpus-level "what are the main themes?" sensemaking.
+
+### Self-correcting writes
+
+- **Write gate** — Stores route through an ADD / UPDATE / DELETE / NOOP decision (`on_conflict`) so new facts reconcile with existing ones instead of blindly duplicating.
+- **Contradiction detection** — A cross-encoder NLI model flags when an incoming memory contradicts what's already stored.
+- **Forgetting curve** — Memories carry a `stability` signal so rarely-reinforced knowledge decays in ranking the way human memory does.
+
+### Agent-OS memory
+
+- **Core memory block** — A small, bounded, always-in-context note per `(scope, namespace)` that the agent maintains (`core_memory_get` / `core_memory_append` / `core_memory_replace`); appends that would overflow are refused so the agent compacts deliberately.
+- **Hot / recall / archival tiers** — `memory_tiers` reports a MemGPT-style tier distribution derived from access recency + frequency and lists the hot working set.
+- **Reflection** — `memory_reflect` gathers the most reflection-worthy memories and (in store mode) persists synthesized higher-level insights, linked back to their sources.
+
+### Obsidian-grade vault
+
+- **Bidirectional write-back** — `vault_sync` reads a vault *in*; `memory_export_vault` writes memories *out* as `.md` files with YAML frontmatter that round-trip losslessly.
+- **JSON Canvas** — `memory_canvas` exports the graph as a JSON Canvas 1.0 `.canvas` that opens as a spatial board in real Obsidian.
+- **Read-only memory wiki / Publish** — `serve` exposes `/publish/:namespace` (index, page, search, graph) as a read-only wiki. It is intentionally *not* behind bearer auth but is hard-scoped to published access levels (`MCP_PUBLISH_ACCESS_LEVELS`, default `public`).
+- **Session notes + templates** — `memory_session_note` is a frictionless per-session "daily note" (appends to one memory per `session_id`); `memory_template` returns structured note scaffolds per document type.
+
+### Team & solo sharing (Bruno-style git)
+
+- **Interactive `memory init` wizard** — `memory init` walks you through configuration interactively (or `--yes` for all-defaults), writing `~/.mcp-memory/config.json` (or project-scoped) plus the Claude Code wiring.
+- **Committable graph artifact** — `memory export-graph` writes a deterministic `memory-graph.json` you can commit and share like a Bruno collection. `memory git-setup` installs a `.gitattributes` entry and the `memory-union` git merge driver (`memory merge-graphs`) so parallel commits of that file merge instead of conflict.
+- **Attribution** — Set `MCP_AGENT_ID` (or pass `agent_id` per store) and `memory_attribution` rolls up how many valid memories each agent wrote.
+
+### Trust & governance
+
+- **Questions to ask** — `memory_questions` surfaces gaps the graph is uniquely positioned to find: ambiguous links to confirm, under-documented frequent entities, and orphaned/stale memories.
+- **GDPR-grade forget** — `memory_forget` soft-deletes (tombstones via `valid_to`, recoverable, still queryable via `as_of`) by default, or `hard: true` returns a portability export *first* then permanently erases. Additive — `memory_delete` is unchanged.
+- **Output sanitization** — Every MCP tool result is run through a single sanitization chokepoint that neutralizes ANSI/VT escapes, control chars, and zero-width / BiDi Trojan-Source spoofing before it leaves the server. Stored content stays raw at rest.
+- **Hot-reload** — Config changes are picked up without a restart.
 
 ### Web dashboard
 
@@ -327,10 +367,13 @@ The config file at `~/.mcp-memory/config.json` controls self-improvement behavio
 |---------|-------------|
 | `npx mcp-memory-server` | Start MCP server on stdio (default) |
 | `npx mcp-memory-server serve` | Start HTTP server with MCP transport + REST API + web dashboard |
-| `npx mcp-memory-server init` | Setup hooks, config, and nightly schedule (user scope) |
+| `npx mcp-memory-server init` | Interactive setup wizard: hooks, config, and nightly schedule (user scope). Add `--yes`/`-y` to accept all defaults non-interactively |
 | `npx mcp-memory-server init --scope project` | Setup for current project only (creates `.mcp.json` + `.claude/settings.json`) |
 | `npx mcp-memory-server uninstall` | Reverse init: remove hooks and schedule |
 | `npx mcp-memory-server consolidate` | Run the dream cycle manually |
+| `npx mcp-memory-server export-graph [--out <path>] [--scope <s>] [--namespace <n>]` | Write a committable, deterministic `memory-graph.json` for git sharing |
+| `npx mcp-memory-server git-setup` | Install the `.gitattributes` entry + `memory-union` git merge driver for conflict-free graph sharing |
+| `npx mcp-memory-server merge-graphs <ours> <theirs> <out>` | Git union merge driver for `memory-graph.json` (invoked by git, not by hand) |
 
 ---
 
@@ -652,6 +695,33 @@ Extract learnings from this session transcript with namespace=my-project
 
 Extract only error_fix and decision learnings from this transcript
 ```
+
+### 18–37. Graph, Agent-OS, vault round-trip, and governance tools
+
+The remaining tools are summarized below (parameters are validated by Zod schemas in `src/schemas/`; each registration's full description lives in `src/server.ts`):
+
+| # | Tool | Purpose |
+|---|------|---------|
+| 18 | `memory_tiers` | MemGPT-style hot / recall / archival tier distribution + the hot working set |
+| 19 | `memory_export_vault` | Write memories OUT to an Obsidian vault as `.md` files with YAML frontmatter (reverse of `vault_sync`) |
+| 20 | `memory_canvas` | Export the graph as a JSON Canvas 1.0 `.canvas` for Obsidian |
+| 21 | `memory_manifest` | Lightweight content-free index (titles/types/tags/scores) to discover what exists |
+| 22 | `memory_graph` | Query the knowledge graph: entities, relationships, linked memories, multi-hop traversal (depth 1–3) |
+| 23 | `memory_extract_entities` | Store LLM-extracted entities + relationships for a memory |
+| 24 | `memory_condense` | Apply agent-generated summaries to condense old memories (original preserved) |
+| 25 | `memory_restore` | Restore a condensed memory to its original full content and re-embed |
+| 26 | `memory_query` | Answer a question with a tight, token-budgeted subgraph instead of flooding context |
+| 27 | `core_memory_get` | Read the pinned, always-in-context core-memory block for a `(scope, namespace)` |
+| 28 | `core_memory_append` | Append to the core-memory block (refused if it would overflow `char_limit`) |
+| 29 | `core_memory_replace` | Replace text in the core-memory block (used to update/compact it) |
+| 30 | `memory_reflect` | Generative-Agents-style reflection: gather material, or store a synthesized insight |
+| 31 | `memory_communities` | GraphRAG community detection over the entity graph for corpus-level themes |
+| 32 | `memory_template` | Fetch a structured note scaffold per document type |
+| 33 | `memory_session_note` | Frictionless per-session "daily note" (appends to one memory per `session_id`) |
+| 34 | `memory_attribution` | Roll up how many valid memories each `agent_id` wrote |
+| 35 | `memory_questions` | "Questions to ask" digest: ambiguous links, under-documented entities, orphans |
+| 36 | `memory_forget` | GDPR-grade forget: soft-delete (recoverable) by default, or `hard` erase-after-export |
+| 37 | `memory_history` | Point-in-time bi-temporal timeline + edit-version history for one memory |
 
 ---
 
@@ -1008,4 +1078,4 @@ npx mcp-memory-server consolidate
 
 ## License
 
-MIT
+MIT — see [LICENSE](./LICENSE).

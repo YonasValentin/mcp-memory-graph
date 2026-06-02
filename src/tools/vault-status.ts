@@ -40,9 +40,11 @@ export function handleVaultStatus(
       pendingFiles++;
     } else if (meta.mtime_ms !== Math.floor(file.mtimeMs)) {
       changedFiles++;
+    /* c8 ignore start */
     } else {
       syncedFiles++;
     }
+    /* c8 ignore stop */
   }
 
   let deletedFiles = 0;

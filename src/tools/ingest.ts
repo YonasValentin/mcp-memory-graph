@@ -1,8 +1,9 @@
 import type Database from 'better-sqlite3';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import type { EmbeddingProvider, IngestResult, MemoryRow, ContentType, MemoryScope } from '../types.js';
 import { insertMemory } from '../db/repository.js';
 import { chunkContent } from '../chunking/chunker.js';
+import { contextualizeForEmbedding } from '../search/contextual.js';
 
 interface IngestInput {
   content: string;
@@ -26,7 +27,7 @@ export async function handleIngest(
   input: IngestInput,
 ): Promise<IngestResult> {
   const now = new Date().toISOString();
-  const parentId = uuidv4();
+  const parentId = randomUUID();
   const tagsJson = input.tags ? JSON.stringify(input.tags) : null;
   const metadataJson = input.metadata ? JSON.stringify(input.metadata) : null;
   const scope = input.scope ?? 'global';
@@ -41,8 +42,20 @@ export async function handleIngest(
     overlap: chunkOverlap,
   });
 
-  const parentEmbedding = await embedder.embed(summaryText);
-  const chunkEmbeddings = await embedder.embedBatch(chunks.map(c => c.content));
+  // Contextual indexing: embed the doc summary and each chunk with the same
+  // deterministic context prefix handleStore uses (title / document_type /
+  // namespace) so the whole corpus lives in one vector space. Chunks inherit
+  // the parent doc's metadata. The STORED content stays RAW — only the embedded
+  // text is contextualized. No-ops to bare content when no context is present.
+  const ctx = {
+    title: input.title,
+    document_type: input.document_type,
+    namespace: input.namespace,
+  };
+  const parentEmbedding = await embedder.embed(contextualizeForEmbedding(summaryText, ctx));
+  const chunkEmbeddings = await embedder.embedBatch(
+    chunks.map((c) => contextualizeForEmbedding(c.content, ctx)),
+  );
 
   const chunkIds: string[] = [];
 
@@ -71,12 +84,13 @@ export async function handleIngest(
       last_accessed_at: null,
       importance_score: 0.5,
       confidence_score: 0.5,
+      stability: 1.0,
     };
 
     insertMemory(db, parentRow, parentEmbedding);
 
     for (let i = 0; i < chunks.length; i++) {
-      const chunkId = uuidv4();
+      const chunkId = randomUUID();
       chunkIds.push(chunkId);
 
       const chunkRow: MemoryRow = {
@@ -103,6 +117,7 @@ export async function handleIngest(
         last_accessed_at: null,
         importance_score: 0.5,
         confidence_score: 0.5,
+        stability: 1.0,
       };
 
       insertMemory(db, chunkRow, chunkEmbeddings[i]);

@@ -1,13 +1,30 @@
 services:
   memory-server:
     build: .
+    image: mcp-memory-server:latest
     container_name: mcp-memory-server
     restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "3200:3100"
     environment:
       - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN}
       - MCP_PORT=3100
+      - MCP_BIND=0.0.0.0
+      - MCP_ALLOWED_ORIGINS=${MCP_ALLOWED_ORIGINS:-http://localhost:5173}
+      - MCP_RATELIMIT_CAPACITY=${MCP_RATELIMIT_CAPACITY:-30}
+      - MCP_RATELIMIT_REFILL_PER_SEC=${MCP_RATELIMIT_REFILL_PER_SEC:-6}
+      - MCP_BODY_LIMIT=${MCP_BODY_LIMIT:-256kb}
+      - MCP_LOG_LEVEL=${MCP_LOG_LEVEL:-info}
+      - MCP_METRICS_ENABLED=${MCP_METRICS_ENABLED:-1}
+      - MCP_HSTS_DISABLED=${MCP_HSTS_DISABLED:-0}
       - MCP_MEMORY_DB_PATH=/data/memory.db
       - MCP_MEMORY_CONFIG_PATH=/data/config.json
       - HF_HOME=/cache
@@ -15,6 +32,20 @@ services:
     volumes:
       - mcp-data:/data
       - mcp-cache:/cache
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1g
+        reservations:
+          cpus: "0.25"
+          memory: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
 volumes:
   mcp-data:
   mcp-cache:

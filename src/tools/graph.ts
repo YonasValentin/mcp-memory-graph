@@ -15,7 +15,27 @@ interface EntityNode {
   type: string;
   mention_count: number;
   depth: number;
-  relationships: Array<{ target_entity: string; type: string; strength: number }>;
+  relationships: Array<{
+    target_entity: string;
+    type: string;
+    /** Saturating function of evidence_count (see {@link strengthFromEvidence}). */
+    strength: number;
+    /** How many memories witnessed this entity pair — the real co-occurrence signal. */
+    evidence_count: number;
+  }>;
+}
+
+/**
+ * Derives a relationship strength in (0,1) from its evidence_count (G3-F10).
+ * `findOrCreateRelationship` only ever bumps evidence_count and never updates the
+ * schema-default strength (0.5), so the stored strength carried no information.
+ * A saturating 1 - 1/(1 + evidence_count) maps evidence 1 -> 0.5 (the historical
+ * default), 2 -> 0.667, 5 -> 0.833, asymptoting to 1, so a pair witnessed by many
+ * memories reads stronger than one seen once.
+ */
+function strengthFromEvidence(evidenceCount: number): number {
+  const n = Math.max(1, evidenceCount);
+  return 1 - 1 / (1 + n);
 }
 
 interface GraphResult {
@@ -98,13 +118,15 @@ export function handleGraph(db: Database.Database, input: GraphInput): GraphResu
   const entityIds = entityRows.map(e => e.id);
   const idPlaceholders = entityIds.map(() => '?').join(',');
 
-  // Get relationships between visible entities
+  // Get relationships between visible entities. We surface evidence_count (the
+  // real, growing co-occurrence signal) and derive strength from it — the stored
+  // `strength` column is never updated past its 0.5 default, so it is ignored.
   const rels = db.prepare(`
-    SELECT source_entity_id, target_entity_id, type, strength
+    SELECT source_entity_id, target_entity_id, type, evidence_count
     FROM entity_relationships
     WHERE source_entity_id IN (${idPlaceholders}) AND target_entity_id IN (${idPlaceholders})
   `).all(...entityIds, ...entityIds) as Array<{
-    source_entity_id: string; target_entity_id: string; type: string; strength: number;
+    source_entity_id: string; target_entity_id: string; type: string; evidence_count: number;
   }>;
 
   const entityIdToName = new Map(entityRows.map(e => [e.id, e.name]));
@@ -122,7 +144,8 @@ export function handleGraph(db: Database.Database, input: GraphInput): GraphResu
           r.source_entity_id === e.id ? r.target_entity_id : r.source_entity_id,
         ) ?? 'unknown',
         type: r.type,
-        strength: r.strength,
+        strength: strengthFromEvidence(r.evidence_count),
+        evidence_count: r.evidence_count,
       })),
   }));
 

@@ -9,6 +9,21 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { sanitizePath } from '../lib/path-validation.js';
 
+/**
+ * Restricts the transcript_path supplied by the hook payload to a project-
+ * controlled directory. Default base: `~/.claude/projects` (Claude Code's
+ * transcript root). Override with MCP_MEMORY_TRANSCRIPT_BASE for tests or
+ * non-default Claude Code installs.
+ *
+ * Returns null on any rejection — caller should exit silently with code 0.
+ */
+export function resolveTranscriptPath(rawPath: unknown): string | null {
+  if (typeof rawPath !== 'string' || rawPath.length === 0) return null;
+  const allowedBase = process.env.MCP_MEMORY_TRANSCRIPT_BASE
+    ?? join(homedir(), '.claude', 'projects');
+  return sanitizePath(rawPath, { mustExist: true, allowedBase });
+}
+
 async function main(): Promise<void> {
   // Re-entry guard: when this hook spawns a headless `claude -p`, that session
   // will also fire a Stop hook on its own exit. Without this, infinite recursion.
@@ -36,9 +51,7 @@ async function main(): Promise<void> {
     // No config or unreadable — default behaviour is enabled.
   }
 
-  const rawTranscriptPath = input?.transcript_path;
-  if (!rawTranscriptPath || typeof rawTranscriptPath !== 'string') process.exit(0);
-  const transcriptPath = sanitizePath(rawTranscriptPath, { mustExist: true });
+  const transcriptPath = resolveTranscriptPath(input?.transcript_path);
   if (!transcriptPath) process.exit(0);
 
   const sessionId = typeof input?.session_id === 'string' ? input.session_id : '';
@@ -54,9 +67,25 @@ async function main(): Promise<void> {
       env: { ...process.env, MCP_MEMORY_CWD: (input?.cwd as string) || process.cwd() },
     });
     child.unref();
-  } catch {
+  } catch (err) {
+    // Log structured event so the user can grep it; still exit 0 to avoid
+    // surfacing as a Claude Code error.
+    console.error(JSON.stringify({
+      event: 'stop_hook_spawn_failed',
+      err: err instanceof Error ? err.message : String(err),
+    }));
     process.exit(0);
   }
 }
 
-main().catch(() => process.exit(0));
+// Allow tests to import `resolveTranscriptPath` without invoking main().
+const isMain = (() => {
+  try {
+    return process.argv[1] === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+})();
+if (isMain) {
+  main().catch(() => process.exit(0));
+}

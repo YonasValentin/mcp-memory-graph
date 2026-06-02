@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react"
-import { Link, useNavigate } from "react-router-dom"
+import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import Fuse from "fuse.js"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -15,6 +15,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { Search as SearchIcon } from "lucide-react"
 import { searchMemories, listMemories } from "@/api/client"
+import { toastError } from "@/lib/toast-error"
 import type { SearchResult, SearchMode } from "@/types"
 
 const confidenceColor: Record<string, string> = {
@@ -39,8 +40,15 @@ interface Suggestion {
 
 export function Search() {
   const navigate = useNavigate()
-  const [query, setQuery] = useState("")
-  const [mode, setMode] = useState<SearchMode>("hybrid")
+  // URL state: ?q=...&mode=hybrid keeps refresh / share-link working.
+  const [params, setParams] = useSearchParams()
+  const initialQuery = params.get("q") ?? ""
+  const initialMode: SearchMode = ((): SearchMode => {
+    const m = params.get("mode")
+    return m === "vector" || m === "keyword" ? m : "hybrid"
+  })()
+  const [query, setQuery] = useState(initialQuery)
+  const [mode, setMode] = useState<SearchMode>(initialMode)
   const [results, setResults] = useState<SearchResult[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -56,8 +64,8 @@ export function Search() {
 
   // Load all memory titles once for fuzzy index
   useEffect(() => {
-    listMemories({ limit: 500, sort_by: "access_count", sort_order: "desc" }).then(
-      (data) => {
+    listMemories({ limit: 500, sort_by: "access_count", sort_order: "desc" })
+      .then((data) => {
         setAllMemories(
           data.items.map((m) => ({
             id: m.id,
@@ -67,8 +75,8 @@ export function Search() {
             tags: m.tags,
           })),
         )
-      },
-    )
+      })
+      .catch((err) => toastError(err, "Couldn't load suggestion index"))
   }, [])
 
   // Build Fuse index (re-created only when allMemories changes)
@@ -119,15 +127,27 @@ export function Search() {
     if (!query.trim()) return
     setShowSuggestions(false)
     setLoading(true)
+    // Persist query + mode to the URL so refresh keeps the result set.
+    setParams({ q: query, mode }, { replace: true })
     try {
       const data = await searchMemories({ q: query, mode, limit: 30 })
       setResults(data.results)
       setTotal(data.total)
       setSearched(true)
+    } catch (err) {
+      toastError(err, "Search failed")
     } finally {
       setLoading(false)
     }
-  }, [query, mode])
+  }, [query, mode, setParams])
+
+  // Auto-run when the user lands with ?q= in the URL (e.g. shared link).
+  useEffect(() => {
+    if (initialQuery.trim()) {
+      void doSearch()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const pickSuggestion = (s: Suggestion) => {
     setQuery(s.title)

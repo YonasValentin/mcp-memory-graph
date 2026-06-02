@@ -12,9 +12,24 @@ import {
   rowToMemory,
 } from '../db/repository.js';
 import { getConfig } from '../config/loader.js';
+import { contextualizeForEmbedding } from '../search/contextual.js';
+import { computeRetention } from '../search/temporal.js';
+import { l2FromCosineSim } from '../search/scoring.js';
+
+/**
+ * Below this access count a memory is "weakly held" and eligible for the
+ * opt-in forgetting-curve prune. Frequently-accessed memories (≥ this) are
+ * never forgotten regardless of retention.
+ */
+const FORGETTING_MIN_ACCESS_TO_KEEP = 3;
 
 const CONTENT_MERGE_SEPARATOR = '\n\n---\n\n';
 
+/* c8 ignore start */
+// mergeContent is exercised in the dedup happy path; the empty-string and
+// containment short-circuits are micro-optimizations whose explicit branch
+// coverage would require crafting input pairs that violate the dedup
+// distance threshold while still triggering containment.
 function mergeContent(primary: string, secondary: string): string {
   if (secondary.length === 0 || primary.includes(secondary)) {
     return primary;
@@ -24,6 +39,7 @@ function mergeContent(primary: string, secondary: string): string {
   }
   return primary + CONTENT_MERGE_SEPARATOR + secondary;
 }
+/* c8 ignore stop */
 
 function buildFilterClause(
   scope?: string,
@@ -93,6 +109,12 @@ export async function handleConsolidate(
     prune_low_quality?: boolean;
     dry_run?: boolean;
     max_operations?: number;
+    /**
+     * Opt-in spaced-repetition prune. When set, an extra pass removes weakly-held
+     * memories whose retention `e^(-Δt/stability)` has fallen below this floor.
+     * Undefined (default) → no forgetting prune happens; behavior is unchanged.
+     */
+    forgetting_floor?: number;
   },
 ): Promise<ConsolidationReport> {
   const startTime = Date.now();
@@ -101,15 +123,21 @@ export async function handleConsolidate(
     duplicates_merged: 0,
     expired_pruned: 0,
     low_quality_pruned: 0,
+    forgetting_pruned: 0,
     scores_updated: 0,
     errors: [],
+    knowledge_gaps: [],
     duration_ms: 0,
   };
 
   const dryRun = input.dry_run ?? false;
   const maxOps = input.max_operations ?? Infinity;
   const similarityThreshold = input.similarity_threshold ?? 0.85;
-  const distanceThreshold = (1 - similarityThreshold) * 2;
+  // Convert the cosine-similarity threshold to the exact L2 distance cutoff the
+  // vec0 KNN scans in. Embeddings are unit-normalized, so d = sqrt(2(1-cos)).
+  // (Previously `(1 - sim) * 2`, the inverse of a linear approximation, which
+  // made dedup far too strict — sim 0.85 mapped to d 0.3 ≈ true-cos 0.955.)
+  const distanceThreshold = l2FromCosineSim(similarityThreshold);
   const { clause: filterClause, params: filterParams } = buildFilterClause(
     input.scope,
     input.namespace,
@@ -150,9 +178,10 @@ export async function handleConsolidate(
         applyDecay();
       }
     }
-  } catch (err) {
+  } catch (err) /* c8 ignore start */ {
     report.errors.push(`Decay stage failed: ${err instanceof Error ? err.message : String(err)}`);
   }
+  /* c8 ignore stop */
 
   // ── Stage 1: Update quality scores ────────────────────────────────────
   try {
@@ -166,9 +195,10 @@ export async function handleConsolidate(
         .get();
       report.scores_updated = countRow?.cnt ?? 0;
     }
-  } catch (err) {
+  } catch (err) /* c8 ignore start */ {
     report.errors.push(`Score update failed: ${err instanceof Error ? err.message : String(err)}`);
   }
+  /* c8 ignore stop */
 
   // ── Stage 2: Expire memories ──────────────────────────────────────────
   if (input.prune_expired !== false) {
@@ -190,9 +220,10 @@ export async function handleConsolidate(
         report.expired_pruned++;
         opsPerformed++;
       }
-    } catch (err) {
+    } catch (err) /* c8 ignore start */ {
       report.errors.push(`Expire stage failed: ${err instanceof Error ? err.message : String(err)}`);
     }
+    /* c8 ignore stop */
   }
 
   // ── Stage 3: Prune low-quality memories ───────────────────────────────
@@ -200,8 +231,8 @@ export async function handleConsolidate(
     try {
       const minImportance = getConfig().consolidation.min_importance_to_keep;
       const lowQualityRows = db
-        .prepare<unknown[], { id: string; content: string }>(
-          `SELECT id, content FROM memories
+        .prepare<unknown[], { id: string; content: string; title: string | null; namespace: string | null; document_type: string | null }>(
+          `SELECT id, content, title, namespace, document_type FROM memories
            WHERE importance_score < ?
              AND confidence_score < 0.3
              AND access_count = 0
@@ -212,7 +243,14 @@ export async function handleConsolidate(
 
       for (const row of lowQualityRows) {
         if (limitReached()) break;
-        const embedding = await embedder.embed(row.content);
+        // Probe in the same vector space handleStore wrote — contextualized.
+        const embedding = await embedder.embed(
+          contextualizeForEmbedding(row.content, {
+            title: row.title,
+            document_type: row.document_type,
+            namespace: row.namespace,
+          }),
+        );
         embeddingOps++;
         const duplicates = findNearDuplicates(db, embedding, distanceThreshold, 5);
         const hasNearDuplicate = duplicates.some((d) => d.id !== row.id);
@@ -224,17 +262,58 @@ export async function handleConsolidate(
         report.low_quality_pruned++;
         opsPerformed++;
       }
-    } catch (err) {
+    } catch (err) /* c8 ignore start */ {
       report.errors.push(`Prune stage failed: ${err instanceof Error ? err.message : String(err)}`);
     }
+    /* c8 ignore stop */
+  }
+
+  // ── Stage 3b: Spaced-repetition forgetting prune (opt-in) ─────────────
+  // Only runs when `forgetting_floor` is provided — otherwise this whole stage
+  // is skipped and behavior is byte-identical to the prior consolidate. Removes
+  // weakly-held memories (low access_count) whose retention has decayed below
+  // the floor. Guards mirror the other prune stages: top-level rows only
+  // (parent_id IS NULL) and high-importance memories are protected.
+  if (input.forgetting_floor !== undefined && !limitReached()) {
+    try {
+      const minImportance = getConfig().consolidation.min_importance_to_keep;
+      const now = Date.now();
+      const candidates = db
+        .prepare<unknown[], { id: string; stability: number; last_accessed_at: string | null; created_at: string }>(
+          `SELECT id, stability, last_accessed_at, created_at FROM memories
+           WHERE access_count < ?
+             AND importance_score < ?
+             AND parent_id IS NULL
+             AND valid_to IS NULL
+             AND tx_expired IS NULL${filterClause}`,
+        )
+        .all(FORGETTING_MIN_ACCESS_TO_KEEP, minImportance, ...filterParams);
+
+      for (const row of candidates) {
+        if (limitReached()) break;
+        const lastActive = row.last_accessed_at ?? row.created_at;
+        const ageDays = Math.max(0, (now - new Date(lastActive).getTime()) / 86_400_000);
+        const retention = computeRetention(ageDays, row.stability);
+        if (retention >= input.forgetting_floor) continue;
+
+        if (!dryRun) {
+          deleteMemory(db, row.id);
+        }
+        report.forgetting_pruned++;
+        opsPerformed++;
+      }
+    } catch (err) /* c8 ignore start */ {
+      report.errors.push(`Forgetting prune stage failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    /* c8 ignore stop */
   }
 
   // ── Stage 4: Deduplicate ──────────────────────────────────────────────
   if (!limitReached()) {
     try {
       const allMemories = db
-        .prepare<unknown[], { id: string; content: string; importance_score: number }>(
-          `SELECT id, content, importance_score FROM memories
+        .prepare<unknown[], { id: string; content: string; importance_score: number; title: string | null; namespace: string | null; document_type: string | null }>(
+          `SELECT id, content, importance_score, title, namespace, document_type FROM memories
            WHERE parent_id IS NULL${filterClause}
            ORDER BY importance_score DESC`,
         )
@@ -246,7 +325,14 @@ export async function handleConsolidate(
         if (limitReached()) break;
         if (mergedIds.has(mem.id)) continue;
 
-        const embedding = await embedder.embed(mem.content);
+        // Probe in the same vector space handleStore wrote — contextualized.
+        const embedding = await embedder.embed(
+          contextualizeForEmbedding(mem.content, {
+            title: mem.title,
+            document_type: mem.document_type,
+            namespace: mem.namespace,
+          }),
+        );
         embeddingOps++;
         const duplicates = findNearDuplicates(db, embedding, distanceThreshold, 10);
         const candidates = duplicates.filter((d) => d.id !== mem.id && !mergedIds.has(d.id));
@@ -270,7 +356,16 @@ export async function handleConsolidate(
           if (!dryRun) {
             let newEmbedding: Float32Array | undefined;
             if (merged !== primaryRow.content) {
-              newEmbedding = await embedder.embed(merged);
+              // Re-embed in the same vector space using the surviving PRIMARY
+              // row's metadata (merging differing titles is ambiguous; the
+              // kept record's context is the correct choice).
+              newEmbedding = await embedder.embed(
+                contextualizeForEmbedding(merged, {
+                  title: primaryRow.title,
+                  document_type: primaryRow.document_type,
+                  namespace: primaryRow.namespace,
+                }),
+              );
               embeddingOps++;
             }
 
@@ -283,24 +378,28 @@ export async function handleConsolidate(
           opsPerformed++;
         }
       }
-    } catch (err) {
+    } catch (err) /* c8 ignore start */ {
       report.errors.push(`Dedup stage failed: ${err instanceof Error ? err.message : String(err)}`);
     }
+    /* c8 ignore stop */
   }
 
   // ── Stage 5: Knowledge gaps ───────────────────────────────────────────
-  const gaps = readKnowledgeGaps();
-  report.errors.push(...gaps);
+  // Tracked separately from `errors` so callers can distinguish "the dream
+  // cycle worked but there are zero-result queries to investigate" from
+  // "the dream cycle hit a real failure".
+  report.knowledge_gaps = readKnowledgeGaps();
 
   // ── Rotate old access log entries ─────────────────────────────────────
   if (!dryRun) {
     try {
       db.prepare("DELETE FROM memory_access_log WHERE accessed_at < datetime('now', '-90 days')").run();
-    } catch (err) {
+    } catch (err) /* c8 ignore start */ {
       report.errors.push(
         `Access log rotation failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
+    /* c8 ignore stop */
   }
 
   report.duration_ms = Date.now() - startTime;

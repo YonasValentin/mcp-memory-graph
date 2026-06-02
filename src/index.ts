@@ -19,10 +19,57 @@ async function main(): Promise<void> {
       await runConsolidate();
       break;
     }
+    case 'migrate': {
+      // Upgrade an existing DB to the current schema version. Bypasses
+      // initializeSchema's v4-floor throw so a genuinely pre-v4 DB can be
+      // brought forward (the remedy the v4-floor error message points at).
+      const { getDatabase, closeDatabase } = await import('./db/connection.js');
+      const { migrateDatabase, CURRENT_SCHEMA_VERSION } = await import('./db/migrations.js');
+      const db = getDatabase();
+      migrateDatabase(db);
+      closeDatabase();
+      console.error(`Migration complete — database is at schema version ${CURRENT_SCHEMA_VERSION}.`);
+      break;
+    }
     case 'serve':
     case 'http': {
       const { runServe } = await import('./cli/serve.js');
       await runServe();
+      break;
+    }
+    case 'backup': {
+      const { runBackup } = await import('./cli/backup.js');
+      await runBackup(process.argv.slice(3));
+      break;
+    }
+    case 'rebuild': {
+      const { runRebuild } = await import('./cli/rebuild.js');
+      await runRebuild(process.argv.slice(3));
+      break;
+    }
+    case 'vault-init': {
+      const { runVaultInit } = await import('./cli/vault-init.js');
+      await runVaultInit(process.argv.slice(3));
+      break;
+    }
+    case 'sync': {
+      const { runSync } = await import('./cli/sync.js');
+      await runSync(process.argv.slice(3));
+      break;
+    }
+    case 'export-graph': {
+      const { runExportGraph } = await import('./cli/share.js');
+      runExportGraph(process.argv.slice(3));
+      break;
+    }
+    case 'merge-graphs': {
+      const { runMergeGraphs } = await import('./cli/share.js');
+      runMergeGraphs(process.argv.slice(3));
+      break;
+    }
+    case 'git-setup': {
+      const { runGitSetup } = await import('./cli/share.js');
+      await runGitSetup();
       break;
     }
     default: {

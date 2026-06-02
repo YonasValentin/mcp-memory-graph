@@ -12,16 +12,18 @@ export function insertMemory(
         id, scope, namespace, title, content, document_type, source,
         author, department, tags, access_level, language, metadata,
         parent_id, chunk_index, version, created_at, updated_at, expires_at,
-        access_count, last_accessed_at, importance_score, confidence_score
+        access_count, last_accessed_at, importance_score, confidence_score,
+        valid_from, valid_to, tx_expired, agent_id
       ) VALUES (
         @id, @scope, @namespace, @title, @content, @document_type, @source,
         @author, @department, @tags, @access_level, @language, @metadata,
         @parent_id, @chunk_index, @version, @created_at, @updated_at, @expires_at,
-        @access_count, @last_accessed_at, @importance_score, @confidence_score
+        @access_count, @last_accessed_at, @importance_score, @confidence_score,
+        @created_at, NULL, NULL, @agent_id
       )
     `);
 
-    const result = stmt.run(memory);
+    const result = stmt.run({ ...memory, agent_id: memory.agent_id ?? null });
     const rowid = BigInt(result.lastInsertRowid);
 
     db.prepare(
@@ -269,6 +271,30 @@ export function deleteMemoriesByFilter(
   return remove();
 }
 
+/**
+ * Invalidate a memory point-in-time: stamp `valid_to` instead of deleting it.
+ * The row stays in `memories` (content untouched) and remains queryable via
+ * `as_of`. COALESCE keeps the first invalidation instant, so re-invalidation is
+ * idempotent and never pushes `valid_to` later. Returns rows changed.
+ *
+ * The default-now branch emits ISO-8601 with millis + Z (matching JS
+ * toISOString() used for valid_from/created_at) so default `valid_to` collates
+ * correctly against same-instant ISO timestamps in lexicographic `as_of`
+ * comparisons — `datetime('now')`'s space separator would sort before `T`.
+ */
+export function invalidateMemory(
+  db: Database.Database,
+  id: string,
+  validTo?: string,
+): number {
+  const result = db
+    .prepare(
+      `UPDATE memories SET valid_to = COALESCE(valid_to, COALESCE(?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))) WHERE id = ?`,
+    )
+    .run(validTo ?? null, id);
+  return result.changes;
+}
+
 export function getMemoryById(
   db: Database.Database,
   id: string,
@@ -311,6 +337,16 @@ export function listMemories(
   if (options.document_type !== undefined) {
     conditions.push('document_type = ?');
     params.push(options.document_type);
+  }
+
+  // Bi-temporal: currently-valid by default; point-in-time when `as_of` is set.
+  if (options.as_of) {
+    conditions.push('valid_from <= ?');
+    conditions.push('(valid_to IS NULL OR valid_to > ?)');
+    conditions.push('(tx_expired IS NULL OR tx_expired > ?)');
+    params.push(options.as_of, options.as_of, options.as_of);
+  } else {
+    conditions.push('valid_to IS NULL AND tx_expired IS NULL');
   }
 
   const whereClause =
@@ -387,10 +423,19 @@ export function rowToMemory(row: MemoryRow): Memory {
     last_accessed_at: row.last_accessed_at,
     importance_score: row.importance_score,
     confidence_score: row.confidence_score,
+    provenance: (row.provenance as Memory['provenance']) ?? 'manual',
+    agent_id: row.agent_id ?? null,
   };
 }
 
 // ── Access Tracking ──────────────────────────────────────────────────────
+
+/**
+ * Spaced-repetition reinforcement: each access grows a memory's `stability`
+ * by this amount, so frequently-accessed memories forget more slowly under the
+ * `e^(-Δt/stability)` retention curve (see {@link computeRetention}).
+ */
+export const STABILITY_INCREMENT = 0.5;
 
 export function recordAccess(
   db: Database.Database,
@@ -407,7 +452,8 @@ export function recordAccess(
       UPDATE memories
       SET access_count = access_count + 1,
           last_accessed_at = datetime('now'),
-          importance_score = MIN(1.0, importance_score + 0.03)
+          importance_score = MIN(1.0, importance_score + 0.03),
+          stability = stability + ${STABILITY_INCREMENT}
       WHERE id = ?
     `);
 
@@ -468,10 +514,16 @@ export function findNearDuplicates(
     const results: Array<{ rowid: number; id: string; distance: number }> = [];
     for (const row of rows) {
       if (row.distance > distanceThreshold) break;
+      // vec0 rows are only removed on hard delete, not on bi-temporal
+      // invalidation (which just stamps valid_to / tx_expired). Exclude
+      // invalidated rows here so every consumer (dedup, consolidation,
+      // similarity edges) ignores tombstoned/superseded memories uniformly.
       const mem = db
-        .prepare<[number], { id: string }>('SELECT id FROM memories WHERE rowid = ?')
+        .prepare<[number], { id: string; valid_to: string | null; tx_expired: string | null }>(
+          'SELECT id, valid_to, tx_expired FROM memories WHERE rowid = ?',
+        )
         .get(Number(row.rowid));
-      if (mem) {
+      if (mem && mem.valid_to === null && mem.tx_expired === null) {
         results.push({ rowid: Number(row.rowid), id: mem.id, distance: row.distance });
       }
     }

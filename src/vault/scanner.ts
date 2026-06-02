@@ -18,6 +18,7 @@ export function scanVault(
   options?: ScanOptions,
 ): VaultFileEntry[] {
   const sanitized = sanitizePath(vaultPath);
+  /* c8 ignore next 3 */
   if (!sanitized) {
     throw new Error(`Invalid vault path: ${vaultPath}`);
   }

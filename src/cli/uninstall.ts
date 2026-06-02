@@ -30,7 +30,8 @@ const HOOK_IDENTIFIERS = [
   'memory-session-start',
   'memory-post-search',
   'memory-pre-compact',
-  'memory-session-end',
+  'memory-session-end', // legacy (replaced by memory-stop)
+  'memory-stop',
 ];
 
 interface HookEntry {
@@ -59,6 +60,7 @@ function cleanupLegacyHookFiles(): void {
     'memory-post-search.mjs', 'memory-post-search.js',
     'memory-pre-compact.mjs', 'memory-pre-compact.js',
     'memory-session-end.mjs', 'memory-session-end.js',
+    'memory-stop.mjs', 'memory-stop.js',
   ];
   for (const file of legacyFiles) {
     const filePath = join(hooksDir, file);

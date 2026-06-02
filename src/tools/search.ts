@@ -10,7 +10,19 @@ import type {
   DetailLevel,
 } from '../types.js';
 import { hybridSearch, toSummary, toIdOnly } from '../search/hybrid.js';
+import { CrossEncoderReranker, type Reranker } from '../search/reranker.js';
 import { recordAccess } from '../db/repository.js';
+
+// Module-level singleton so the cross-encoder model loads at most once across
+// requests. Lazily constructed only when reranking is requested — never touched
+// (and thus never downloads a model) on the default search path.
+let rerankerSingleton: Reranker | null = null;
+function getReranker(): Reranker {
+  if (!rerankerSingleton) {
+    rerankerSingleton = new CrossEncoderReranker();
+  }
+  return rerankerSingleton;
+}
 
 interface SearchInput {
   query: string;
@@ -28,6 +40,10 @@ interface SearchInput {
   date_from?: string;
   date_to?: string;
   min_confidence?: number;
+  as_of?: string;
+  use_graph?: boolean;
+  rerank?: boolean;
+  rerank_top_n?: number;
   detail_level?: DetailLevel;
   max_tokens?: number;
 }
@@ -53,9 +69,15 @@ export async function handleSearch(
     date_from: input.date_from,
     date_to: input.date_to,
     min_confidence: input.min_confidence,
+    as_of: input.as_of,
+    use_graph: input.use_graph,
+    rerank: input.rerank,
+    rerank_top_n: input.rerank_top_n,
   };
 
-  const { results, total, truncated } = await hybridSearch(db, embedder, options);
+  const { results, total, truncated } = input.rerank
+    ? await hybridSearch(db, embedder, options, getReranker())
+    : await hybridSearch(db, embedder, options);
 
   if (results.length > 0) {
     recordAccess(

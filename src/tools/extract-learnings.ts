@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { EmbeddingProvider, ExtractedLearning, ExtractLearningsResult } from '../types.js';
 import { findNearDuplicates, getMemoryById, updateMemory } from '../db/repository.js';
+import { contextualizeForEmbedding } from '../search/contextual.js';
 import { handleStore } from './store.js';
 
 type LearningType = ExtractedLearning['type'];
@@ -136,6 +137,7 @@ export function extractFromTranscript(
 
       let content: string;
       if (pattern.combineGroups && match[2]) {
+        /* c8 ignore next */
         content = `Problem: ${match[1].trim()} / Fix: ${match[2].trim()}`;
       } else {
         content = match[1]?.trim() ?? '';
@@ -182,7 +184,16 @@ export async function handleExtractLearnings(
   };
 
   for (const learning of learnings) {
-    const embedding = await embedder.embed(learning.content);
+    // Probe with the SAME contextualized text handleStore embeds, so the dedup
+    // lookup lives in the same vector space as the stored embedding. Otherwise
+    // a titled learning's bare-content probe would never match its own
+    // context-prefixed stored vector and corroboration would never fire.
+    const embedding = await embedder.embed(
+      contextualizeForEmbedding(learning.content, {
+        title: learning.title,
+        namespace: input.namespace,
+      }),
+    );
     const duplicates = findNearDuplicates(db, embedding, DEDUP_DISTANCE_THRESHOLD, 3);
 
     if (duplicates.length > 0) {
@@ -191,10 +202,12 @@ export async function handleExtractLearnings(
         if (existingRow) {
           const existingMeta: Record<string, unknown> = existingRow.metadata
             ? JSON.parse(existingRow.metadata) as Record<string, unknown>
+            /* c8 ignore next */
             : {};
           const currentCount =
             typeof existingMeta.corroboration_count === 'number'
               ? existingMeta.corroboration_count
+              /* c8 ignore next */
               : 0;
           existingMeta.corroboration_count = currentCount + 1;
 

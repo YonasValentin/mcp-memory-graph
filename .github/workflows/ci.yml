@@ -1,0 +1,124 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-server:
+    name: server (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20.x', '22.x']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
+
+      - name: Test (with coverage on Node 22)
+        if: matrix.node == '22.x'
+        run: npx vitest run --coverage
+        env:
+          MCP_LOG_LEVEL: error
+
+      - name: Test (Node 20)
+        if: matrix.node != '22.x'
+        run: npm test
+        env:
+          MCP_LOG_LEVEL: error
+
+      - name: Upload coverage artifact
+        if: always() && matrix.node == '22.x'
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-coverage
+          path: coverage/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  prod-install-smoke:
+    name: production install smoke (no devDeps)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: npm
+
+      - name: Install (full) and build
+        run: |
+          npm ci
+          npm run build
+
+      - name: Prune to production dependencies
+        run: npm prune --omit=dev
+
+      - name: Boot the MCP server with prod-only deps
+        # Catches phantom/undeclared runtime dependencies (e.g. express): with
+        # devDeps removed, any import not declared in "dependencies" crashes the
+        # boot. The stdio server prints a ready line, then we stop it.
+        env:
+          MCP_MEMORY_DB_PATH: /tmp/ci-smoke.db
+          MCP_LOG_LEVEL: error
+        run: |
+          node dist/index.js > /tmp/boot.log 2>&1 &
+          PID=$!
+          sleep 6
+          echo "----- boot log -----"
+          cat /tmp/boot.log
+          kill "$PID" 2>/dev/null || true
+          grep -q "running on stdio" /tmp/boot.log
+
+  test-web:
+    name: web dashboard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        working-directory: web
+        run: npm ci
+
+      - name: Lint
+        working-directory: web
+        run: npm run lint
+
+      - name: Test
+        working-directory: web
+        run: npm test
+
+      - name: Build
+        working-directory: web
+        run: npm run build

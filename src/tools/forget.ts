@@ -1,0 +1,123 @@
+import type Database from 'better-sqlite3';
+import type { Memory, VersionRecord } from '../types.js';
+import {
+  getMemoryById,
+  invalidateMemory,
+  deleteMemory,
+  rowToMemory,
+} from '../db/repository.js';
+import { mirrorMemoryWrite, mirrorMemoryRemove } from '../vault/write-through.js';
+
+export interface ForgetResult {
+  forgotten: boolean;
+  mode: 'soft' | 'hard';
+  recoverable: boolean;
+  /** Portability copy of the erased memory — present only on a successful hard erase. */
+  export?: Memory;
+  /**
+   * The erased memory's retained edit history (memory_versions rows, also
+   * personal data) — present only on a successful hard erase. Captured before
+   * the cascade destroys it so the DSAR copy reflects everything erased.
+   */
+  versions?: VersionRecord[];
+}
+
+interface SubtreeChunkRow {
+  rowid: number;
+  title: string | null;
+  content: string;
+  tags: string | null;
+  author: string | null;
+  department: string | null;
+}
+
+/**
+ * Erase the FTS5 + vec index rows for every DESCENDANT chunk of `id` (the
+ * target itself is handled by deleteMemory). FK `ON DELETE CASCADE` removes
+ * child rows from `memories`, but the external-content FTS5 table and the vec0
+ * virtual table do NOT participate in FK cascades, so their index rows would be
+ * orphaned — leaving erased content searchable (a right-to-erasure breach) and
+ * pointing at deleted rowids. Walk the parent_id subtree and clean each one.
+ */
+function eraseDescendantIndexes(db: Database.Database, id: string): void {
+  const descendants = db
+    .prepare<[string], SubtreeChunkRow>(
+      `WITH RECURSIVE sub(id) AS (
+         SELECT id FROM memories WHERE parent_id = ?
+         UNION ALL
+         SELECT m.id FROM memories m JOIN sub ON m.parent_id = sub.id
+       )
+       SELECT m.rowid AS rowid, m.title AS title, m.content AS content,
+              m.tags AS tags, m.author AS author, m.department AS department
+       FROM memories m JOIN sub ON m.id = sub.id`,
+    )
+    .all(id);
+
+  const deleteFts = db.prepare(
+    "INSERT INTO memories_fts(memories_fts, rowid, title, content, tags, author, department) VALUES('delete', ?, ?, ?, ?, ?, ?)",
+  );
+  const deleteVec = db.prepare('DELETE FROM memories_vec WHERE rowid = ?');
+
+  for (const row of descendants) {
+    deleteFts.run(
+      row.rowid,
+      row.title ?? '',
+      row.content,
+      row.tags ?? '',
+      row.author ?? '',
+      row.department ?? '',
+    );
+    deleteVec.run(BigInt(row.rowid));
+  }
+}
+
+/**
+ * GDPR-grade "forget" with two modes (additive — leaves `memory_delete` untouched):
+ *
+ * - soft (default): invalidate the memory by stamping `valid_to` (tombstone).
+ *   The row stays in `memories`, is excluded from default currently-valid
+ *   retrieval, remains queryable via `as_of`, and is therefore recoverable.
+ * - hard: satisfy the data-portability right BEFORE erasure — build the full
+ *   export object (the Data Subject Access Request copy) plus the memory's
+ *   version history FIRST, THEN hard-delete (irreversible). Capture-then-erase
+ *   ordering guarantees the caller always receives the portability copy even
+ *   though the row is gone. Child-chunk FTS5/vec index rows (which FK cascade
+ *   does NOT clean) are erased explicitly so no residue survives.
+ */
+export function handleForget(
+  db: Database.Database,
+  input: { id: string; hard?: boolean },
+): ForgetResult {
+  const mode = input.hard === true ? 'hard' : 'soft';
+
+  const row = getMemoryById(db, input.id);
+  if (!row) {
+    return { forgotten: false, mode, recoverable: false };
+  }
+
+  if (mode === 'soft') {
+    invalidateMemory(db, input.id);
+    // Write-through: mirrorMemoryWrite sees the now-stamped valid_to and moves
+    // the file to .memory/deleted/ so the tombstone travels through git.
+    mirrorMemoryWrite(db, input.id);
+    return { forgotten: true, mode: 'soft', recoverable: true };
+  }
+
+  // Hard erase: capture the portability copy + version history FIRST, THEN
+  // delete — atomically, so the index cleanup and the cascade can't diverge.
+  const exported = rowToMemory(row);
+  const versions = db
+    .prepare<[string], VersionRecord>(
+      'SELECT * FROM memory_versions WHERE memory_id = ? ORDER BY version DESC',
+    )
+    .all(input.id);
+
+  const erase = db.transaction(() => {
+    eraseDescendantIndexes(db, input.id);
+    deleteMemory(db, input.id);
+  });
+  erase();
+  mirrorMemoryRemove(exported);
+
+  return { forgotten: true, mode: 'hard', recoverable: false, export: exported, versions };
+}

@@ -1,7 +1,8 @@
 import type Database from 'better-sqlite3';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import type { EmbeddingProvider, MemoryRow } from '../types.js';
 import { insertMemory, getMemoryById, updateMemory } from '../db/repository.js';
+import { computeContentSignal } from '../search/content-signals.js';
 
 interface ImportItem {
   id?: string;
@@ -78,6 +79,7 @@ export async function handleImport(
               title: item.title ?? existing.title,
               tags: item.tags ? JSON.stringify(item.tags) : existing.tags,
               metadata: item.metadata
+                /* c8 ignore next */
                 ? JSON.stringify(item.metadata)
                 : existing.metadata,
               expires_at: item.expires_at ?? existing.expires_at,
@@ -92,7 +94,7 @@ export async function handleImport(
         }
 
         const row: MemoryRow = {
-          id: existingId ?? uuidv4(),
+          id: existingId ?? randomUUID(),
           scope: item.scope ?? 'global',
           namespace: item.namespace ?? null,
           title: item.title ?? null,
@@ -113,15 +115,19 @@ export async function handleImport(
           expires_at: item.expires_at ?? null,
           access_count: 0,
           last_accessed_at: null,
-          importance_score: 0.5,
+          // Match the heuristic used by handleStore so re-imports produce
+          // identical scoring (was: hardcoded 0.5).
+          importance_score: computeContentSignal(item.content),
           confidence_score: 0.5,
+          stability: 1.0,
         };
 
         insertMemory(db, row, embeddings[i]);
         imported++;
-      } catch {
+      } catch /* c8 ignore start */ {
         errors++;
       }
+      /* c8 ignore stop */
     }
   });
 

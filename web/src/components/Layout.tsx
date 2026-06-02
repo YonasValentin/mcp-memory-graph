@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from "react-router-dom"
 import { Brain, Search, List, GitGraph, LayoutDashboard } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { ThemeToggle } from "@/components/ThemeToggle"
 
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
@@ -38,8 +39,9 @@ export function Layout() {
             </NavLink>
           ))}
         </nav>
-        <div className="border-t p-3 text-xs text-muted-foreground">
-          MCP Memory Server v1.0
+        <div className="border-t p-2">
+          <ThemeToggle />
+          <div className="mt-1 px-3 py-1 text-xs text-muted-foreground">MCP Memory Server v1.0</div>
         </div>
       </aside>
 

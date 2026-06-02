@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react"
-import { Link } from "react-router-dom"
+import { Link, useSearchParams } from "react-router-dom"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -20,18 +20,43 @@ import {
 } from "@/components/ui/select"
 import { ChevronLeft, ChevronRight, ArrowUpDown } from "lucide-react"
 import { listMemories } from "@/api/client"
+import { toastError } from "@/lib/toast-error"
 import type { Memory, SortField, SortOrder } from "@/types"
 
 const PAGE_SIZE = 20
+const VALID_SORT: SortField[] = [
+  "created_at", "updated_at", "title", "importance_score", "confidence_score", "access_count",
+]
 
 export function Browse() {
+  // URL state replaces ephemeral useState so refresh / back-button keeps the
+  // user's pagination and filters. ?offset=20&sort_by=importance_score&...
+  const [params, setParams] = useSearchParams()
+
+  const offset = Number.parseInt(params.get("offset") ?? "0", 10) || 0
+  const sortBy = (VALID_SORT.includes(params.get("sort_by") as SortField)
+    ? (params.get("sort_by") as SortField)
+    : "updated_at")
+  const sortOrder: SortOrder = params.get("sort_order") === "asc" ? "asc" : "desc"
+  const scopeFilter = params.get("scope") ?? "all"
+
   const [memories, setMemories] = useState<Memory[]>([])
   const [total, setTotal] = useState(0)
-  const [offset, setOffset] = useState(0)
-  const [sortBy, setSortBy] = useState<SortField>("updated_at")
-  const [sortOrder, setSortOrder] = useState<SortOrder>("desc")
-  const [scopeFilter, setScopeFilter] = useState<string>("all")
   const [loading, setLoading] = useState(true)
+
+  const updateParams = useCallback(
+    (next: Record<string, string | undefined>) => {
+      setParams((prev) => {
+        const out = new URLSearchParams(prev)
+        for (const [k, v] of Object.entries(next)) {
+          if (v === undefined || v === "" || v === "all") out.delete(k)
+          else out.set(k, v)
+        }
+        return out
+      })
+    },
+    [setParams],
+  )
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -41,10 +66,12 @@ export function Browse() {
         offset,
         sort_by: sortBy,
         sort_order: sortOrder,
-        scope: scopeFilter === "all" ? undefined : scopeFilter as Memory["scope"],
+        scope: scopeFilter === "all" ? undefined : (scopeFilter as Memory["scope"]),
       })
       setMemories(data.items)
       setTotal(data.total)
+    } catch (err) {
+      toastError(err, "Couldn't load memories")
     } finally {
       setLoading(false)
     }
@@ -55,14 +82,11 @@ export function Browse() {
   }, [fetchData])
 
   const toggleSort = (field: SortField) => {
-    if (sortBy === field) {
-      setSortOrder(sortOrder === "asc" ? "desc" : "asc")
-    } else {
-      setSortBy(field)
-      setSortOrder("desc")
-    }
-    setOffset(0)
+    const nextOrder: SortOrder = sortBy === field ? (sortOrder === "asc" ? "desc" : "asc") : "desc"
+    updateParams({ sort_by: field, sort_order: nextOrder, offset: "0" })
   }
+  const setOffset = (next: number) => updateParams({ offset: String(Math.max(0, next)) })
+  const setScopeFilter = (next: string) => updateParams({ scope: next, offset: "0" })
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1
@@ -72,7 +96,7 @@ export function Browse() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold tracking-tight">Browse</h1>
         <div className="flex items-center gap-2">
-          <Select value={scopeFilter} onValueChange={(v) => { setScopeFilter(v ?? "all"); setOffset(0) }}>
+          <Select value={scopeFilter} onValueChange={(v) => setScopeFilter(v ?? "all")}>
             <SelectTrigger className="w-32">
               <SelectValue placeholder="Scope" />
             </SelectTrigger>

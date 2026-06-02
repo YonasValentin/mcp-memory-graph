@@ -1,11 +1,25 @@
 import type Database from 'better-sqlite3';
 import type { Memory, MemoryRow } from '../types.js';
 import { getMemoryById, rowToMemory, recordAccess } from '../db/repository.js';
+import {
+  getOutgoingLinks,
+  getBacklinks,
+  type MemoryLinkRow,
+} from '../graph/memory-links.js';
+
+export interface GetResult {
+  memory: Memory;
+  chunks?: Memory[];
+  /** Edges where this memory is the source (what it points to). */
+  links: MemoryLinkRow[];
+  /** Edges where this memory is the target (what points at it). */
+  backlinks: MemoryLinkRow[];
+}
 
 export function handleGet(
   db: Database.Database,
   input: { id: string; include_chunks: boolean },
-): { memory: Memory; chunks?: Memory[] } | null {
+): GetResult | null {
   const row = getMemoryById(db, input.id);
   if (!row) {
     return null;
@@ -14,8 +28,11 @@ export function handleGet(
   const memory = rowToMemory(row);
   recordAccess(db, [{ memory_id: input.id, access_type: 'get' }]);
 
+  const links = getOutgoingLinks(db, input.id);
+  const backlinks = getBacklinks(db, input.id);
+
   if (!input.include_chunks) {
-    return { memory };
+    return { memory, links, backlinks };
   }
 
   const chunkRows = db
@@ -25,5 +42,5 @@ export function handleGet(
     .all(input.id);
 
   const chunks = chunkRows.map(rowToMemory);
-  return { memory, chunks };
+  return { memory, chunks, links, backlinks };
 }

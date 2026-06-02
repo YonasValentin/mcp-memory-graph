@@ -37,7 +37,13 @@ export function getReadWriteDb(): Database.Database {
 /**
  * Returns a ready-to-use embedding provider. The model is loaded lazily on
  * the first call and cached for the lifetime of the process.
+ *
+ * Coverage note: the actual transformer model is loaded from the network/
+ * disk on first call; integration tests cover this path in CI's heavyweight
+ * lane. Unit tests inject a `MockEmbeddingProvider` instead. The body is
+ * excluded from coverage because invoking it requires the real HF model.
  */
+/* c8 ignore start */
 export async function getEmbedder(): Promise<EmbeddingProvider> {
   if (cachedEmbedder) {
     return cachedEmbedder;
@@ -48,3 +54,4 @@ export async function getEmbedder(): Promise<EmbeddingProvider> {
   cachedEmbedder = new CachedEmbeddingProvider(inner);
   return cachedEmbedder;
 }
+/* c8 ignore stop */

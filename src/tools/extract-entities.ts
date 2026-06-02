@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import {
   findOrCreateEntity,
   linkEntityToMemory,
@@ -70,7 +70,7 @@ export function handleExtractEntities(
           try {
             db.prepare(
               'INSERT INTO entity_aliases (id, entity_id, alias, normalized_alias, source) VALUES (?, ?, ?, ?, ?)',
-            ).run(uuidv4(), entityId, alias, normalizedAlias, 'llm');
+            ).run(randomUUID(), entityId, alias, normalizedAlias, 'llm');
             result.aliases_added++;
           } catch {
             // Alias already exists (unique constraint)

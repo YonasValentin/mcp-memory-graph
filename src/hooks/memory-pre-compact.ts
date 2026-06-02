@@ -26,13 +26,17 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // Check config
+  // Check config. Default is DISABLED to match the README (the legacy regex
+  // extractor noisily over-extracted; explicit opt-in via
+  // hooks.extract_on_compact = true). Pre-fix this hook treated absence-of-
+  // config as enabled, contradicting the documented default.
   const configPath = process.env.MCP_MEMORY_CONFIG_PATH || join(homedir(), '.mcp-memory', 'config.json');
   try {
     const config = JSON.parse(readFileSync(configPath, 'utf-8'));
-    if (config.hooks?.extract_on_compact === false) process.exit(0);
+    if (config.hooks?.extract_on_compact !== true) process.exit(0);
   } catch {
-    // Default is extract=true
+    // No config or unreadable — disabled by default.
+    process.exit(0);
   }
 
   const rawTranscriptPath = input?.transcript_path;

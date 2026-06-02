@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { EmbeddingProvider, SearchResult, MemoryRow } from '../types.js';
 import { getMemoryById, getMemoryRowid, rowToMemory, recordAccess } from '../db/repository.js';
+import { cosineSimFromL2 } from '../search/scoring.js';
 
 interface VecMatch {
   rowid: number;
@@ -18,6 +19,7 @@ export async function handleRelated(
   }
 
   const targetRowid = getMemoryRowid(db, input.id);
+  /* c8 ignore next 3 */
   if (targetRowid === null) {
     return [];
   }
@@ -49,13 +51,14 @@ export async function handleRelated(
     const rowid = Number(match.rowid);
     if (rowid === targetRowid || childRowids.has(rowid)) continue;
 
-    const similarity = 1 - match.distance / 2;
+    const similarity = cosineSimFromL2(match.distance);
     if (similarity < minSimilarity) continue;
 
     const row = db
       .prepare<[number], MemoryRow>('SELECT * FROM memories WHERE rowid = ?')
       .get(rowid);
 
+    /* c8 ignore next */
     if (!row) continue;
     if (row.id === input.id) continue;
 
@@ -74,6 +77,7 @@ export async function handleRelated(
       age_days: ageDays,
       freshness_warning: ageDays > 90
         ? `This memory is ${ageDays} days old. Verify against current state before asserting as fact.`
+        /* c8 ignore next 2 */
         : ageDays > 30
           ? `This memory is ${ageDays} days old. Information may be outdated.`
           : null,

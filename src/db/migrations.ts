@@ -1,8 +1,32 @@
 import type Database from 'better-sqlite3';
+import { CURRENT_SCHEMA_VERSION, MEMORY_LINKS_DDL, CORE_MEMORY_DDL } from './schema.js';
 
 interface Migration {
   version: number;
   up: (db: Database.Database) => void;
+}
+
+export { CURRENT_SCHEMA_VERSION };
+
+/**
+ * Run an `ALTER TABLE … ADD COLUMN` that is safe to re-apply. SQLite has no
+ * `IF NOT EXISTS` for ADD COLUMN, so on a second run it raises a
+ * "duplicate column name" error — the ONLY error this helper swallows (the
+ * column is already present, which is the desired end state). Every other
+ * error (no such table, malformed SQL, disk I/O, lock failure) is rethrown so
+ * a genuine failure aborts the migration transaction instead of silently
+ * bumping the schema version past a partially-applied migration.
+ */
+export function addColumn(db: Database.Database, sql: string): void {
+  try {
+    db.exec(sql);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!message.includes('duplicate column name')) {
+      throw err;
+    }
+    /* column already exists — idempotent re-run */
+  }
 }
 
 const migrations: Migration[] = [
@@ -27,14 +51,12 @@ const migrations: Migration[] = [
   {
     version: 3,
     up: (db) => {
-      // ALTER TABLE doesn't support IF NOT EXISTS — use try/catch per column
-      const addColumn = (sql: string) => {
-        try { db.exec(sql); } catch { /* column already exists */ }
-      };
-      addColumn('ALTER TABLE memories ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0');
-      addColumn('ALTER TABLE memories ADD COLUMN last_accessed_at TEXT');
-      addColumn('ALTER TABLE memories ADD COLUMN importance_score REAL NOT NULL DEFAULT 0.5');
-      addColumn('ALTER TABLE memories ADD COLUMN confidence_score REAL NOT NULL DEFAULT 0.5');
+      // ALTER TABLE doesn't support IF NOT EXISTS — addColumn ignores only the
+      // duplicate-column re-run error and rethrows anything else.
+      addColumn(db, 'ALTER TABLE memories ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0');
+      addColumn(db, 'ALTER TABLE memories ADD COLUMN last_accessed_at TEXT');
+      addColumn(db, 'ALTER TABLE memories ADD COLUMN importance_score REAL NOT NULL DEFAULT 0.5');
+      addColumn(db, 'ALTER TABLE memories ADD COLUMN confidence_score REAL NOT NULL DEFAULT 0.5');
 
       db.exec(`
 
@@ -74,16 +96,12 @@ const migrations: Migration[] = [
   {
     version: 4,
     up: (db) => {
-      const addColumn = (sql: string) => {
-        try { db.exec(sql); } catch { /* column already exists */ }
-      };
-
       // New columns on memories
-      addColumn("ALTER TABLE memories ADD COLUMN superseded_at TEXT");
-      addColumn("ALTER TABLE memories ADD COLUMN condensation_level TEXT NOT NULL DEFAULT 'full'");
-      addColumn("ALTER TABLE memories ADD COLUMN condensed_at TEXT");
-      addColumn("ALTER TABLE memories ADD COLUMN provenance TEXT NOT NULL DEFAULT 'manual'");
-      addColumn("ALTER TABLE memories ADD COLUMN provenance_detail TEXT");
+      addColumn(db, "ALTER TABLE memories ADD COLUMN superseded_at TEXT");
+      addColumn(db, "ALTER TABLE memories ADD COLUMN condensation_level TEXT NOT NULL DEFAULT 'full'");
+      addColumn(db, "ALTER TABLE memories ADD COLUMN condensed_at TEXT");
+      addColumn(db, "ALTER TABLE memories ADD COLUMN provenance TEXT NOT NULL DEFAULT 'manual'");
+      addColumn(db, "ALTER TABLE memories ADD COLUMN provenance_detail TEXT");
 
       db.exec(`
         CREATE INDEX IF NOT EXISTS idx_memories_superseded ON memories(superseded_at);
@@ -165,6 +183,65 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: 5,
+    up: (db) => {
+      // Pillar 1: persistent memory-to-memory edge store.
+      db.exec(MEMORY_LINKS_DDL);
+    },
+  },
+  {
+    version: 6,
+    up: (db) => {
+      // Bi-temporal substrate: facts are invalidated, not deleted, so they can
+      // be queried point-in-time (Zep/Graphiti model). `valid_from` is when the
+      // fact became true, `valid_to` when it stopped (NULL = still valid), and
+      // `tx_expired` when the row was retracted (NULL = not retracted). The
+      // existing `created_at` is the transaction-created time (tx_created).
+      addColumn(db, 'ALTER TABLE memories ADD COLUMN valid_from TEXT');
+      addColumn(db, 'ALTER TABLE memories ADD COLUMN valid_to TEXT');
+      addColumn(db, 'ALTER TABLE memories ADD COLUMN tx_expired TEXT');
+
+      addColumn(db, 'ALTER TABLE memory_links ADD COLUMN valid_from TEXT');
+      addColumn(db, 'ALTER TABLE memory_links ADD COLUMN valid_to TEXT');
+      addColumn(db, 'ALTER TABLE memory_links ADD COLUMN tx_expired TEXT');
+
+      // SQLite can't add a column with a non-constant default, so backfill the
+      // validity start from each row's transaction-created time after the fact.
+      db.exec(`
+        UPDATE memories SET valid_from = created_at WHERE valid_from IS NULL;
+        UPDATE memory_links SET valid_from = created_at WHERE valid_from IS NULL;
+      `);
+    },
+  },
+  {
+    version: 7,
+    up: (db) => {
+      // Spaced-repetition forgetting curve: each memory carries a `stability`
+      // that grows on access. retention = e^(-Δt/stability) powers an opt-in
+      // ranking multiplier and an opt-in prune signal. The NOT NULL DEFAULT
+      // backfills existing rows to 1.0 in the same ALTER (SQLite applies a
+      // constant default to all pre-existing rows).
+      addColumn(db, 'ALTER TABLE memories ADD COLUMN stability REAL NOT NULL DEFAULT 1.0');
+    },
+  },
+  {
+    version: 8,
+    up: (db) => {
+      // Pillar 5: MemGPT-style pinned "core memory" block per (scope, namespace).
+      db.exec(CORE_MEMORY_DDL);
+    },
+  },
+  {
+    version: 9,
+    up: (db) => {
+      // Pillar 7: multi-agent / team attribution. `agent_id` records WHICH agent
+      // wrote a memory, distinct from `author` (the human/source). Nullable so
+      // pre-existing rows backfill to NULL automatically — additive and
+      // backward-compatible (a NULL agent_id is today's behaviour).
+      addColumn(db, 'ALTER TABLE memories ADD COLUMN agent_id TEXT');
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {
@@ -190,4 +267,35 @@ export function runMigrations(db: Database.Database): void {
   });
 
   applyMigrations();
+}
+
+/**
+ * The `migrate` CLI command's core. Upgrades a database from its observed
+ * version to CURRENT, bypassing {@link initializeSchema}'s v4-floor throw so a
+ * genuinely pre-v4 DB (original base shape, missing v3/v4 columns) can be
+ * brought forward. Steps:
+ *   1. Ensure `schema_meta` and a `schema_version` row exist (seeded to the
+ *      observed value, or 0 when absent) — `runMigrations` only UPDATEs the row,
+ *      so a missing row would otherwise leave the version unstamped.
+ *   2. Run all pending migrations from that version up to CURRENT.
+ * Idempotent: a no-op on an already-current DB.
+ */
+export function migrateDatabase(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_meta (
+      key TEXT PRIMARY KEY NOT NULL,
+      value TEXT NOT NULL
+    );
+  `);
+
+  const row = db
+    .prepare<[string], { value: string }>('SELECT value FROM schema_meta WHERE key = ?')
+    .get('schema_version');
+  if (!row) {
+    // No recorded version → treat as the pre-schema_meta floor (0) so every
+    // migration applies. Seed the row so runMigrations' UPDATE can stamp it.
+    db.prepare("INSERT INTO schema_meta (key, value) VALUES ('schema_version', '0')").run();
+  }
+
+  runMigrations(db);
 }

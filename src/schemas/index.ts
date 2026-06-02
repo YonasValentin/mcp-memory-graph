@@ -91,11 +91,24 @@ export const MemoryStoreSchema = z.object({
   access_level: accessLevelWithDefault(),
   language: languageWithDefault(),
   metadata: metadataField(),
+  agent_id: z
+    .string()
+    .optional()
+    .describe('Identifier of the writing agent for multi-agent attribution'),
   expires_at: z
     .string()
     .optional()
     .describe(
       'ISO 8601 expiration date (memory auto-excluded from search after this)',
+    ),
+  on_conflict: z
+    .enum(['add', 'update', 'supersede'])
+    .default('add')
+    .describe(
+      'Write policy when a near-match exists. "add" (default): insert as new, ' +
+      'except an exact duplicate is skipped (NOOP) — identical to prior behaviour. ' +
+      '"update": merge content into the existing match (append + re-embed + version bump). ' +
+      '"supersede": retire (invalidate) the conflicting match and add this as the current one.',
     ),
 });
 
@@ -142,16 +155,20 @@ export const MemorySearchSchema = z.object({
   temporal_decay: z
     .object({
       type: z
-        .enum(['exponential', 'linear', 'none'])
-        .describe('Decay function type'),
+        .enum(['exponential', 'linear', 'none', 'forgetting'])
+        .describe('Decay function type (forgetting = Ebbinghaus spaced-repetition curve)'),
       half_life_days: z
         .number()
+        .positive()
+        .finite()
         .optional()
-        .describe('Half-life in days for exponential decay'),
+        .describe('Half-life in days for exponential decay (must be > 0)'),
       max_age_days: z
         .number()
+        .positive()
+        .finite()
         .optional()
-        .describe('Maximum age in days for linear decay'),
+        .describe('Maximum age in days for linear decay (must be > 0)'),
     })
     .optional()
     .describe('Apply time-based decay to favor recent memories'),
@@ -169,6 +186,44 @@ export const MemorySearchSchema = z.object({
     .max(1)
     .optional()
     .describe('Minimum confidence score threshold (0-1)'),
+  as_of: z
+    .string()
+    .datetime({ message: 'as_of must be a full ISO-8601 timestamp, e.g. 2026-03-01T00:00:00Z' })
+    .optional()
+    .describe(
+      'ISO 8601 point-in-time: return memories that were valid at this instant ' +
+      '(bi-temporal). Defaults to currently-valid memories when omitted. ' +
+      'Must be a full ISO-8601 timestamp (date + time + zone); a date-only or ' +
+      'non-padded value is rejected to avoid a silently-wrong lexicographic slice.',
+    ),
+  use_graph: z
+    .boolean()
+    .default(false)
+    .describe(
+      'Enable HippoRAG multi-hop recall: seed the entity graph from the query ' +
+      'and fuse Personalized PageRank as a third ranker, surfacing memories ' +
+      'connected through entities (associative recall) that pure vector+keyword ' +
+      'search misses. Default false.',
+    ),
+  rerank: z
+    .boolean()
+    .default(false)
+    .describe(
+      'Enable local cross-encoder reranking: reorder the top candidates by joint ' +
+      '(query, document) relevance using a cross-encoder model — the biggest ' +
+      'precision win over the bi-encoder base embedder. Slower (runs a model per ' +
+      'candidate) and lazy-loads the model on first use. Default false.',
+    ),
+  rerank_top_n: z
+    .number()
+    .int()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      'How many top candidates to rerank when "rerank" is true (default 50). ' +
+      'Higher = better recall coverage but slower.',
+    ),
   detail_level: z
     .enum(['summary', 'full', 'ids_only'])
     .default('summary')
@@ -292,6 +347,16 @@ export const MemoryListSchema = z.object({
     .enum(['asc', 'desc'])
     .default('desc')
     .describe('Sort direction'),
+  as_of: z
+    .string()
+    .datetime({ message: 'as_of must be a full ISO-8601 timestamp, e.g. 2026-03-01T00:00:00Z' })
+    .optional()
+    .describe(
+      'ISO 8601 point-in-time: return memories that were valid at this instant ' +
+      '(bi-temporal). Defaults to currently-valid memories when omitted. ' +
+      'Must be a full ISO-8601 timestamp (date + time + zone); a date-only or ' +
+      'non-padded value is rejected to avoid a silently-wrong lexicographic slice.',
+    ),
 });
 
 // ---------------------------------------------------------------------------
@@ -380,6 +445,15 @@ export const MemoryStatsSchema = z.object({
   scope: scopeField(false),
   namespace: namespaceField(),
   department: departmentField(),
+});
+
+// ---------------------------------------------------------------------------
+// 10b. MemoryTiersSchema
+// ---------------------------------------------------------------------------
+
+export const MemoryTiersSchema = z.object({
+  scope: scopeField(false),
+  namespace: namespaceField(),
 });
 
 // ---------------------------------------------------------------------------
@@ -553,6 +627,55 @@ export const VaultSearchSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// 15b. MemoryExportVaultSchema (Pillar 6) — write memories OUT to a vault
+// ---------------------------------------------------------------------------
+
+export const MemoryExportVaultSchema = z.object({
+  vault_path: z
+    .string()
+    .min(1)
+    .describe(
+      'Absolute path to the target Obsidian vault directory (created if missing). ' +
+      'Memories are written as .md files with YAML frontmatter — the reverse of vault_sync.',
+    ),
+  scope: scopeField(false),
+  namespace: namespaceField(),
+});
+
+// ---------------------------------------------------------------------------
+// 15c. MemoryCanvasSchema (Pillar 6) — export the memory graph as a JSON Canvas
+// ---------------------------------------------------------------------------
+
+export const MemoryCanvasSchema = z.object({
+  scope: scopeField(false),
+  namespace: namespaceField(),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(500)
+    .default(50)
+    .describe('Maximum memories to include as canvas nodes (default 50)'),
+  vault_path: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Absolute path to an Obsidian vault directory (created if missing). When ' +
+      'given, the canvas is written there as a .canvas file (confined under the ' +
+      'vault) and its path is returned; otherwise only the canvas object is returned.',
+    ),
+  name: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Filename stem for the written .canvas (default "memory-graph"). ' +
+      'Sanitized — path separators and ".." can never escape the vault.',
+    ),
+});
+
+// ---------------------------------------------------------------------------
 // 16. MemoryConsolidateSchema
 // ---------------------------------------------------------------------------
 
@@ -574,6 +697,12 @@ export const MemoryConsolidateSchema = z.object({
   max_operations: z
     .number().int().min(1).max(1000).default(100)
     .describe('Maximum number of merge/prune operations per run'),
+  forgetting_floor: z
+    .number().min(0).max(1).optional()
+    .describe(
+      'Opt-in spaced-repetition prune. When set (0-1), remove weakly-held memories ' +
+      'whose retention e^(-Δt/stability) has decayed below this floor. Omit to disable.',
+    ),
 });
 
 // ---------------------------------------------------------------------------
@@ -706,4 +835,350 @@ export const MemoryRestoreSchema = z.object({
   id: z
     .string()
     .describe('Memory ID to restore to original full content'),
+});
+
+// ---------------------------------------------------------------------------
+// 24. MemoryQuerySchema
+// ---------------------------------------------------------------------------
+
+export const MemoryQuerySchema = z.object({
+  query: z
+    .string()
+    .min(1)
+    .describe(
+      'The question to answer. Seeds from hybrid search, then walks the memory ' +
+      'graph to return a tight, relevant subgraph instead of flooding context.',
+    ),
+  max_tokens: z
+    .number()
+    .int()
+    .min(100)
+    .max(50000)
+    .default(1500)
+    .describe(
+      'Approximate token budget for the rendered context (~4 chars per token). ' +
+      'Nodes are rendered until the budget is hit, then truncated with a hint.',
+    ),
+  max_hops: z
+    .number()
+    .int()
+    .min(1)
+    .max(4)
+    .default(2)
+    .describe('How many hops to walk out from the seed memories (1-4).'),
+  seed_limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(20)
+    .default(5)
+    .describe(
+      'Maximum seed memories from the initial search. A gap cutoff drops seeds ' +
+      'scoring below 20% of the top seed to keep the traversal focused.',
+    ),
+  scope: scopeField(false),
+  namespace: namespaceField(),
+});
+
+// ---------------------------------------------------------------------------
+// 25. CoreMemory schemas (Pillar 5)
+// ---------------------------------------------------------------------------
+
+export const CoreMemoryGetSchema = z.object({
+  scope: scopeFieldWithDefault(),
+  namespace: namespaceField(),
+});
+
+export const CoreMemoryAppendSchema = z.object({
+  scope: scopeFieldWithDefault(),
+  namespace: namespaceField(),
+  text: z
+    .string()
+    .min(1)
+    .describe(
+      'Text to append to the pinned core-memory block (newline-separated when ' +
+      'the block is non-empty). Refused if it would exceed char_limit — ' +
+      'compact via core_memory_replace instead.',
+    ),
+});
+
+export const CoreMemoryReplaceSchema = z.object({
+  scope: scopeFieldWithDefault(),
+  namespace: namespaceField(),
+  old_text: z
+    .string()
+    .min(1)
+    .describe('Substring to find (first occurrence) in the core-memory block'),
+  new_text: z
+    .string()
+    .describe('Replacement text for the first occurrence of old_text'),
+});
+
+// ---------------------------------------------------------------------------
+// 26. MemoryReflectSchema (Pillar 5)
+// ---------------------------------------------------------------------------
+
+export const MemoryReflectSchema = z.object({
+  mode: z
+    .enum(['gather', 'store'])
+    .default('gather')
+    .describe(
+      '"gather" (default): the server SELECTs the most reflection-worthy memories ' +
+      '(high importance × recent) as material for you to synthesize. "store": ' +
+      'persist a synthesized insight back, linked to its source memories.',
+    ),
+  scope: scopeField(false),
+  namespace: namespaceField(),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .optional()
+    .describe('gather: max reflection-material rows to return (default 10)'),
+  insight: z
+    .string()
+    .optional()
+    .describe(
+      'store: the higher-level insight you synthesized from the gathered material',
+    ),
+  title: z
+    .string()
+    .optional()
+    .describe('store: optional short title for the stored insight'),
+  source_ids: z
+    .array(z.string())
+    .optional()
+    .describe(
+      'store: ids of the source memories this insight was derived from ' +
+      '(linked via "derived_from"; non-existent ids are skipped)',
+    ),
+});
+
+// ---------------------------------------------------------------------------
+// 27. MemoryCommunitiesSchema (Pillar 5)
+// ---------------------------------------------------------------------------
+
+export const MemoryCommunitiesSchema = z.object({
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe('Maximum communities to return, largest first (default 20)'),
+  min_size: z
+    .number()
+    .int()
+    .min(1)
+    .max(1000)
+    .optional()
+    .describe('Drop communities with fewer than this many entities (default 1)'),
+});
+
+// ---------------------------------------------------------------------------
+// 28. MemoryTemplateSchema (Pillar 6) — per-document_type scaffold
+// ---------------------------------------------------------------------------
+
+export const MemoryTemplateSchema = z.object({
+  document_type: z
+    .string()
+    .min(1)
+    .describe(
+      'Document type to fetch a note scaffold for (e.g., decision, incident, ' +
+      'learning, bug-fix, meeting, session). Unknown types get a generic ' +
+      'Summary/Details/Notes scaffold (known:false).',
+    ),
+});
+
+// ---------------------------------------------------------------------------
+// 29. MemorySessionNoteSchema (Pillar 6) — frictionless per-session capture
+// ---------------------------------------------------------------------------
+
+export const MemorySessionNoteSchema = z.object({
+  session_id: z
+    .string()
+    .min(1)
+    .describe(
+      'Session identifier. The note is keyed by source "session:<session_id>" — ' +
+      'the first call creates the memory, later calls append to that same one.',
+    ),
+  text: z
+    .string()
+    .min(1)
+    .describe('Text to capture (created as content, or appended newline-joined to the session note).'),
+  scope: scopeField(false),
+  namespace: namespaceField(),
+  title: z
+    .string()
+    .optional()
+    .describe('Optional title used only on create (defaults to "Session <session_id>").'),
+});
+
+// ---------------------------------------------------------------------------
+// 30. MemoryAttributionSchema (Pillar 7) — multi-agent provenance rollup
+// ---------------------------------------------------------------------------
+
+export const MemoryAttributionSchema = z.object({
+  scope: scopeField(false),
+  namespace: namespaceField(),
+});
+
+// ---------------------------------------------------------------------------
+// 31. MemoryQuestionsSchema (Pillar 8) — active "questions to ask" digest
+// ---------------------------------------------------------------------------
+
+export const MemoryQuestionsSchema = z.object({
+  scope: scopeField(false),
+  namespace: namespaceField(),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(20)
+    .describe('Maximum number of questions to return (default 20)'),
+});
+
+// ---------------------------------------------------------------------------
+// 32. MemoryForgetSchema (Pillar 8) — GDPR soft-delete/tombstone + hard erase
+// ---------------------------------------------------------------------------
+
+export const MemoryForgetSchema = z.object({
+  id: z.string().describe('Memory ID to forget'),
+  hard: z
+    .boolean()
+    .default(false)
+    .describe(
+      'Erasure mode. false (default): soft-delete/tombstone — stamps valid_to so ' +
+      'the memory is excluded from default retrieval but remains queryable via ' +
+      'as_of and is recoverable. true: hard erase — returns a portability export ' +
+      'copy FIRST (data-subject access), THEN permanently deletes (irreversible, ' +
+      'cascades). Additive — the existing memory_delete tool is unaffected.',
+    ),
+});
+
+// ---------------------------------------------------------------------------
+// 33. MemoryHistorySchema (Pillar 8) — point-in-time history surface
+// ---------------------------------------------------------------------------
+
+export const MemoryHistorySchema = z.object({
+  id: z.string().describe('Memory ID to get the bi-temporal timeline + version history for'),
+});
+
+// ---------------------------------------------------------------------------
+// REST API query/body schemas — derived from the MCP schemas above.
+// Express query strings arrive as `string | string[] | undefined`, so each
+// field uses zod preprocess to coerce numbers/arrays out of strings before
+// running through the upstream validator. Every branch — including the
+// "return v" fallthrough for non-numeric junk (which then fails the validator)
+// and the array vs comma-string paths — is covered by
+// __tests__/schemas/coerce-and-temporal.test.ts.
+// ---------------------------------------------------------------------------
+
+const intFromString = (min: number, max: number, fallback: number) =>
+  z.preprocess((v) => {
+    if (v === undefined || v === '' || v === null) return fallback;
+    const n = parseInt(String(v), 10);
+    return Number.isFinite(n) ? n : v;
+  }, z.number().int().min(min).max(max));
+
+const floatFromString = (min: number, max: number) =>
+  z.preprocess((v) => {
+    if (v === undefined || v === '' || v === null) return undefined;
+    const n = parseFloat(String(v));
+    return Number.isFinite(n) ? n : v;
+  }, z.number().min(min).max(max).optional());
+
+const csvList = () =>
+  z.preprocess((v) => {
+    if (v === undefined || v === null || v === '') return undefined;
+    if (Array.isArray(v)) return v;
+    return String(v).split(',').map((s) => s.trim()).filter(Boolean);
+  }, z.array(z.string()).optional());
+
+const optString = () =>
+  z.preprocess((v) => {
+    if (v === undefined || v === null || v === '') return undefined;
+    return String(v);
+  }, z.string().optional());
+
+// optBool is wired into ApiGetQuerySchema for the include_chunks toggle.
+const optBool = () =>
+  z.preprocess((v) => {
+    if (v === undefined || v === null || v === '') return undefined;
+    if (v === 'true' || v === true) return true;
+    if (v === 'false' || v === false) return false;
+    return v;
+  }, z.boolean().optional());
+
+export const ApiSearchQuerySchema = z.object({
+  q: z.string().min(1, 'q is required'),
+  scope: z.enum(['global', 'project', 'user', 'team', 'department']).optional(),
+  namespace: optString(),
+  department: optString(),
+  document_type: optString(),
+  tags: csvList(),
+  language: optString(),
+  mode: z.enum(['hybrid', 'vector', 'keyword']).default('hybrid'),
+  limit: intFromString(1, 100, 20),
+  offset: intFromString(0, 100000, 0),
+  min_confidence: floatFromString(0, 1),
+  date_from: optString(),
+  date_to: optString(),
+});
+
+export const ApiListQuerySchema = z.object({
+  scope: z.enum(['global', 'project', 'user', 'team', 'department']).optional(),
+  namespace: optString(),
+  department: optString(),
+  document_type: optString(),
+  limit: intFromString(1, 100, 20),
+  offset: intFromString(0, 100000, 0),
+  sort_by: z
+    .enum(['created_at', 'updated_at', 'title', 'importance_score', 'confidence_score', 'access_count'])
+    .default('created_at'),
+  sort_order: z.enum(['asc', 'desc']).default('desc'),
+});
+
+export const ApiManifestQuerySchema = z.object({
+  scope: z.enum(['global', 'project', 'user', 'team', 'department']).optional(),
+  namespace: optString(),
+  department: optString(),
+  document_type: optString(),
+  limit: intFromString(1, 1000, 500),
+  offset: intFromString(0, 100000, 0),
+});
+
+export const ApiGraphQuerySchema = z.object({
+  limit: intFromString(1, 500, 200),
+  min_importance: floatFromString(0, 1),
+});
+
+export const ApiStatsQuerySchema = z.object({
+  scope: optString(),
+  namespace: optString(),
+  department: optString(),
+});
+
+export const ApiGetQuerySchema = z.object({
+  include_chunks: optBool(),
+});
+
+export const ApiVersionsQuerySchema = z.object({
+  limit: intFromString(1, 200, 50),
+});
+
+export const ApiRelatedQuerySchema = z.object({
+  limit: intFromString(1, 50, 10),
+  min_similarity: floatFromString(0, 1),
+});
+
+export const ApiPatchBodySchema = z.object({
+  content: z.string().optional(),
+  title: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  metadata: z.record(z.unknown()).optional(),
+  expires_at: z.string().nullable().optional(),
+  changed_by: z.string().optional(),
 });

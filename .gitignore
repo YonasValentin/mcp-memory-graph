@@ -17,3 +17,10 @@ __pycache__/
 # Volumes / local data
 data/
 cache/
+tsconfig.tsbuildinfo
+
+# Coverage reports
+coverage/
+
+# Claude Code agent worktrees (local only)
+.claude/worktrees/
