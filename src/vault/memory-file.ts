@@ -38,6 +38,10 @@ export interface ParsedMemoryFile {
  */
 export function parseMemoryFile(raw: string): ParsedMemoryFile {
   const { frontmatter: fm, body } = splitFrontmatter(raw);
+  // memoryToMarkdown strips trailing whitespace and appends one "\n" as the
+  // POSIX terminator. Mirror that on parse so the round-trip is byte-exact and
+  // content does not accumulate a trailing "\n" on every rebuild.
+  const content = body.replace(/\s+$/, '');
   const str = (k: string): string | null => (typeof fm[k] === 'string' ? (fm[k] as string) : null);
   const num = (k: string, dflt: number): number =>
     typeof fm[k] === 'number' ? (fm[k] as number) : dflt;
@@ -47,7 +51,7 @@ export function parseMemoryFile(raw: string): ParsedMemoryFile {
     scope: (str('scope') ?? 'global') as MemoryScope,
     namespace: str('namespace'),
     title: str('title'),
-    content: body,
+    content,
     document_type: str('document_type'),
     source: str('source'),
     author: str('author'),

@@ -536,12 +536,19 @@ export const MemoryExportSchema = z.object({
   scope: scopeField(false),
   namespace: namespaceField(),
   department: departmentField(),
-  include_embeddings: z
-    .boolean()
-    .default(false)
-    .describe(
-      'Include raw embedding vectors in export (increases size significantly)',
-    ),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(10000)
+    .default(1000)
+    .describe('Maximum memories to export in this page (live, top-level only)'),
+  offset: z
+    .number()
+    .int()
+    .min(0)
+    .default(0)
+    .describe('Pagination offset; use with has_more to export a large corpus in pages'),
 });
 
 // ---------------------------------------------------------------------------

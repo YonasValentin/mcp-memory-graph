@@ -101,6 +101,18 @@ describe('handleConsolidate knowledge_gaps', () => {
     const report = await handleConsolidate(db, embedder, { dry_run: true });
     expect(report.knowledge_gaps.some((g) => g.includes('unanswered topic'))).toBe(true);
   });
+
+  it('surfaces gaps written in the REAL hook shape (results_count, not results)', async () => {
+    // src/hooks/memory-post-search.ts writes the key `results_count`. The reader
+    // must honor that real shape — not just the legacy `results` test fixture.
+    const log = [
+      { query: 'production gap', results_count: 0, timestamp: '2026-01-01T00:00:00Z' },
+      { query: 'production gap', results_count: 0, timestamp: '2026-01-02T00:00:00Z' },
+    ].map((e) => JSON.stringify(e)).join('\n');
+    writeFileSync(join(cfgDir, '.mcp-memory', 'search-log.jsonl'), log);
+    const report = await handleConsolidate(db, embedder, { dry_run: true });
+    expect(report.knowledge_gaps.some((g) => g.includes('production gap'))).toBe(true);
+  });
 });
 
 describe('handleConsolidate access-log rotation', () => {

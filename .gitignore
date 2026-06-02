@@ -24,3 +24,6 @@ coverage/
 
 # Claude Code agent worktrees (local only)
 .claude/worktrees/
+
+# Battle-test runtime artifacts (DBs, vault scratch) — keep plans + harnesses, drop data
+.battle/artifacts/

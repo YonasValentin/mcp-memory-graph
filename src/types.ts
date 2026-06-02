@@ -272,7 +272,12 @@ export interface PaginatedResult<T> {
 export interface ExportData {
   version: string;
   exported_at: string;
+  /** Number of memories in this page. */
   count: number;
+  /** Total live, top-level memories matching the filter (across all pages). */
+  total: number;
+  /** True when more memories remain beyond this page. */
+  has_more: boolean;
   memories: Memory[];
 }
 

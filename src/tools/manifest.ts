@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { ManifestEntry, MemoryScope, MemoryRow } from '../types.js';
+import { liveConditions } from '../db/predicates.js';
 
 interface ManifestInput {
   scope?: MemoryScope;
@@ -14,7 +15,8 @@ export function handleManifest(
   db: Database.Database,
   input: ManifestInput,
 ): { entries: ManifestEntry[]; total: number; has_more: boolean } {
-  const conditions: string[] = ['parent_id IS NULL'];
+  // Top-level, currently-live memories only — agree with list/search/stats.
+  const conditions: string[] = liveConditions({ topLevelOnly: true });
   const params: unknown[] = [];
 
   if (input.scope !== undefined) {

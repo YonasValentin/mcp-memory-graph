@@ -296,6 +296,19 @@ export function invalidateMemory(
       `UPDATE memories SET valid_to = COALESCE(valid_to, COALESCE(?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))) WHERE id = ?`,
     )
     .run(validTo ?? null, id);
+
+  if (result.changes > 0) {
+    // Drop the vector so a raw KNN MATCH never surfaces a retired memory and the
+    // vec index doesn't accumulate tombstones (BATTLE-PLAN #7). The row stays in
+    // `memories`, so `memory rebuild` can recompute the embedding if needed.
+    const row = db
+      .prepare<[string], { rowid: number }>('SELECT rowid FROM memories WHERE id = ?')
+      .get(id);
+    if (row) {
+      db.prepare('DELETE FROM memories_vec WHERE rowid = ?').run(BigInt(row.rowid));
+    }
+  }
+
   return result.changes;
 }
 

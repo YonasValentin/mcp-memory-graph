@@ -1,6 +1,17 @@
+import { createHash } from 'node:crypto';
 import type { EmbeddingProvider } from '../types.js';
 
 const MAX_CACHE_SIZE = 1024;
+
+/**
+ * Cache key over the FULL text. A prior `text.slice(0, 500)` key collided any
+ * two texts sharing a 500-char prefix and returned the wrong cached vector
+ * (BATTLE-PLAN #1). A SHA-256 digest is fixed-size and effectively
+ * collision-free across the full content.
+ */
+function cacheKey(text: string): string {
+  return createHash('sha256').update(text).digest('base64');
+}
 
 export class CachedEmbeddingProvider implements EmbeddingProvider {
   private readonly inner: EmbeddingProvider;
@@ -27,7 +38,7 @@ export class CachedEmbeddingProvider implements EmbeddingProvider {
   }
 
   async embed(text: string): Promise<Float32Array> {
-    const key = text.slice(0, 500);
+    const key = cacheKey(text);
 
     const cached = this.cache.get(key);
     if (cached) {
@@ -43,7 +54,7 @@ export class CachedEmbeddingProvider implements EmbeddingProvider {
   }
 
   async embedBatch(texts: string[]): Promise<Float32Array[]> {
-    const keys = texts.map((t) => t.slice(0, 500));
+    const keys = texts.map((t) => cacheKey(t));
     const results = new Array<Float32Array | null>(texts.length).fill(null);
     const uncachedIndices: number[] = [];
     const uncachedTexts: string[] = [];
