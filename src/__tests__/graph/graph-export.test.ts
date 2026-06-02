@@ -6,7 +6,7 @@ import { createTestDb } from '../../testing/test-db.js';
 import { MockEmbeddingProvider } from '../../testing/mock-embedder.js';
 import { handleStore } from '../../tools/store.js';
 import { createMemoryLink } from '../../graph/memory-links.js';
-import { invalidateMemory } from '../../db/repository.js';
+import { invalidateMemory, updateMemory } from '../../db/repository.js';
 import {
   exportGraph,
   mergeGraphs,
@@ -292,6 +292,30 @@ describe('mergeGraphs — pure union merge (the merge-driver core)', () => {
     expect(ab).toEqual(ba);
     const z = ab.memories.find((m) => m.id === 'Z')!;
     expect(z.content).toBe('NEWER Z'); // later updated_at wins — normal live merge
+  });
+
+  it('a later REAL live edit beats an earlier same-day tombstone after merge (updated_at must collate with valid_to)', async () => {
+    // Regression for the timestamp-format divergence. updateMemory stamps
+    // updated_at, and the union merge lexically compares it against the ISO-Z
+    // `valid_to` tombstone. If updateMemory wrote datetime('now')'s
+    // space-separated form, a genuinely-later same-day live edit would sort
+    // BELOW an older tombstone ('T' 0x54 > ' ' 0x20 at index 10) and be
+    // silently suppressed on git merge (data loss). Drives the real write path.
+    const db = createTestDb();
+    const x = await store(db, 'note about Docker and merging', 'X');
+    updateMemory(db, x.id, { title: 'X edited later today' });
+
+    const live = exportGraph(db); // X live; updated_at from the real updateMemory
+    const xLive = live.memories.find((m) => m.id === x.id)!;
+    // An EARLIER same-day deletion of the same id, stamped ISO-Z as the code does.
+    const earlierToday = `${xLive.updated_at.slice(0, 10)}T00:00:01.000Z`;
+    const tomb = artifact([{ ...xLive, valid_to: earlierToday }]);
+
+    const ab = mergeGraphs(tomb, live);
+    const ba = mergeGraphs(live, tomb);
+    expect(ab).toEqual(ba); // order-independent
+    // The later live edit must WIN — the older tombstone must not suppress it.
+    expect(ab.memories.find((m) => m.id === x.id)!.valid_to).toBeNull();
   });
 
   it('a tombstone suppresses the other branch\'s live copy (no resurrection), both directions', () => {

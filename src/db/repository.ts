@@ -107,7 +107,11 @@ export function updateMemory(
     }
 
     setClauses.push('version = version + 1');
-    setClauses.push("updated_at = datetime('now')");
+    // ISO-8601 + Z (matching toISOString() created_at and the strftime valid_to
+    // tombstone) so updated_at collates correctly in lexicographic comparisons —
+    // datetime('now')'s space separator sorts before 'T' and would let an older
+    // tombstone suppress a later live edit in the git union merge (data loss).
+    setClauses.push("updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')");
     params.push(id);
 
     db.prepare(`UPDATE memories SET ${setClauses.join(', ')} WHERE id = ?`).run(
