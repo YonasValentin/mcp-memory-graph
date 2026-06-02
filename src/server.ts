@@ -51,6 +51,7 @@ import {
   MemoryVersionRestoreSchema,
 } from './schemas/index.js';
 import { handleStore } from './tools/store.js';
+import { CrossEncoderNli, type NliClassifier } from './graph/contradiction.js';
 import { handleSearch } from './tools/search.js';
 import { handleGet } from './tools/get.js';
 import { handleUpdate } from './tools/update.js';
@@ -157,7 +158,8 @@ export function createServer(): McpServer {
   const server = new McpServer({ name: 'mcp-memory-server', version: SERVER_VERSION });
 
   let db: Database.Database | null = null;
-  let embedder: EmbeddingProvider | null = null;
+  let embedderPromise: Promise<EmbeddingProvider> | null = null;
+  let nli: NliClassifier | null = null;
 
   function getDb(): Database.Database {
     if (!db) {
@@ -168,13 +170,26 @@ export function createServer(): McpServer {
     return db;
   }
 
-  async function getEmbedder(): Promise<EmbeddingProvider> {
-    if (!embedder) {
-      const inner = new TransformersEmbeddingProvider();
-      await inner.initialize();
-      embedder = new CachedEmbeddingProvider(inner);
+  function getEmbedder(): Promise<EmbeddingProvider> {
+    // Memoize the in-flight promise (not just the resolved value): concurrent
+    // first-use would otherwise each construct + initialize a separate model.
+    if (!embedderPromise) {
+      embedderPromise = (async () => {
+        const inner = new TransformersEmbeddingProvider();
+        await inner.initialize();
+        return new CachedEmbeddingProvider(inner);
+      })();
     }
-    return embedder;
+    return embedderPromise;
+  }
+
+  function getNli(): NliClassifier {
+    // Lazy proxy: constructing CrossEncoderNli downloads nothing — the model
+    // loads only when classify() actually runs (the on_conflict=supersede
+    // contradiction path), so the common add path pays zero cost. Wiring this
+    // is what makes the self-correcting NLI invalidation real in production.
+    if (!nli) nli = new CrossEncoderNli();
+    return nli;
   }
 
   // ── 1. memory_store ──────────────────────────────────────────────────────
@@ -184,7 +199,7 @@ export function createServer(): McpServer {
     MemoryStoreSchema.shape,
     instrument('memory_store', async (input) => {
       const parsed = MemoryStoreSchema.parse(input);
-      return handleStore(getDb(), await getEmbedder(), parsed);
+      return handleStore(getDb(), await getEmbedder(), parsed, getNli());
     }),
   );
 

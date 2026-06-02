@@ -269,7 +269,9 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
     const tok = bearerToken();
     if (tok) {
       const expected = `Bearer ${tok}`;
-      if ((req.header('authorization') ?? '') !== expected) {
+      // Constant-time compare, matching the /api + /mcp bearerMiddleware — a
+      // plain !== leaks the secret via response-timing on this guarded path.
+      if (!timingSafeStrEqual(req.header('authorization') ?? '', expected)) {
         res.status(401).json({ error: 'Unauthorized', code: 'UNAUTHORIZED' });
         return;
       }

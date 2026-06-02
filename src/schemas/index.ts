@@ -120,6 +120,10 @@ export const MemorySearchSchema = z.object({
   query: z
     .string()
     .min(1)
+    // Reject blank/whitespace-only queries: min(1) lets "   " through, and a
+    // whitespace string still embeds into a valid vector whose KNN scan returns
+    // the entire corpus as bogus "results". A blank query carries no signal.
+    .refine((s) => s.trim().length > 0, 'Search query must not be blank')
     .describe(
       'Search query — supports natural language for semantic search and keywords for exact matching',
     ),
@@ -552,29 +556,41 @@ const MemoryImportItemSchema = z.object({
     .string()
     .optional()
     .describe('Optional ID — if omitted, a new ID is generated'),
-  title: z.string().optional().describe('Short title for the memory'),
+  // Import is the restore side of memory_export, which serializes absent
+  // optional columns as JSON `null` (not `undefined`). So every optional field
+  // here is `.nullable()` — otherwise the tool's own export format is rejected
+  // by its own import and a backup/migration round-trip imports 0 records.
+  title: z.string().nullable().optional().describe('Short title for the memory'),
   scope: scopeField(false),
-  namespace: namespaceField(),
-  document_type: documentTypeField(),
-  source: sourceField(),
-  author: authorField(),
-  department: departmentField(),
-  tags: tagsField(),
-  access_level: accessLevelOptional(),
-  language: languageOptional(),
-  metadata: metadataField(),
+  namespace: namespaceField().nullable(),
+  document_type: documentTypeField().nullable(),
+  source: sourceField().nullable(),
+  author: authorField().nullable(),
+  department: departmentField().nullable(),
+  tags: tagsField().nullable(),
+  access_level: accessLevelOptional().nullable(),
+  language: languageOptional().nullable(),
+  metadata: metadataField().nullable(),
+  agent_id: z
+    .string()
+    .nullable()
+    .optional()
+    .describe('Originating actor/agent id (preserved on restore for attribution)'),
   expires_at: z
     .string()
+    .nullable()
     .optional()
     .describe('ISO 8601 expiration date'),
   created_at: z
     .string()
+    .nullable()
     .optional()
-    .describe('Original creation timestamp (ISO 8601)'),
+    .describe('Original creation timestamp (ISO 8601) — preserved on restore'),
   updated_at: z
     .string()
+    .nullable()
     .optional()
-    .describe('Original update timestamp (ISO 8601)'),
+    .describe('Original update timestamp (ISO 8601) — preserved on restore'),
 });
 
 export const MemoryImportSchema = z.object({

@@ -7,20 +7,26 @@ import { computeContentSignal } from '../search/content-signals.js';
 interface ImportItem {
   id?: string;
   content: string;
-  title?: string;
-  scope?: string;
-  namespace?: string;
-  document_type?: string;
-  source?: string;
-  author?: string;
-  department?: string;
-  tags?: string[];
-  access_level?: string;
-  language?: string;
-  metadata?: Record<string, unknown>;
-  parent_id?: string;
-  chunk_index?: number;
-  expires_at?: string;
+  // Optional fields are `| null` because memory_export serializes absent
+  // columns as JSON null; handleImport coalesces null/undefined to defaults.
+  title?: string | null;
+  scope?: string | null;
+  namespace?: string | null;
+  document_type?: string | null;
+  source?: string | null;
+  author?: string | null;
+  department?: string | null;
+  tags?: string[] | null;
+  access_level?: string | null;
+  language?: string | null;
+  metadata?: Record<string, unknown> | null;
+  parent_id?: string | null;
+  chunk_index?: number | null;
+  expires_at?: string | null;
+  // Preserved on restore so a backup is lossless (timestamps + attribution).
+  created_at?: string | null;
+  updated_at?: string | null;
+  agent_id?: string | null;
 }
 
 function isValidImportItem(item: unknown): item is ImportItem {
@@ -110,8 +116,12 @@ export async function handleImport(
           parent_id: item.parent_id ?? null,
           chunk_index: item.chunk_index ?? null,
           version: 1,
-          created_at: now,
-          updated_at: now,
+          // Preserve the original timestamps on restore (fall back to now only
+          // when the source omitted them) so temporal decay / age / as_of stay
+          // truthful; agent_id keeps multi-actor attribution across backup/restore.
+          created_at: item.created_at ?? now,
+          updated_at: item.updated_at ?? now,
+          agent_id: item.agent_id ?? null,
           expires_at: item.expires_at ?? null,
           access_count: 0,
           last_accessed_at: null,
