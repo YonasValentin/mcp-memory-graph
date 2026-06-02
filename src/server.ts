@@ -46,6 +46,7 @@ import {
   MemoryForgetSchema,
   MemoryHistorySchema,
   MemoryUnlinkedMentionsSchema,
+  MemoryQueryStructuredSchema,
 } from './schemas/index.js';
 import { handleStore } from './tools/store.js';
 import { handleSearch } from './tools/search.js';
@@ -86,6 +87,7 @@ import { handleQuestions } from './tools/questions.js';
 import { handleForget } from './tools/forget.js';
 import { handleHistory } from './tools/history.js';
 import { handleUnlinkedMentions } from './tools/unlinked-mentions.js';
+import { runStructuredQuery } from './search/structured-query.js';
 
 import { metrics } from './api/metrics.js';
 import { logger } from './lib/logger.js';
@@ -595,6 +597,17 @@ export function createServer(): McpServer {
     instrument('memory_unlinked_mentions', async (input) => {
       const parsed = MemoryUnlinkedMentionsSchema.parse(input);
       return handleUnlinkedMentions(getDb(), await getEmbedder(), parsed);
+    }),
+  );
+
+  // ── 36. memory_query_structured ───────────────────────────────────────────
+  server.tool(
+    'memory_query_structured',
+    'Structured query over memory PROPERTIES (the agent\'s "Bases/Dataview"): filter currently-valid, top-level memories by scope/namespace/department/document_type/language/tags (AND)/min_importance/created_at range, sort by created_at|updated_at|importance_score|title, paginate, and project specific fields. Exact, deterministic retrieval that complements fuzzy memory_search — use it for "all decision memories in namespace=edc with importance>0.7, newest first".',
+    MemoryQueryStructuredSchema.shape,
+    instrument('memory_query_structured', async (input) => {
+      const parsed = MemoryQueryStructuredSchema.parse(input);
+      return runStructuredQuery(getDb(), parsed);
     }),
   );
 

@@ -444,6 +444,35 @@ export const MemoryUnlinkedMentionsSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// 8c. MemoryQueryStructuredSchema
+// ---------------------------------------------------------------------------
+
+export const MemoryQueryStructuredSchema = z.object({
+  filter: z
+    .object({
+      scope: z.enum(['global', 'project', 'user', 'team', 'department']).optional(),
+      namespace: z.string().optional(),
+      department: z.string().optional(),
+      document_type: z.string().optional(),
+      language: z.string().optional(),
+      tags: z.array(z.string()).optional().describe('All listed tags must be present (AND)'),
+      min_importance: z.number().min(0).max(1).optional(),
+      created_after: z.string().optional().describe('created_at >= this ISO instant'),
+      created_before: z.string().optional().describe('created_at <= this ISO instant'),
+    })
+    .optional(),
+  sort: z
+    .object({
+      by: z.enum(['created_at', 'updated_at', 'importance_score', 'title']).default('created_at'),
+      order: z.enum(['asc', 'desc']).default('desc'),
+    })
+    .optional(),
+  limit: z.number().int().min(1).max(500).default(20),
+  offset: z.number().int().min(0).default(0),
+  fields: z.array(z.string()).optional().describe('Return only these fields (projection)'),
+});
+
+// ---------------------------------------------------------------------------
 // 9. MemoryVersionsSchema
 // ---------------------------------------------------------------------------
 
