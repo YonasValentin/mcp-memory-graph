@@ -33,6 +33,8 @@ import {
   ApiPatchBodySchema,
 } from '../schemas/index.js';
 import { logger } from '../lib/logger.js';
+// T1: shared MCP_API_NAMESPACE tenancy policy (one source for MCP + REST).
+import { forcedNamespace, idIsInForcedNamespace } from '../lib/tenancy.js';
 import { ReloadGate, maybeBustGraphCache } from '../lib/hot-reload.js';
 import path from 'node:path';
 import os from 'node:os';
@@ -157,8 +159,9 @@ function asyncHandler(
  * client-supplied `namespace`.
  */
 export function forcedApiNamespace(): string | undefined {
-  const ns = process.env.MCP_API_NAMESPACE;
-  return ns && ns.length > 0 ? ns : undefined;
+  // T1: delegate to the shared policy reader. Kept as a named re-export so the
+  // existing web/ and route imports (and remote-namespace tests) stay stable.
+  return forcedNamespace();
 }
 
 export function registerApiRoutes(
@@ -174,14 +177,9 @@ export function registerApiRoutes(
    * 404 (not 403) so a scoped instance does not even confirm the id exists.
    */
   function assertNamespaceAllowed(id: string): void {
-    const forced = forcedApiNamespace();
-    if (!forced) return;
-    const row = getDb()
-      .prepare<[string], { namespace: string | null }>(
-        'SELECT namespace FROM memories WHERE id = ?',
-      )
-      .get(id);
-    if (!row || row.namespace !== forced) {
+    // T1: shared ownership check; this surface throws 404 (does not even
+    // confirm the id exists) instead of returning a boolean.
+    if (!idIsInForcedNamespace(getDb(), id)) {
       throw new HttpError(404, 'NOT_FOUND', 'Memory not found');
     }
   }

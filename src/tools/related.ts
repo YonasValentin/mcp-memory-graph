@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { EmbeddingProvider, SearchResult, MemoryRow } from '../types.js';
 import { getMemoryById, getMemoryRowid, rowToMemory, recordAccess } from '../db/repository.js';
-import { cosineSimFromL2 } from '../search/scoring.js';
+import { cosineSimFromL2, confidenceLabel } from '../search/scoring.js';
 
 interface VecMatch {
   rowid: number;
@@ -63,8 +63,10 @@ export async function handleRelated(
     if (row.id === input.id) continue;
 
     const confidence = Math.min(similarity, 1);
-    const confidenceLevel =
-      confidence >= 0.8 ? 'high' : confidence >= 0.5 ? 'medium' : 'low';
+    // C2: single source of truth for confidence_level cutoffs. Was 0.8/0.5
+    // here, which disagreed with memory_search; use the canonical 0.7/0.4
+    // confidenceLabel() from scoring.ts so both surfaces label identically.
+    const confidenceLevel = confidenceLabel(confidence);
 
     const ageDays = Math.max(0, Math.floor((Date.now() - new Date(row.updated_at).getTime()) / 86_400_000));
 

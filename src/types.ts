@@ -1,14 +1,26 @@
-export type MemoryScope = 'global' | 'project' | 'user' | 'team' | 'department';
+// Y1/E1/E2: enum unions are DERIVED from the canonical tuples in
+// constants/enums.ts so the TS types and the Zod validators share one source.
+import type {
+  SCOPES,
+  ACCESS_LEVELS,
+  SEARCH_MODES,
+  CONTENT_TYPES,
+  ENTITY_TYPES,
+  SORT_FIELDS,
+  LEARNING_CATEGORIES,
+} from './constants/enums.js';
 
-export type AccessLevel = 'public' | 'internal' | 'confidential' | 'restricted';
+export type MemoryScope = (typeof SCOPES)[number];
 
-export type SearchMode = 'hybrid' | 'vector' | 'keyword';
+export type AccessLevel = (typeof ACCESS_LEVELS)[number];
+
+export type SearchMode = (typeof SEARCH_MODES)[number];
 
 export type DecayType = 'exponential' | 'linear' | 'none' | 'forgetting';
 
-export type ContentType = 'text' | 'markdown' | 'code' | 'legal' | 'structured';
+export type ContentType = (typeof CONTENT_TYPES)[number];
 
-export type SortField = 'created_at' | 'updated_at' | 'title' | 'importance_score' | 'confidence_score' | 'access_count';
+export type SortField = (typeof SORT_FIELDS)[number];
 
 export type SortOrder = 'asc' | 'desc';
 
@@ -16,7 +28,7 @@ export type ConfidenceLevel = 'high' | 'medium' | 'low';
 
 export type CondensationLevel = 'full' | 'summary' | 'one_liner';
 
-export type EntityType = 'person' | 'project' | 'tool' | 'concept' | 'organization' | 'file' | 'package' | 'pattern';
+export type EntityType = (typeof ENTITY_TYPES)[number];
 
 export type ProvenanceType = 'manual' | 'vault_sync' | 'learning_extraction' | 'consolidation_merge' | 'import' | 'ingest' | 'reflection';
 
@@ -388,7 +400,7 @@ export interface ConsolidationReport {
 }
 
 export interface ExtractedLearning {
-  type: 'decision' | 'pattern' | 'error_fix' | 'convention';
+  type: (typeof LEARNING_CATEGORIES)[number];
   title: string;
   content: string;
   tags: string[];
