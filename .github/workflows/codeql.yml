@@ -18,6 +18,12 @@ jobs:
   analyze:
     name: analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
+    # CodeQL uploads results to GitHub code scanning, which requires GitHub
+    # Advanced Security on a PRIVATE repo. Without it the upload fails (red CI on
+    # every branch). Gate the job on an opt-in repo variable so it skips cleanly
+    # until code scanning is available; set `ENABLE_CODEQL=true` (repo → Settings
+    # → Secrets and variables → Actions → Variables) once GHAS/code scanning is on.
+    if: ${{ vars.ENABLE_CODEQL == 'true' }}
     strategy:
       fail-fast: false
       matrix:

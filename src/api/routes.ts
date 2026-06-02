@@ -148,6 +148,19 @@ function asyncHandler(
   };
 }
 
+/**
+ * Remote-namespace scoping (P2.5). When MCP_API_NAMESPACE is set, the read API
+ * force-scopes every corpus query to that namespace — so a single self-hosted
+ * instance can safely expose exactly one shared namespace (a team points its
+ * dashboard/clients at it) without leaking other namespaces. Unset → the global
+ * view (today's behaviour). The forced value takes precedence over any
+ * client-supplied `namespace`.
+ */
+export function forcedApiNamespace(): string | undefined {
+  const ns = process.env.MCP_API_NAMESPACE;
+  return ns && ns.length > 0 ? ns : undefined;
+}
+
 export function registerApiRoutes(
   router: Application,
   getDb: GetDb,
@@ -156,7 +169,7 @@ export function registerApiRoutes(
   // ── GET /api/stats ──────────────────────────────────────────────────────
   router.get('/api/stats', asyncHandler('GET /api/stats', (req, res) => {
     const q = parseOrThrow(ApiStatsQuerySchema, req.query);
-    const result = handleStats(getDb(), q);
+    const result = handleStats(getDb(), { ...q, namespace: forcedApiNamespace() ?? q.namespace });
     res.json(result);
   }));
 
@@ -166,7 +179,7 @@ export function registerApiRoutes(
     const result = await handleSearch(getDb(), await getEmbedder(), {
       query: q.q,
       scope: q.scope,
-      namespace: q.namespace,
+      namespace: forcedApiNamespace() ?? q.namespace,
       department: q.department,
       document_type: q.document_type,
       tags: q.tags,
@@ -184,7 +197,7 @@ export function registerApiRoutes(
   // ── GET /api/memories ───────────────────────────────────────────────────
   router.get('/api/memories', asyncHandler('GET /api/memories', (req, res) => {
     const q = parseOrThrow(ApiListQuerySchema, req.query);
-    const result = handleList(getDb(), q);
+    const result = handleList(getDb(), { ...q, namespace: forcedApiNamespace() ?? q.namespace });
     res.json(result);
   }));
 
@@ -279,6 +292,7 @@ export function registerApiRoutes(
       offset: 0,
       sort_by: 'importance_score',
       sort_order: 'desc',
+      namespace: forcedApiNamespace(),
     });
 
     const nodes = listResult.items.filter(
@@ -307,7 +321,7 @@ export function registerApiRoutes(
   // ── GET /api/manifest ─────────────────────────────────────────────────
   router.get('/api/manifest', asyncHandler('GET /api/manifest', (req, res) => {
     const q = parseOrThrow(ApiManifestQuerySchema, req.query);
-    const result = handleManifest(getDb(), q);
+    const result = handleManifest(getDb(), { ...q, namespace: forcedApiNamespace() ?? q.namespace });
     res.json(result);
   }));
 }

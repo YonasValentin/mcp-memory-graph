@@ -29,11 +29,14 @@ jobs:
         with:
           node-version: '22.x'
 
+      # Gate on SHIPPED dependencies only (--omit=dev): a vuln in a build/test
+      # tool (vitest, esbuild, eslint) never reaches a user, so it shouldn't fail
+      # the supply-chain gate. Production deps are audited at the high level.
       - name: Audit (root)
         if: matrix.workspace == 'root'
-        run: npm audit --audit-level=high
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Audit (web)
         if: matrix.workspace == 'web'
         working-directory: web
-        run: npm audit --audit-level=high
+        run: npm audit --omit=dev --audit-level=high

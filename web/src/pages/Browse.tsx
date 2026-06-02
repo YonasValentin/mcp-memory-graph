@@ -58,28 +58,34 @@ export function Browse() {
     [setParams],
   )
 
-  const fetchData = useCallback(async () => {
+  // Re-fetches whenever a filter/sort/page changes. The `ignore` flag drops a
+  // stale response so a slow earlier request can't clobber a newer result set
+  // (WEB-2).
+  useEffect(() => {
+    let ignore = false
     setLoading(true)
-    try {
-      const data = await listMemories({
-        limit: PAGE_SIZE,
-        offset,
-        sort_by: sortBy,
-        sort_order: sortOrder,
-        scope: scopeFilter === "all" ? undefined : (scopeFilter as Memory["scope"]),
+    listMemories({
+      limit: PAGE_SIZE,
+      offset,
+      sort_by: sortBy,
+      sort_order: sortOrder,
+      scope: scopeFilter === "all" ? undefined : (scopeFilter as Memory["scope"]),
+    })
+      .then((data) => {
+        if (ignore) return
+        setMemories(data.items)
+        setTotal(data.total)
       })
-      setMemories(data.items)
-      setTotal(data.total)
-    } catch (err) {
-      toastError(err, "Couldn't load memories")
-    } finally {
-      setLoading(false)
+      .catch((err) => {
+        if (!ignore) toastError(err, "Couldn't load memories")
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false)
+      })
+    return () => {
+      ignore = true
     }
   }, [offset, sortBy, sortOrder, scopeFilter])
-
-  useEffect(() => {
-    fetchData()
-  }, [fetchData])
 
   const toggleSort = (field: SortField) => {
     const nextOrder: SortOrder = sortBy === field ? (sortOrder === "asc" ? "desc" : "asc") : "desc"

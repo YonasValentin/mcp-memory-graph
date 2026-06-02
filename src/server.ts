@@ -45,6 +45,10 @@ import {
   MemoryQuestionsSchema,
   MemoryForgetSchema,
   MemoryHistorySchema,
+  MemoryUnlinkedMentionsSchema,
+  MemoryQueryStructuredSchema,
+  MemoryVersionDiffSchema,
+  MemoryVersionRestoreSchema,
 } from './schemas/index.js';
 import { handleStore } from './tools/store.js';
 import { handleSearch } from './tools/search.js';
@@ -84,6 +88,9 @@ import { handleAttribution } from './tools/attribution.js';
 import { handleQuestions } from './tools/questions.js';
 import { handleForget } from './tools/forget.js';
 import { handleHistory } from './tools/history.js';
+import { handleUnlinkedMentions } from './tools/unlinked-mentions.js';
+import { runStructuredQuery } from './search/structured-query.js';
+import { handleVersionDiff, handleVersionRestore } from './tools/version-history.js';
 
 import { metrics } from './api/metrics.js';
 import { logger } from './lib/logger.js';
@@ -582,6 +589,50 @@ export function createServer(): McpServer {
     instrument('memory_history', async (input) => {
       const parsed = MemoryHistorySchema.parse(input);
       return handleHistory(getDb(), parsed);
+    }),
+  );
+
+  // ── 35. memory_unlinked_mentions ──────────────────────────────────────────
+  server.tool(
+    'memory_unlinked_mentions',
+    'Surface "unlinked mentions" for a memory — other memories that are semantically related (vector-near + shared entities) but that you have NOT explicitly linked yet. This is Obsidian\'s killer feature, automated: instead of matching note titles as literal text, it uses embeddings + the entity graph to propose latent connections the agent never made. Auto "similar_to" suggestions are surfaced; existing wikilink/co-occurrence/typed links are excluded. Use it to discover and then confirm real connections (e.g. via memory_extract_entities or a stored link).',
+    MemoryUnlinkedMentionsSchema.shape,
+    instrument('memory_unlinked_mentions', async (input) => {
+      const parsed = MemoryUnlinkedMentionsSchema.parse(input);
+      return handleUnlinkedMentions(getDb(), await getEmbedder(), parsed);
+    }),
+  );
+
+  // ── 36. memory_query_structured ───────────────────────────────────────────
+  server.tool(
+    'memory_query_structured',
+    'Structured query over memory PROPERTIES (the agent\'s "Bases/Dataview"): filter currently-valid, top-level memories by scope/namespace/department/document_type/language/tags (AND)/min_importance/created_at range, sort by created_at|updated_at|importance_score|title, paginate, and project specific fields. Exact, deterministic retrieval that complements fuzzy memory_search — use it for "all decision memories in namespace=edc with importance>0.7, newest first".',
+    MemoryQueryStructuredSchema.shape,
+    instrument('memory_query_structured', async (input) => {
+      const parsed = MemoryQueryStructuredSchema.parse(input);
+      return runStructuredQuery(getDb(), parsed);
+    }),
+  );
+
+  // ── 37. memory_version_diff ───────────────────────────────────────────────
+  server.tool(
+    'memory_version_diff',
+    'Show a line-by-line diff between two revisions of a memory (Obsidian-Sync-grade trust). `to` defaults to the current version. Use it to audit exactly what an edit changed — added/removed lines plus a summary count.',
+    MemoryVersionDiffSchema.shape,
+    instrument('memory_version_diff', async (input) => {
+      const parsed = MemoryVersionDiffSchema.parse(input);
+      return handleVersionDiff(getDb(), parsed);
+    }),
+  );
+
+  // ── 38. memory_version_restore ────────────────────────────────────────────
+  server.tool(
+    'memory_version_restore',
+    'Roll a memory back to a prior version\'s content. The restore is itself a versioned, re-embedded edit (the pre-restore state is snapshotted, the vault file re-mirrored) — never a destructive overwrite. Returns the restored memory.',
+    MemoryVersionRestoreSchema.shape,
+    instrument('memory_version_restore', async (input) => {
+      const parsed = MemoryVersionRestoreSchema.parse(input);
+      return handleVersionRestore(getDb(), await getEmbedder(), parsed);
     }),
   );
 

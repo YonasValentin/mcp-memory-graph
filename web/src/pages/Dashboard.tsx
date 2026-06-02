@@ -15,19 +15,27 @@ export function Dashboard() {
   const [error, setError] = useState<unknown>(null)
 
   useEffect(() => {
+    let ignore = false
     Promise.all([
       getStats(),
       listMemories({ limit: 10, sort_by: "updated_at", sort_order: "desc" }),
     ])
       .then(([s, r]) => {
+        if (ignore) return
         setStats(s)
         setRecent(r.items)
       })
       .catch((err) => {
+        if (ignore) return
         toastError(err, "Couldn't load dashboard")
         setError(err)
       })
-      .finally(() => setLoading(false))
+      .finally(() => {
+        if (!ignore) setLoading(false)
+      })
+    return () => {
+      ignore = true
+    }
   }, [])
 
   if (loading) {
