@@ -187,9 +187,11 @@ export function createServer(): McpServer {
 
   function getNli(): NliClassifier {
     // Lazy proxy: constructing CrossEncoderNli downloads nothing — the model
-    // loads only when classify() actually runs (the on_conflict=supersede
-    // contradiction path), so the common add path pays zero cost. Wiring this
-    // is what makes the self-correcting NLI invalidation real in production.
+    // loads only when classify() actually runs. R3 runs the contradiction gate
+    // on EVERY store (not just on_conflict=supersede), but handleStore only calls
+    // classify() when the near-dup shortlist is non-empty, so a store with no
+    // near neighbors still pays zero cost. Wiring this is what makes the
+    // self-correcting NLI invalidation real on the default production path.
     if (!nli) nli = new CrossEncoderNli();
     return nli;
   }
