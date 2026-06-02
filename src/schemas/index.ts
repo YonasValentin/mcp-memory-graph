@@ -211,12 +211,14 @@ export const MemorySearchSchema = z.object({
     ),
   rerank: z
     .boolean()
-    .default(false)
+    .optional()
     .describe(
       'Enable local cross-encoder reranking: reorder the top candidates by joint ' +
       '(query, document) relevance using a cross-encoder model — the biggest ' +
       'precision win over the bi-encoder base embedder. Slower (runs a model per ' +
-      'candidate) and lazy-loads the model on first use. Default false.',
+      'candidate) and lazy-loads the model on first use. Defaults ON at the MCP ' +
+      'server (precision matters more than latency for agent recall); pass false ' +
+      'to skip. Left unset, programmatic callers do not rerank.',
     ),
   rerank_top_n: z
     .number()

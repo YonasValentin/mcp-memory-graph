@@ -176,6 +176,11 @@ export async function hybridSearch(
   if (options.scope) {
     whereClauses.push('scope = ?');
     params.push(options.scope);
+  } else {
+    // Privacy: personal user-scoped memories must not bleed into an unscoped
+    // query (which a project/global search usually is). They surface only when
+    // the caller explicitly asks for scope='user'.
+    whereClauses.push("scope != 'user'");
   }
   if (options.namespace) {
     whereClauses.push('namespace = ?');

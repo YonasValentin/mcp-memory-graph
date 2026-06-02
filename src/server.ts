@@ -192,6 +192,28 @@ export function createServer(): McpServer {
     return nli;
   }
 
+  // Tenancy for a shared/remote server: when MCP_API_NAMESPACE is set, every
+  // read/query tool is forced to that namespace (overriding any caller value),
+  // matching the REST API's forced scoping. Unset (the local stdio default) → no
+  // scoping, so single-user setups are unchanged.
+  const forcedNs = (): string | undefined => process.env.MCP_API_NAMESPACE || undefined;
+  function withForcedNs<T extends { namespace?: string }>(parsed: T): T {
+    const ns = forcedNs();
+    return ns ? { ...parsed, namespace: ns } : parsed;
+  }
+  /**
+   * For by-id reads: returns true when the memory may be served. A scoped
+   * instance must not reveal a memory belonging to another namespace by id.
+   */
+  function idInForcedNs(id: string): boolean {
+    const ns = forcedNs();
+    if (!ns) return true;
+    const row = getDb()
+      .prepare<[string], { namespace: string | null }>('SELECT namespace FROM memories WHERE id = ?')
+      .get(id);
+    return !!row && row.namespace === ns;
+  }
+
   // ── 1. memory_store ──────────────────────────────────────────────────────
   server.tool(
     'memory_store',
@@ -210,7 +232,11 @@ export function createServer(): McpServer {
     MemorySearchSchema.shape,
     instrument('memory_search', async (input) => {
       const parsed = MemorySearchSchema.parse(input);
-      return handleSearch(getDb(), await getEmbedder(), parsed);
+      // Default reranking ON for the agent-facing MCP surface: the cross-encoder
+      // is the biggest precision lever and raw bi-encoder top-1 is wrong on ~half
+      // of keyword-heavy NL questions. Unit tests / REST that call handleSearch
+      // without `rerank` stay off, so no 90MB model loads in the test suite.
+      return handleSearch(getDb(), await getEmbedder(), { ...withForcedNs(parsed), rerank: parsed.rerank ?? true });
     }),
   );
 
@@ -221,6 +247,7 @@ export function createServer(): McpServer {
     MemoryGetSchema.shape,
     instrument('memory_get', async (input) => {
       const parsed = MemoryGetSchema.parse(input);
+      if (!idInForcedNs(parsed.id)) throw new Error('Memory not found');
       const result = handleGet(getDb(), parsed);
       if (!result) throw new Error('Memory not found');
       return result;
@@ -261,7 +288,7 @@ export function createServer(): McpServer {
     MemoryListSchema.shape,
     instrument('memory_list', async (input) => {
       const parsed = MemoryListSchema.parse(input);
-      return handleList(getDb(), parsed);
+      return handleList(getDb(), withForcedNs(parsed));
     }),
   );
 
@@ -283,6 +310,7 @@ export function createServer(): McpServer {
     MemoryRelatedSchema.shape,
     instrument('memory_related', async (input) => {
       const parsed = MemoryRelatedSchema.parse(input);
+      if (!idInForcedNs(parsed.id)) return { related: [], count: 0 };
       const result = await handleRelated(getDb(), await getEmbedder(), parsed);
       return { related: result, count: result.length };
     }),
@@ -295,6 +323,7 @@ export function createServer(): McpServer {
     MemoryVersionsSchema.shape,
     instrument('memory_versions', async (input) => {
       const parsed = MemoryVersionsSchema.parse(input);
+      if (!idInForcedNs(parsed.id)) return { id: parsed.id, versions: [], count: 0 };
       return handleVersions(getDb(), parsed);
     }),
   );
@@ -306,7 +335,7 @@ export function createServer(): McpServer {
     MemoryStatsSchema.shape,
     instrument('memory_stats', async (input) => {
       const parsed = MemoryStatsSchema.parse(input);
-      return handleStats(getDb(), parsed);
+      return handleStats(getDb(), withForcedNs(parsed));
     }),
   );
 
@@ -317,7 +346,7 @@ export function createServer(): McpServer {
     MemoryTiersSchema.shape,
     instrument('memory_tiers', async (input) => {
       const parsed = MemoryTiersSchema.parse(input);
-      return handleMemoryTiers(getDb(), parsed);
+      return handleMemoryTiers(getDb(), withForcedNs(parsed));
     }),
   );
 
@@ -427,7 +456,7 @@ export function createServer(): McpServer {
     MemoryManifestSchema.shape,
     instrument('memory_manifest', async (input) => {
       const parsed = MemoryManifestSchema.parse(input);
-      return handleManifest(getDb(), parsed);
+      return handleManifest(getDb(), withForcedNs(parsed));
     }),
   );
 
@@ -482,7 +511,7 @@ export function createServer(): McpServer {
     MemoryQuerySchema.shape,
     instrument('memory_query', async (input) => {
       const parsed = MemoryQuerySchema.parse(input);
-      return handleQuery(getDb(), await getEmbedder(), parsed);
+      return handleQuery(getDb(), await getEmbedder(), withForcedNs(parsed));
     }),
   );
 
@@ -526,7 +555,7 @@ export function createServer(): McpServer {
     MemoryReflectSchema.shape,
     instrument('memory_reflect', async (input) => {
       const parsed = MemoryReflectSchema.parse(input);
-      return handleReflect(getDb(), await getEmbedder(), parsed);
+      return handleReflect(getDb(), await getEmbedder(), withForcedNs(parsed));
     }),
   );
 
@@ -581,7 +610,7 @@ export function createServer(): McpServer {
     MemoryQuestionsSchema.shape,
     instrument('memory_questions', async (input) => {
       const parsed = MemoryQuestionsSchema.parse(input);
-      return handleQuestions(getDb(), parsed);
+      return handleQuestions(getDb(), withForcedNs(parsed));
     }),
   );
 
@@ -603,6 +632,7 @@ export function createServer(): McpServer {
     MemoryHistorySchema.shape,
     instrument('memory_history', async (input) => {
       const parsed = MemoryHistorySchema.parse(input);
+      if (!idInForcedNs(parsed.id)) return { memory_id: parsed.id, exists: false };
       return handleHistory(getDb(), parsed);
     }),
   );
@@ -625,7 +655,10 @@ export function createServer(): McpServer {
     MemoryQueryStructuredSchema.shape,
     instrument('memory_query_structured', async (input) => {
       const parsed = MemoryQueryStructuredSchema.parse(input);
-      return runStructuredQuery(getDb(), parsed);
+      const ns = forcedNs();
+      // query_structured carries namespace under `filter`, not top-level.
+      const scoped = ns ? { ...parsed, filter: { ...parsed.filter, namespace: ns } } : parsed;
+      return runStructuredQuery(getDb(), scoped);
     }),
   );
 
@@ -636,6 +669,7 @@ export function createServer(): McpServer {
     MemoryVersionDiffSchema.shape,
     instrument('memory_version_diff', async (input) => {
       const parsed = MemoryVersionDiffSchema.parse(input);
+      if (!idInForcedNs(parsed.id)) throw new Error('Memory not found');
       return handleVersionDiff(getDb(), parsed);
     }),
   );
