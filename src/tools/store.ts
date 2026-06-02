@@ -73,22 +73,34 @@ export async function handleStore(
   // Classify the write. Default policy ('add') yields only NOOP or ADD, so the
   // path below is byte-identical to the pre-T9 store for default callers.
   const decision = decideWriteOperation(conflicts, input.on_conflict ?? 'add');
-  const conflictsOut = conflicts.length > 0 ? conflicts : undefined;
 
-  // ── T10: opt-in NLI contradiction check (self-correcting memory). ──
-  // Only runs when a classifier is injected AND the caller asked to supersede.
-  // It reads each near neighbor as a premise vs. the new content as hypothesis,
-  // catching real logical contradictions (negations) the overlap heuristic above
-  // is blind to. Any contradicted memory is invalidated (bi-temporal retire) and
-  // the new memory is added anew — operation reported as DELETE. When `nli` is
-  // undefined this whole block is skipped, so the default path is unchanged.
+  // ── R3: self-correcting NLI write-gate (subsumes BATTLE-PLAN §2 #6). ──
+  // Runs on EVERY store whenever a classifier is available — regardless of
+  // on_conflict. The pre-R3 gate also required on_conflict==='supersede', so the
+  // default 'add' path (every default integration) never fired and "X uses 3000"
+  // then "X does NOT use 3000" was dropped as a duplicate/NOOP. Now the NLI reads
+  // each near neighbor as a premise vs. the new content as hypothesis, catching
+  // real logical contradictions (negations) the overlap heuristic above is blind
+  // to. Any contradicted memory is invalidated (bi-temporal retire) and the new
+  // memory is added anew — operation reported as DELETE, with the contradiction
+  // recorded (below). When `nli` is undefined this whole block is skipped, so the
+  // no-classifier fallback path is unchanged (no contradiction detection — the
+  // overlap heuristic alone, which cannot see negation; this is documented).
+  //
+  // Laziness: the shortlist is computed first and classify() only runs when it is
+  // non-empty, so the real model never loads on a store with no near neighbors.
   //
   // NLI classify() is async, so it cannot live inside better-sqlite3's sync
   // persist() transaction. We compute the contradicted-id list HERE, then defer
   // the actual invalidateMemory calls into persist() (alongside insertMemory) so
   // a failed insert rolls the retire back atomically (G3-F1).
   const nliInvalidated: string[] = [];
-  if (nli && (input.on_conflict ?? 'add') === 'supersede') {
+  // Contradiction conflict rows to persist alongside the new memory (so the
+  // self-correction is auditable in memory_conflicts, not silent). Recorded as
+  // `contradicted` — the bi-temporal retire of the old fact is done by
+  // invalidateMemory below, not by recordConflicts' superseded-stamp path.
+  const nliContradictions: ConflictResult[] = [];
+  if (nli) {
     // Wider net than the dedup heuristic: a real reversal ("we moved OFF X to Y")
     // deliberately uses new vocabulary and embeds FURTHER from the old fact, so a
     // tight shortlist never reaches NLI. distanceThreshold is a MAX distance, so
@@ -112,12 +124,38 @@ export async function handleStore(
     const contradicted = await detectContradictions(nli, input.content, candidates);
     for (const c of contradicted) {
       nliInvalidated.push(c.id);
+      nliContradictions.push({
+        type: 'contradicted',
+        existing_memory_id: c.id,
+        overlap_score: c.score,
+        description: `NLI contradiction (score: ${c.score.toFixed(3)})`,
+      });
     }
   }
 
   // When NLI retired a contradicted fact, the new memory always supersedes it:
   // bypass the heuristic NOOP/UPDATE/DELETE short-circuits and insert anew.
   const nliContradiction = nliInvalidated.length > 0;
+
+  // R3: never let a token/vector overlap label a contradicted fact a "duplicate"
+  // (or "superseded"). When NLI flagged the same id as a contradiction, drop the
+  // heuristic verdict for it so memory_conflicts records the honest `contradicted`
+  // type — a negation cue differs, so it is NOT a duplicate. (The NLI-flagged
+  // verdict is what gets recorded for these ids below.)
+  if (nliContradiction) {
+    const contradictedIds = new Set(nliInvalidated);
+    conflicts = conflicts.filter((c) => !contradictedIds.has(c.existing_memory_id));
+  }
+
+  // Reported conflicts: surviving heuristic verdicts + the NLI-detected
+  // contradictions (deduped by id, NLI taking precedence). Computed AFTER the
+  // R3 filter so the response never mislabels a contradiction as a duplicate.
+  const heuristicIds = new Set(conflicts.map((c) => c.existing_memory_id));
+  const reportedConflicts = [
+    ...conflicts,
+    ...nliContradictions.filter((c) => !heuristicIds.has(c.existing_memory_id)),
+  ];
+  const conflictsOut = reportedConflicts.length > 0 ? reportedConflicts : undefined;
 
   // ── NOOP: exact duplicate already present — return it without inserting. ──
   if (!nliContradiction && decision.op === 'NOOP') {
@@ -232,7 +270,10 @@ export async function handleStore(
     insertMemory(db, row, embedding);
 
     try {
-      recordConflicts(db, conflicts, row.id);
+      // Persist the surviving heuristic verdicts AND the NLI-detected
+      // contradictions (already deduped by id in reportedConflicts) so the
+      // self-correction is auditable in memory_conflicts, not silent.
+      recordConflicts(db, reportedConflicts, row.id);
     } catch (err) /* c8 ignore start */ {
       logger.error({ event: 'conflict_record_failed', memory_id: row.id, err: err instanceof Error ? err.message : String(err) });
       throw err; // bubble out so the transaction rolls back; caller's catch reports it.
