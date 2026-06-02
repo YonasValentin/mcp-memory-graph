@@ -74,11 +74,13 @@ function upsertContent(
   content: string,
 ): void {
   db.prepare(
+    // updated_at in ISO-8601 + Z form (matching toISOString()/the strftime
+    // valid_to tombstone) so it collates correctly in lexicographic comparisons.
     `INSERT INTO core_memory (scope, namespace, content, char_limit, updated_at)
-       VALUES (?, ?, ?, ?, datetime('now'))
+       VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
      ON CONFLICT(scope, namespace) DO UPDATE SET
        content = excluded.content,
-       updated_at = datetime('now')`,
+       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
   ).run(scope, namespace, content, DEFAULT_CHAR_LIMIT);
 }
 

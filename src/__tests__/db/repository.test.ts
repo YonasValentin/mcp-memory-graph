@@ -121,6 +121,22 @@ describe('repository', () => {
       expect(updated!.version).toBe(2);
     });
 
+    it('stamps updated_at in ISO-8601 Z format so it collates with valid_to/created_at', async () => {
+      const row = makeRow({ id: 'fmt-1' });
+      insertMemory(db, row, await embedder.embed(row.content));
+
+      updateMemory(db, 'fmt-1', { title: 'edited' });
+
+      const after = db
+        .prepare('SELECT updated_at FROM memories WHERE id = ?')
+        .get('fmt-1') as { updated_at: string };
+      // Must be toISOString()/strftime Z form (T separator + trailing Z), NOT
+      // datetime('now')'s space-separated form — otherwise it mis-collates
+      // against the ISO-Z valid_to tombstone in the git union merge, silently
+      // suppressing a later live edit (data loss).
+      expect(after.updated_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/);
+    });
+
     it('creates a version history entry', async () => {
       const row = makeRow({ id: 'upd-2', title: 'Original' });
       insertMemory(db, row, await embedder.embed(row.content));
