@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 # ── Stage 1: build server + web UI ─────────────────────────────────────────
-FROM node:20-slim AS builder
+FROM node:26-slim AS builder
 WORKDIR /app
 
 # Install server deps (cached layer).
@@ -23,7 +23,7 @@ RUN cd web && npm run build
 RUN npm prune --omit=dev
 
 # ── Stage 2: runtime ───────────────────────────────────────────────────────
-FROM node:20-slim AS runtime
+FROM node:26-slim AS runtime
 
 # better-sqlite3 ships prebuilt binaries for linux-x64/arm64 + Node 20, so no
 # native toolchain is required at runtime. If you target an unusual platform,
