@@ -40,6 +40,8 @@ export interface PageRankOptions {
 const DEFAULT_DAMPING = 0.5;
 const DEFAULT_TOLERANCE = 1e-6;
 const DEFAULT_MAX_ITERATIONS = 50;
+/** Floor so a 0/NULL `strength` never zeroes an evidence-backed edge. */
+const EDGE_STRENGTH_FLOOR = 0.05;
 
 /** Minimal entity row needed to seed isolated nodes + specificity weighting. */
 interface EntityRow {
@@ -52,6 +54,8 @@ interface RelationshipRow {
   source_entity_id: string;
   target_entity_id: string;
   evidence_count: number;
+  /** IDF-weighted edge specificity in (0,1] (R2 item 1). */
+  strength: number;
 }
 
 /** Memory→entity link row used by {@link rankMemoriesByPPR}. */
@@ -83,9 +87,12 @@ interface Graph {
  * still exists as an isolated node and keeps its teleport mass). Read-only.
  *
  * Edges are undirected: each `entity_relationships` row contributes weight to
- * both endpoints. Weight = `max(evidence_count, 1)` so a 0/NULL evidence count
- * never zeroes an edge. Parallel rows between the same pair (e.g. different
- * relationship `type`s) accumulate.
+ * both endpoints. Weight = `max(evidence_count, 1) * max(strength, ε)` so the
+ * IDF-weighted edge specificity (R2 item 1) actually steers the flow: at equal
+ * evidence, a stronger (rarer-endpoint) edge routes MORE PPR mass than a weak
+ * one. The ε floor keeps a 0/NULL strength from zeroing an otherwise-real edge.
+ * Parallel rows between the same pair (e.g. different relationship `type`s)
+ * accumulate.
  */
 function buildGraph(
   db: Database.Database,
@@ -111,7 +118,7 @@ function buildGraph(
   // so identical DBs always produce byte-identical scores (determinism).
   const relationships = db
     .prepare<[], RelationshipRow>(
-      `SELECT source_entity_id, target_entity_id, evidence_count
+      `SELECT source_entity_id, target_entity_id, evidence_count, strength
          FROM entity_relationships
         ORDER BY id`,
     )
@@ -136,7 +143,10 @@ function buildGraph(
     const s = index.get(rel.source_entity_id)!;
     const t = index.get(rel.target_entity_id)!;
     if (s === t) continue;
-    const w = Math.max(rel.evidence_count, 1);
+    // Edge weight blends raw co-occurrence (evidence) with IDF-weighted
+    // specificity (strength). EDGE_STRENGTH_FLOOR keeps a 0/NULL strength from
+    // zeroing an edge that real evidence backs.
+    const w = Math.max(rel.evidence_count, 1) * Math.max(rel.strength, EDGE_STRENGTH_FLOOR);
     neighbors[s].push(t);
     weights[s].push(w);
     neighbors[t].push(s);

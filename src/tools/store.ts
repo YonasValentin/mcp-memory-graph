@@ -4,7 +4,7 @@ import type { EmbeddingProvider, Memory, MemoryInput, MemoryRow } from '../types
 import { insertMemory, invalidateMemory, getMemoryById, updateMemory, rowToMemory, findNearDuplicates } from '../db/repository.js';
 import { computeContentSignal } from '../search/content-signals.js';
 import { extractEntitiesRegex } from '../graph/entity-extractor.js';
-import { storeExtractedEntities } from '../graph/entity-store.js';
+import { storeExtractedEntities, weaveGraphEdges } from '../graph/entity-store.js';
 import { detectConflicts, recordConflicts, type ConflictResult } from '../graph/conflict-resolver.js';
 import { detectContradictions, type NliClassifier } from '../graph/contradiction.js';
 import { buildSimilarityEdges } from '../graph/similarity-edges.js';
@@ -260,6 +260,17 @@ export async function handleStore(
     buildSimilarityEdges(db, row.id, embedding);
   } catch (err) /* c8 ignore start */ {
     logger.warn({ event: 'similarity_edge_failed', memory_id: row.id, err: err instanceof Error ? err.message : String(err) });
+  }
+  /* c8 ignore stop */
+
+  // R2 item 4: re-weave the IDF-weighted strengths of this memory's
+  // co-occurrence edges against current entity mention_counts. Single localized,
+  // fail-soft side-effect (the co-occurrence edges themselves are created inside
+  // the transaction by storeExtractedEntities). Never blocks a store.
+  try {
+    weaveGraphEdges(db, row.id);
+  } catch (err) /* c8 ignore start */ {
+    logger.warn({ event: 'weave_graph_edges_failed', memory_id: row.id, err: err instanceof Error ? err.message : String(err) });
   }
   /* c8 ignore stop */
 
