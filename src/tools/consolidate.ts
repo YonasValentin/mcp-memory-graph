@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { NOW_ISO_SQL } from '../db/predicates.js';
 import type { ConsolidationReport, EmbeddingProvider, MemoryRow } from '../types.js';
 import {
   updateQualityScores,
@@ -212,7 +213,7 @@ export async function handleConsolidate(
         .prepare<unknown[], { id: string }>(
           `SELECT id FROM memories
            WHERE expires_at IS NOT NULL
-             AND expires_at < datetime('now')
+             AND expires_at < ${NOW_ISO_SQL}
              AND parent_id IS NULL${filterClause}`,
         )
         .all(...filterParams);
