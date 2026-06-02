@@ -1,7 +1,7 @@
 // REAL team + git simulation. Two developers, one shared git vault.
 // Tests: recall parity (A -> vault -> B), lossless round-trip, graph survival,
 // concurrent-edit git merge, and sidecar union-merge correctness.
-import { rmSync, mkdirSync, existsSync, readFileSync, cpSync } from 'node:fs';
+import { rmSync, mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { createDatabase } from '../../dist/db/connection.js';
@@ -34,7 +34,11 @@ function gitInitVault(dir) {
   git(dir, 'init -b main');
   git(dir, 'config user.email dev@helios.test');
   git(dir, 'config user.name Dev');
-  // register the custom union merge driver for the graph sidecar
+  // What `memory vault-init` writes: bind the sidecar to the union merge driver
+  // via .gitattributes (committed → inherited by clones) AND register the driver
+  // in local git config. Without the .gitattributes line git falls back to a
+  // plain text merge and the deterministic graph artifact conflicts.
+  writeFileSync(`${dir}/.gitattributes`, '.memory/graph.json merge=memory-union\n');
   git(dir, `config merge.memory-union.name "mcp graph union"`);
   execSync(`git config merge.memory-union.driver 'node "${DIST_ENTRY}" merge-graphs %A %B %A'`, { cwd: dir });
 }
