@@ -3,13 +3,14 @@ import path from 'node:path';
 import os from 'node:os';
 import { z } from 'zod';
 import type { ServerConfig, MemoryScope } from '../types.js';
+import { SCOPES, LEARNING_CATEGORIES } from '../constants/enums.js';
 
 // ── Zod Schema ──────────────────────────────────────────────────────────
 
 const ServerConfigSchema = z.object({
   defaults: z
     .object({
-      scope: z.enum(['global', 'project', 'user', 'team', 'department']).default('project'),
+      scope: z.enum(SCOPES).default('project'),
       namespace: z.string().default('auto'),
     })
     .default({}),
@@ -40,8 +41,8 @@ const ServerConfigSchema = z.object({
   extraction: z
     .object({
       categories: z
-        .array(z.enum(['decision', 'pattern', 'error_fix', 'convention']))
-        .default(['decision', 'pattern', 'error_fix', 'convention']),
+        .array(z.enum(LEARNING_CATEGORIES))
+        .default([...LEARNING_CATEGORIES]),
       min_confidence: z.number().min(0).max(1).default(0.4),
     })
     .default({}),

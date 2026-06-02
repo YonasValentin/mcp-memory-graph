@@ -1,4 +1,15 @@
 import { z } from 'zod';
+// E1/E2: canonical enum tuples — schemas derive their z.enum(...) from these so
+// the validators never drift from the TS unions in types.ts.
+import {
+  SCOPES,
+  ACCESS_LEVELS,
+  SEARCH_MODES,
+  CONTENT_TYPES,
+  ENTITY_TYPES,
+  LEARNING_CATEGORIES,
+  SORT_FIELDS,
+} from '../constants/enums.js';
 
 // ---------------------------------------------------------------------------
 // Shared field factories — DRY helpers for fields reused across schemas
@@ -6,13 +17,13 @@ import { z } from 'zod';
 
 const scopeField = (required: false) =>
   z
-    .enum(['global', 'project', 'user', 'team', 'department'])
+    .enum(SCOPES)
     .optional()
     .describe('Memory scope for isolation');
 
 const scopeFieldWithDefault = () =>
   z
-    .enum(['global', 'project', 'user', 'team', 'department'])
+    .enum(SCOPES)
     .default('global')
     .describe('Memory scope for isolation');
 
@@ -41,13 +52,13 @@ const tagsField = () =>
 
 const accessLevelOptional = () =>
   z
-    .enum(['public', 'internal', 'confidential', 'restricted'])
+    .enum(ACCESS_LEVELS)
     .optional()
     .describe('Access classification level');
 
 const accessLevelWithDefault = () =>
   z
-    .enum(['public', 'internal', 'confidential', 'restricted'])
+    .enum(ACCESS_LEVELS)
     .default('internal')
     .describe('Access classification level');
 
@@ -151,7 +162,7 @@ export const MemorySearchSchema = z.object({
     .default(0)
     .describe('Skip this many results for pagination'),
   search_mode: z
-    .enum(['hybrid', 'vector', 'keyword'])
+    .enum(SEARCH_MODES)
     .default('hybrid')
     .describe(
       'Search mode: hybrid (vector+keyword), vector only, or keyword only',
@@ -346,7 +357,7 @@ export const MemoryListSchema = z.object({
     .default(0)
     .describe('Skip this many results for pagination'),
   sort_by: z
-    .enum(['created_at', 'updated_at', 'title', 'importance_score', 'confidence_score', 'access_count'])
+    .enum(SORT_FIELDS)
     .default('created_at')
     .describe('Field to sort results by'),
   sort_order: z
@@ -384,7 +395,7 @@ export const MemoryIngestSchema = z.object({
   tags: tagsField(),
   metadata: metadataField(),
   content_type: z
-    .enum(['text', 'markdown', 'code', 'legal', 'structured'])
+    .enum(CONTENT_TYPES)
     .default('text')
     .describe('Content type determines chunking strategy'),
   chunk_size: z
@@ -456,7 +467,7 @@ export const MemoryUnlinkedMentionsSchema = z.object({
 export const MemoryQueryStructuredSchema = z.object({
   filter: z
     .object({
-      scope: z.enum(['global', 'project', 'user', 'team', 'department']).optional(),
+      scope: z.enum(SCOPES).optional(),
       namespace: z.string().optional(),
       department: z.string().optional(),
       document_type: z.string().optional(),
@@ -700,7 +711,7 @@ export const VaultSearchSchema = z.object({
     .default(0)
     .describe('Skip this many results for pagination'),
   search_mode: z
-    .enum(['hybrid', 'vector', 'keyword'])
+    .enum(SEARCH_MODES)
     .default('hybrid')
     .describe(
       'Search mode: hybrid (vector+keyword), vector only, or keyword only',
@@ -840,7 +851,7 @@ export const MemoryExtractLearningsSchema = z.object({
     .string().optional()
     .describe('Source identifier for the session (e.g., "session-2026-03-26")'),
   categories: z
-    .array(z.enum(['decision', 'pattern', 'error_fix', 'convention']))
+    .array(z.enum(LEARNING_CATEGORIES))
     .optional()
     .describe('Which categories of learnings to extract (default: all)'),
   auto_store: z
@@ -858,7 +869,7 @@ export const MemoryGraphSchema = z.object({
     .optional()
     .describe('Entity name to start graph traversal from'),
   entity_type: z
-    .enum(['person', 'project', 'tool', 'concept', 'organization', 'file', 'package', 'pattern'])
+    .enum(ENTITY_TYPES)
     .optional()
     .describe('Filter entities by type'),
   depth: z
@@ -883,7 +894,7 @@ export const MemoryExtractEntitiesSchema = z.object({
   entities: z
     .array(z.object({
       name: z.string().min(1).describe('Entity name'),
-      type: z.enum(['person', 'project', 'tool', 'concept', 'organization', 'file', 'package', 'pattern'])
+      type: z.enum(ENTITY_TYPES)
         .describe('Entity type'),
       aliases: z.array(z.string()).optional().describe('Alternative names for this entity'),
     }))
@@ -1205,13 +1216,13 @@ const optBool = () =>
 
 export const ApiSearchQuerySchema = z.object({
   q: z.string().min(1, 'q is required'),
-  scope: z.enum(['global', 'project', 'user', 'team', 'department']).optional(),
+  scope: z.enum(SCOPES).optional(),
   namespace: optString(),
   department: optString(),
   document_type: optString(),
   tags: csvList(),
   language: optString(),
-  mode: z.enum(['hybrid', 'vector', 'keyword']).default('hybrid'),
+  mode: z.enum(SEARCH_MODES).default('hybrid'),
   limit: intFromString(1, 100, 20),
   offset: intFromString(0, 100000, 0),
   min_confidence: floatFromString(0, 1),
@@ -1220,20 +1231,20 @@ export const ApiSearchQuerySchema = z.object({
 });
 
 export const ApiListQuerySchema = z.object({
-  scope: z.enum(['global', 'project', 'user', 'team', 'department']).optional(),
+  scope: z.enum(SCOPES).optional(),
   namespace: optString(),
   department: optString(),
   document_type: optString(),
   limit: intFromString(1, 100, 20),
   offset: intFromString(0, 100000, 0),
   sort_by: z
-    .enum(['created_at', 'updated_at', 'title', 'importance_score', 'confidence_score', 'access_count'])
+    .enum(SORT_FIELDS)
     .default('created_at'),
   sort_order: z.enum(['asc', 'desc']).default('desc'),
 });
 
 export const ApiManifestQuerySchema = z.object({
-  scope: z.enum(['global', 'project', 'user', 'team', 'department']).optional(),
+  scope: z.enum(SCOPES).optional(),
   namespace: optString(),
   department: optString(),
   document_type: optString(),

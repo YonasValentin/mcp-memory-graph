@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { EmbeddingProvider, ExtractedLearning, ExtractLearningsResult } from '../types.js';
+import type { EmbeddingProvider, ExtractedLearning, ExtractLearningsResult, MemoryScope } from '../types.js';
 import { findNearDuplicates, getMemoryById, updateMemory } from '../db/repository.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
 import { DEDUP_L2_DISTANCE } from '../constants/thresholds.js';
@@ -175,7 +175,7 @@ export async function handleExtractLearnings(
     department?: string;
     tags?: string[];
     source?: string;
-    categories?: Array<'decision' | 'pattern' | 'error_fix' | 'convention'>;
+    categories?: ExtractedLearning['type'][];
     auto_store?: boolean;
   },
 ): Promise<ExtractLearningsResult> {
@@ -231,7 +231,7 @@ export async function handleExtractLearnings(
       const stored = await handleStore(db, embedder, {
         content: learning.content,
         title: learning.title,
-        scope: input.scope as 'global' | 'project' | 'user' | 'team' | 'department' | undefined,
+        scope: input.scope as MemoryScope | undefined,
         namespace: input.namespace,
         department: input.department,
         source: input.source,
