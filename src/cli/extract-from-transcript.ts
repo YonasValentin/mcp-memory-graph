@@ -6,8 +6,14 @@ import { getReadWriteDb, getEmbedder } from '../lib/direct-access.js';
 import { handleExtractLearnings } from '../tools/extract-learnings.js';
 import { getConfig, resolveNamespace } from '../config/loader.js';
 
-// Safety timeout — background extraction must not run forever
-setTimeout(() => process.exit(1), 5 * 60 * 1000);
+// Safety timeout — a runaway extraction must not run forever. `.unref()` is
+// load-bearing: without it this timer keeps the event loop alive for the FULL
+// 5 minutes AFTER main() has already resolved, so the process lingered (holding
+// the loaded ONNX model + an open DB handle) and then exited with code 1 even
+// though extraction succeeded. Unref'd, it only fires if real work is still
+// pending; on the normal success path main() clears it and exits 0 immediately.
+const safetyTimer = setTimeout(() => process.exit(1), 5 * 60 * 1000);
+safetyTimer.unref();
 
 async function main(): Promise<void> {
   const [transcriptPath, mode] = process.argv.slice(2);
@@ -34,7 +40,17 @@ async function main(): Promise<void> {
   });
 }
 
-main().catch((err) => {
-  console.error('Extract learnings error:', err);
-  process.exit(1);
-});
+main()
+  .then(() => {
+    // Clear the (unref'd) safety timer and let the event loop drain naturally
+    // so the process exits 0 on its own. We deliberately do NOT call
+    // process.exit(0): the real Transformers (ONNX) runtime loaded in-process
+    // aborts with a libc++ mutex error if torn down via an abrupt
+    // process.exit() while its native threads are still settling. Letting the
+    // loop drain is the clean shutdown path (same as the bench scripts).
+    clearTimeout(safetyTimer);
+  })
+  .catch((err) => {
+    console.error('Extract learnings error:', err);
+    process.exit(1);
+  });
