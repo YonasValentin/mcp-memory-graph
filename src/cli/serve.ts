@@ -156,6 +156,12 @@ export interface BuildAppDeps {
    * that one is reused so a single injected bucket drives /publish too.
    */
   publishRateLimiter?: RateLimiter;
+  /**
+   * Directory holding the built web dashboard (index.html + assets). Defaults
+   * to `<dist>/web` relative to this module. Exposed so tests can point the SPA
+   * static/fallback serving at a fixture dir without the production build layout.
+   */
+  webDir?: string;
 }
 
 export interface BuiltApp {
@@ -383,7 +389,7 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
   });
 
   // ── Static file serving for web dashboard ────────────────────────────
-  const webDir = path.resolve(__dirname, '..', 'web');
+  const webDir = deps.webDir ?? path.resolve(__dirname, '..', 'web');
   if (existsSync(webDir)) {
     app.use(express.static(webDir));
 
@@ -399,9 +405,20 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
       ) {
         return next();
       }
-      const indexPath = path.join(webDir, 'index.html');
-      if (existsSync(indexPath)) {
-        res.sendFile(indexPath);
+      if (existsSync(path.join(webDir, 'index.html'))) {
+        // SPA fallback: serve index.html for every client-side route so a
+        // deep-link or refresh on /browse, /search, /memory/:id renders the
+        // app instead of a JSON 404. Use the (filename, { root }) form rather
+        // than res.sendFile(absolutePath): in Express 5, `send` applies its
+        // default `dotfiles: 'ignore'` policy to the WHOLE absolute path, so an
+        // install dir containing a dot-prefixed segment (e.g. ~/.config,
+        // ~/.local/share, a .claude/ worktree, a .pnpm store) makes every
+        // fallback 404. The root form scopes the dotfile check to the path
+        // *after* root ("index.html" — no dot segment), so it serves regardless
+        // of where the dashboard is installed.
+        res.sendFile('index.html', { root: webDir }, (err) => {
+          if (err) next(err);
+        });
       } else {
         next();
       }
