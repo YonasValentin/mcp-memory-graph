@@ -27,6 +27,7 @@ interface ImportItem {
   created_at?: string | null;
   updated_at?: string | null;
   agent_id?: string | null;
+  importance_score?: number | null;
 }
 
 function isValidImportItem(item: unknown): item is ImportItem {
@@ -125,9 +126,10 @@ export async function handleImport(
           expires_at: item.expires_at ?? null,
           access_count: 0,
           last_accessed_at: null,
-          // Match the heuristic used by handleStore so re-imports produce
-          // identical scoring (was: hardcoded 0.5).
-          importance_score: computeContentSignal(item.content),
+          // Preserve an explicitly-set importance_score (export emits it) so a
+          // backup/restore keeps governance/criticality; fall back to the
+          // content heuristic (matching handleStore) only when absent.
+          importance_score: item.importance_score ?? computeContentSignal(item.content),
           confidence_score: 0.5,
           stability: 1.0,
         };

@@ -626,6 +626,16 @@ const MemoryImportItemSchema = z.object({
     .nullable()
     .optional()
     .describe('Original update timestamp (ISO 8601) — preserved on restore'),
+  importance_score: z
+    .number()
+    .min(0)
+    .max(1)
+    .nullable()
+    .optional()
+    .describe(
+      'Explicit importance 0-1 — preserved on restore (falls back to the ' +
+      'content-derived heuristic only when absent), so a backup keeps criticality',
+    ),
 });
 
 export const MemoryImportSchema = z.object({

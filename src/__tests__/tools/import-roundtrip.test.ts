@@ -61,4 +61,28 @@ describe('export -> import lossless round-trip (no-lock-in)', () => {
     expect(round.agent_id).toBe('agent-42');
     expect(round.content).toBe(orig.content);
   });
+
+  it('preserves an explicitly-set importance_score on restore (not recomputed)', async () => {
+    const src = createTestDb();
+    await handleStore(src, embedder, {
+      content: 'A criticality-pinned runbook step that must keep its importance',
+      title: 'Crit',
+      scope: 'global',
+      importance_score: 0.93,
+    });
+    const orig = handleExport(src, {}).memories[0];
+    expect(orig.importance_score).toBe(0.93); // export carries it
+
+    const dst = createTestDb();
+    await handleImport(
+      dst,
+      embedder,
+      MemoryImportSchema.parse({ data: [orig], overwrite: false }),
+    );
+    const round = handleExport(dst, {}).memories[0];
+
+    // Without the fix, import recomputes importance via computeContentSignal and
+    // silently drops the explicit 0.93 — a lossy backup/restore.
+    expect(round.importance_score).toBe(0.93);
+  });
 });
