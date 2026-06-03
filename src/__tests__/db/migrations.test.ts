@@ -219,6 +219,20 @@ describe('runMigrations — corrupt schema_version guard (F2 / P11)', () => {
     expect(() => runMigrations(db)).toThrowError(/schema_version/);
   });
 
+  // The battle-test residual: a numeric *coercion* (Number()/parseInt) accepts
+  // hex/scientific/empty/whitespace/decimal strings and lets a corrupt value
+  // masquerade as a real version → silent no-op migration (the exact P11 bug).
+  // Only a canonical decimal /^\d+$/ may pass.
+  it.each(['0x9', '1e1', '', '  ', '1.0', '+5', '\t9'])(
+    'throws on the coercion escape-hatch value %j (must not silently no-op)',
+    (bad) => {
+      const db = freshDb();
+      initializeSchema(db);
+      db.prepare('UPDATE schema_meta SET value = ? WHERE key = ?').run(bad, 'schema_version');
+      expect(() => runMigrations(db)).toThrowError(/schema_version/);
+    },
+  );
+
   it('still migrates forward correctly from a valid recorded version (regression)', () => {
     const db = freshDb();
     initializeSchema(db);

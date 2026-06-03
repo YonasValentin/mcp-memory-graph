@@ -249,23 +249,29 @@ export function runMigrations(db: Database.Database): void {
     .prepare<[string], { value: string }>('SELECT value FROM schema_meta WHERE key = ?')
     .get('schema_version');
 
-  // A missing row → 0 (run everything). A present row must be a clean,
-  // non-negative integer string: `parseInt('garbage')` → NaN makes every
-  // `m.version > NaN` false, so pending=[] and we'd silently no-op against an
-  // un-migrated schema (P11). `Number(...)` is strict (unlike parseInt's
-  // prefix-parse of '9abc' → 9), so a partially-numeric corrupt value also
-  // throws rather than masquerading as a real version.
+  // A missing row → 0 (run everything). A present row must be a CANONICAL
+  // non-negative decimal integer string. We validate the raw string with
+  // /^\d+$/ rather than numeric coercion because every coercion lets a corrupt
+  // value masquerade as a real version and silently skip migrations (P11):
+  //   parseInt('9abc')  → 9      (prefix-parse)
+  //   Number('0x9')     → 9      (hex)
+  //   Number('1e1')     → 10     (scientific)
+  //   Number('')        → 0      (empty/whitespace)
+  //   Number('1.0')     → 1      (would pass Number.isInteger)
+  // Any of these would make `m.version > <wrong>` skip pending migrations
+  // against an un-migrated schema. The codebase only ever writes String(int),
+  // so canonical decimal is the only legitimate shape.
   let currentVersion = 0;
   if (row) {
-    currentVersion = Number(row.value);
-    if (!Number.isInteger(currentVersion) || currentVersion < 0) {
+    if (!/^\d+$/.test(row.value)) {
       throw new Error(
         `Corrupt schema_version in schema_meta: '${row.value}'. Expected a ` +
-        `non-negative integer. The database's recorded migration version is ` +
-        `unreadable; refusing to run migrations against an unknown schema. ` +
-        `Restore from backup or recreate the database.`,
+        `canonical non-negative decimal integer (digits only). The database's ` +
+        `recorded migration version is unreadable; refusing to run migrations ` +
+        `against an unknown schema. Restore from backup or recreate the database.`,
       );
     }
+    currentVersion = Number(row.value);
   }
 
   const pending = migrations.filter((m) => m.version > currentVersion);
