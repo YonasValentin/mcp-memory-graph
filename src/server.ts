@@ -487,7 +487,7 @@ export function createServer(): McpServer {
   // ── 22. memory_restore ──────────────────────────────────────────────────
   server.tool(
     'memory_restore',
-    'Restore a condensed memory to its original full content. Undoes condensation and re-embeds the original text.',
+    'Bring a memory back: un-tombstones a soft-forgotten memory (memory_forget {hard:false}) by clearing valid_to/tx_expired so it re-enters default recall, AND/OR restores a condensed memory to its original full content. Both are applied when both apply. Returns reinstated/uncondensed flags.',
     MemoryRestoreSchema.shape,
     instrument('memory_restore', async (input) => {
       const parsed = MemoryRestoreSchema.parse(input);

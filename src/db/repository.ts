@@ -309,6 +309,22 @@ export function invalidateMemory(
   return result.changes;
 }
 
+/**
+ * Reinstate a soft-forgotten / invalidated memory — the inverse of
+ * `invalidateMemory`. Clears BOTH bitemporal tombstone stamps (`valid_to`
+ * valid-time end and `tx_expired` transaction-time end) so the row re-enters
+ * currently-valid retrieval. The vec row was RETAINED on invalidation, so
+ * clearing the stamps alone re-includes it everywhere live-row predicates run —
+ * no re-embed needed. `superseded_at` is deliberately NOT cleared: a fact
+ * retired by a contradicting supersession is reinstated through its
+ * supersession chain, not un-tombstoned here. Returns rows changed.
+ */
+export function reinstateMemory(db: Database.Database, id: string): number {
+  return db
+    .prepare('UPDATE memories SET valid_to = NULL, tx_expired = NULL WHERE id = ?')
+    .run(id).changes;
+}
+
 export function getMemoryById(
   db: Database.Database,
   id: string,

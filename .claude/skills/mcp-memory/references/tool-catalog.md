@@ -60,7 +60,7 @@ Authoritative count: **41** (`grep -c 'server.tool(' src/server.ts`). README's "
 | `memory_version_restore` | Roll back to a prior version — itself a **versioned, re-embedded** edit (non-destructive). | id*, version*, changed_by | |
 | `memory_history` | Bitemporal timeline for one memory (created/updated/valid_from/valid_to/tx_expired/superseded_at/version) + full version history. | id* | |
 | `memory_condense` | Apply agent-written summaries to shrink old memories; **preserves original** for restore. Use after `memory_consolidate` flags candidates. | memories[]*, target_level | |
-| `memory_restore` | Undo a condense — restore original full content + re-embed. | id* | |
+| `memory_restore` | Bring a memory back: un-tombstone a soft-forgotten memory (clear valid_to/tx_expired → default recall) AND/OR undo a condense (restore original content + re-embed). Both when both apply. | id* | Returns `reinstated`/`uncondensed` flags |
 
 ## 5. Core memory — pinned (MemGPT-style)
 

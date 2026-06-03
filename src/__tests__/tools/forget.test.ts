@@ -19,6 +19,7 @@ import { MockEmbeddingProvider } from '../../testing/mock-embedder.js';
 import { handleStore } from '../../tools/store.js';
 import { handleIngest } from '../../tools/ingest.js';
 import { handleForget } from '../../tools/forget.js';
+import { handleRestore } from '../../tools/condense.js';
 import { getMemoryById, updateMemory } from '../../db/repository.js';
 import { hybridSearch } from '../../search/hybrid.js';
 
@@ -203,5 +204,62 @@ describe('handleForget', () => {
 
     const result = handleForget(db, { id: stored.memory.id });
     expect(result.versions).toBeUndefined();
+  });
+});
+
+/**
+ * T24 follow-up: soft-forget recovery. `memory_forget {hard:false}` stamps
+ * valid_to (a recoverable tombstone) but, before this, no tool cleared it —
+ * reinstating a soft-forgotten memory into default recall needed raw SQL.
+ * `memory_restore` (which already un-condenses) is extended to also un-tombstone:
+ * clear valid_to/tx_expired so the memory re-enters currently-valid retrieval.
+ */
+describe('handleRestore — un-tombstone (soft-forget recovery)', () => {
+  it('reinstates a soft-forgotten memory back into default recall', async () => {
+    const stored = await handleStore(db, embedder, {
+      content: 'reinstate this fact into default search please',
+      title: 'Recoverable',
+    });
+    const id = stored.memory.id;
+
+    handleForget(db, { id }); // soft tombstone
+    expect(getMemoryById(db, id)!.valid_to).not.toBeNull();
+
+    // Gone from a default (currently-valid) hybrid search while tombstoned.
+    let search = await hybridSearch(db, embedder, {
+      query: 'reinstate fact',
+      limit: 10,
+      offset: 0,
+      search_mode: 'hybrid',
+    });
+    expect(search.results.some((r) => r.memory.id === id)).toBe(false);
+
+    const result = await handleRestore(db, embedder, { id });
+    expect(result.restored).toBe(true);
+    expect(result.reinstated).toBe(true);
+
+    // Both bitemporal tombstone stamps cleared.
+    const row = getMemoryById(db, id);
+    expect(row!.valid_to).toBeNull();
+    expect(row!.tx_expired).toBeNull();
+
+    // Back in default search.
+    search = await hybridSearch(db, embedder, {
+      query: 'reinstate fact',
+      limit: 10,
+      offset: 0,
+      search_mode: 'hybrid',
+    });
+    expect(search.results.some((r) => r.memory.id === id)).toBe(true);
+  });
+
+  it('does not falsely reinstate a live, never-condensed memory', async () => {
+    const stored = await handleStore(db, embedder, {
+      content: 'already live and well, nothing to recover',
+      title: 'Live',
+    });
+    const result = await handleRestore(db, embedder, { id: stored.memory.id });
+    expect(result.restored).toBe(false);
+    expect(result.reinstated).toBeFalsy();
   });
 });

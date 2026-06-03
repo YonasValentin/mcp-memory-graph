@@ -61,13 +61,13 @@ Two fix waves are CLOSED — **do not treat them as open**:
 - The original **9-bug battle queue** (embedding cache key collision, getReadOnlyDb migrate, export resurrects dead rows, stats/manifest dead rows, update raw re-embed, NLI-only-on-supersede, vec0 survives invalidation, consolidate `results_count`, extract-dedup threshold), retired into single-source modules.
 - The **battle-overhaul pass** (8-persona hands-on testing → 5 fixes, TDD, 1000 tests green): (1) `expires_at` TTL ISO-Z collation across search/stats/consolidate/expired-delete/session-start + `condensed_at`/`superseded_at` writes — expired rows had leaked into search; (2) `vault_status` raw-mtime compare (was "changed" forever on sub-ms FS); (3) `importance_score` settable on store/update; (4) `memory_graph` false strength comment + `idf_strength` surfaced; (5) vault round-trip recovers `importance_score`/`created_at`/`updated_at` from frontmatter.
 
-A third fix landed after the overhaul pass:
+Two more fixes landed after the overhaul pass:
 - **fix(bitemporal): `as_of` VECTOR reconstruction of retired facts** — `invalidateMemory` now RETAINS the vec row (only hard delete drops it), `superseded_at IS NULL` is scoped to current mode, and `handleRelated`/`detectConflicts` filter `valid_to`/`tx_expired`. Real-model verified (a semantic query reconstructs the retired fact at `as_of`, excludes it from current search, returns the live fact). 1001 tests green.
+- **feat(forget): soft-forget un-tombstone via `memory_restore`** — `reinstateMemory` (inverse of `invalidateMemory`) clears `valid_to`/`tx_expired`; `handleRestore` extended to reinstate a soft-forgotten memory into default recall (and mirror the vault file back) in addition to un-condensing — both applied when both hold. Real-model verified (store→soft-forget→excluded→restore→reincluded, stamps cleared). 1005 tests green.
 
 Genuinely **open** (verified by the persona pass unless noted):
 - **`entity_aliases` resolution — `memory_graph` only** (graph half fixed: `handleGraph` resolves alias → canonical entity, direct-name precedence). Still open: `memory_search`/`memory_query`/PageRank do not expand aliases.
 - **`memory_consolidate` `dry_run` under-counts merges** — apply mutates the index mid-pass; a faithful preview must simulate against a copy.
-- **Soft-forget has no un-tombstone tool** — `memory_forget {hard:false}` is recoverable only via direct DB access.
 - **Flaky test:** `src/__tests__/search/forgetting.test.ts` — timing-sensitive in the full parallel run.
 - **O(n) scale hotspots:** brute-force sqlite-vec KNN on every store (×2) and search. Matters only at low-millions; ANN/HNSW is the fix.
 - **Timestamp-collation residual:** rows written space-format before the ISO-Z fixes stay vulnerable until re-edited; no normalizing migration exists.

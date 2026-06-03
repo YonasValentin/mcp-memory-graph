@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { EmbeddingProvider } from '../types.js';
-import { getMemoryById, updateMemory } from '../db/repository.js';
+import { getMemoryById, updateMemory, reinstateMemory } from '../db/repository.js';
+import { mirrorMemoryWrite } from '../vault/write-through.js';
 import { NOW_ISO_SQL } from '../db/predicates.js';
 
 interface CondenseEntry {
@@ -101,35 +102,77 @@ export async function handleCondense(
   return result;
 }
 
+/**
+ * Bring a memory back — the single "restore" verb covering BOTH recoverable
+ * states, applied together when both hold:
+ *
+ *  - un-tombstone: a soft-forgotten / invalidated memory (`memory_forget
+ *    {hard:false}` stamped `valid_to`) is reinstated into default recall by
+ *    clearing `valid_to`/`tx_expired`. Without this, recovery needed raw SQL.
+ *  - un-condense: a condensed memory's original full content is restored from
+ *    `memory_originals` and re-embedded.
+ *
+ * `restored` is true if EITHER applied. A live, never-condensed memory has
+ * nothing to do → `restored:false`.
+ */
 export async function handleRestore(
   db: Database.Database,
   embedder: EmbeddingProvider,
   input: { id: string },
-): Promise<{ restored: boolean; message: string }> {
+): Promise<{ restored: boolean; message: string; reinstated?: boolean; uncondensed?: boolean }> {
+  // Tombstone columns aren't on the partial MemoryRow type — read them with an
+  // explicit typed query (matches the repository's bitemporal-column pattern).
+  // An absent row means the memory doesn't exist.
+  const tomb = db
+    .prepare<[string], { valid_to: string | null; tx_expired: string | null }>(
+      'SELECT valid_to, tx_expired FROM memories WHERE id = ?',
+    )
+    .get(input.id);
+  if (!tomb) {
+    return { restored: false, message: 'Memory not found' };
+  }
+  // Snapshot the tombstone state before any mutation below.
+  const wasTombstoned = tomb.valid_to !== null || tomb.tx_expired !== null;
+
+  // 1. Un-condense: restore original full content if this memory was condensed.
   const original = db
     .prepare<[string], { original_content: string; original_title: string | null }>(
       'SELECT original_content, original_title FROM memory_originals WHERE memory_id = ?',
     )
     .get(input.id);
 
-  if (!original) {
-    return { restored: false, message: 'No original content found — memory may not have been condensed' };
+  let uncondensed = false;
+  if (original) {
+    const newEmbedding = await embedder.embed(original.original_content);
+    const updates: Record<string, unknown> = { content: original.original_content };
+    if (original.original_title) {
+      updates.title = original.original_title;
+    }
+    updateMemory(db, input.id, updates, newEmbedding);
+    db.prepare(
+      "UPDATE memories SET condensation_level = 'full', condensed_at = NULL WHERE id = ?",
+    ).run(input.id);
+    db.prepare('DELETE FROM memory_originals WHERE memory_id = ?').run(input.id);
+    uncondensed = true;
   }
 
-  const newEmbedding = await embedder.embed(original.original_content);
-
-  const updates: Record<string, unknown> = { content: original.original_content };
-  if (original.original_title) {
-    updates.title = original.original_title;
+  // 2. Un-tombstone LAST so the write-through mirror reflects the final
+  //    (already un-condensed) content when it moves the file back from
+  //    .memory/deleted/ to its live path.
+  const reinstated = wasTombstoned && reinstateMemory(db, input.id) > 0;
+  if (reinstated) {
+    mirrorMemoryWrite(db, input.id);
   }
 
-  updateMemory(db, input.id, updates, newEmbedding);
+  if (!reinstated && !uncondensed) {
+    return {
+      restored: false,
+      message: 'Nothing to restore — memory is currently valid and was not condensed',
+    };
+  }
 
-  db.prepare(
-    "UPDATE memories SET condensation_level = 'full', condensed_at = NULL WHERE id = ?",
-  ).run(input.id);
-
-  db.prepare('DELETE FROM memory_originals WHERE memory_id = ?').run(input.id);
-
-  return { restored: true, message: 'Memory restored to original full content' };
+  const parts: string[] = [];
+  if (reinstated) parts.push('reinstated into default recall');
+  if (uncondensed) parts.push('restored to original full content');
+  return { restored: true, message: `Memory ${parts.join(' and ')}`, reinstated, uncondensed };
 }

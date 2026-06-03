@@ -951,7 +951,9 @@ export const MemoryCondenseSchema = z.object({
 export const MemoryRestoreSchema = z.object({
   id: z
     .string()
-    .describe('Memory ID to restore to original full content'),
+    .describe(
+      'Memory ID to bring back — un-tombstones a soft-forgotten memory and/or restores condensed content to original full text',
+    ),
 });
 
 // ---------------------------------------------------------------------------
