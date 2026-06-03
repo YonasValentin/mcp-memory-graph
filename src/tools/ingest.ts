@@ -1,7 +1,13 @@
 import type Database from 'better-sqlite3';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { EmbeddingProvider, IngestResult, MemoryRow, ContentType, MemoryScope } from '../types.js';
-import { insertMemory } from '../db/repository.js';
+import {
+  insertMemory,
+  deleteMemory,
+  getIngestSourceByPath,
+  upsertIngestSource,
+} from '../db/repository.js';
+import { handleUpdate } from './update.js';
 import { chunkContent } from '../chunking/chunker.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
 
@@ -27,7 +33,6 @@ export async function handleIngest(
   input: IngestInput,
 ): Promise<IngestResult> {
   const now = new Date().toISOString();
-  const parentId = randomUUID();
   const tagsJson = input.tags ? JSON.stringify(input.tags) : null;
   const metadataJson = input.metadata ? JSON.stringify(input.metadata) : null;
   const scope = input.scope ?? 'global';
@@ -35,29 +40,122 @@ export async function handleIngest(
   const chunkSize = input.chunk_size ?? 512;
   const chunkOverlap = input.chunk_overlap ?? 50;
 
-  const summaryText = input.content.slice(0, 512);
+  // Incremental ingest: when a `source` is given, dedup against prior ingests of
+  // the same source so a repeated sync doesn't endlessly duplicate the document.
+  // (The ingest_source_tracking table + repo fns existed but had no caller.)
+  const sourceHash = createHash('sha256').update(input.content).digest('hex');
+  const tracked = input.source ? getIngestSourceByPath(db, input.source) : null;
+  // getMemoryById returns tombstoned rows too, so check liveness explicitly: a
+  // soft-forgotten / superseded parent should re-ingest fresh, not no-op.
+  const parentIsLive =
+    tracked != null &&
+    db
+      .prepare(
+        'SELECT 1 FROM memories WHERE id = ? AND valid_to IS NULL AND tx_expired IS NULL AND parent_id IS NULL',
+      )
+      .get(tracked.memory_id) != null;
+
+  if (tracked && parentIsLive && tracked.source_hash === sourceHash) {
+    // UNCHANGED — identical content for this source. No re-embed, no insert;
+    // just refresh the last-checked timestamp so freshness audits stay accurate.
+    upsertIngestSource(db, { ...tracked, last_checked_at: now, status: 'current' });
+    const chunkIds = tracked.chunk_ids ? (JSON.parse(tracked.chunk_ids) as string[]) : [];
+    return {
+      parent_id: tracked.memory_id,
+      chunk_count: chunkIds.length,
+      chunk_ids: chunkIds,
+      status: 'unchanged',
+      skipped: true,
+    };
+  }
+
   const chunks = chunkContent(input.content, {
     content_type: contentType,
     chunk_size: chunkSize,
     overlap: chunkOverlap,
   });
 
-  // Contextual indexing: embed the doc summary and each chunk with the same
-  // deterministic context prefix handleStore uses (title / document_type /
-  // namespace) so the whole corpus lives in one vector space. Chunks inherit
-  // the parent doc's metadata. The STORED content stays RAW — only the embedded
-  // text is contextualized. No-ops to bare content when no context is present.
+  // Contextual indexing: embed each chunk with the same deterministic context
+  // prefix handleStore uses (title / document_type / namespace) so the whole
+  // corpus lives in one vector space. The STORED content stays RAW.
   const ctx = {
     title: input.title,
     document_type: input.document_type,
     namespace: input.namespace,
   };
-  const parentEmbedding = await embedder.embed(contextualizeForEmbedding(summaryText, ctx));
   const chunkEmbeddings = await embedder.embedBatch(
     chunks.map((c) => contextualizeForEmbedding(c.content, ctx)),
   );
+  const chunkIds: string[] = chunks.map(() => randomUUID());
 
-  const chunkIds: string[] = [];
+  function chunkRow(i: number, parentId: string): MemoryRow {
+    return {
+      id: chunkIds[i],
+      scope,
+      namespace: input.namespace ?? null,
+      title: input.title ?? null,
+      content: chunks[i].content,
+      document_type: input.document_type ?? null,
+      source: input.source ?? null,
+      author: input.author ?? null,
+      department: input.department ?? null,
+      tags: tagsJson,
+      access_level: 'public',
+      language: 'en',
+      metadata: metadataJson,
+      parent_id: parentId,
+      chunk_index: chunks[i].chunk_index,
+      version: 1,
+      created_at: now,
+      updated_at: now,
+      expires_at: null,
+      access_count: 0,
+      last_accessed_at: null,
+      importance_score: 0.5,
+      confidence_score: 0.5,
+      stability: 1.0,
+    };
+  }
+
+  if (tracked && parentIsLive) {
+    // CHANGED — same source, different content. Version the parent IN PLACE
+    // (handleUpdate snapshots the old content to memory_versions + re-embeds the
+    // contextualized parent), then replace its chunks. Keeping a stable
+    // parent_id means references to the document survive a re-sync, and the edit
+    // history is queryable via memory_version_diff (closes the as_of
+    // "validity-not-content" gap for ingested docs).
+    const parentId = tracked.memory_id;
+    await handleUpdate(db, embedder, {
+      id: parentId,
+      content: input.content,
+      title: input.title,
+      tags: input.tags,
+      metadata: input.metadata,
+    });
+    const oldChunkIds = tracked.chunk_ids ? (JSON.parse(tracked.chunk_ids) as string[]) : [];
+    const replace = db.transaction(() => {
+      for (const cid of oldChunkIds) deleteMemory(db, cid);
+      for (let i = 0; i < chunks.length; i++) insertMemory(db, chunkRow(i, parentId), chunkEmbeddings[i]);
+      upsertIngestSource(db, {
+        id: tracked.id,
+        source_path: input.source!,
+        source_hash: sourceHash,
+        memory_id: parentId,
+        chunk_ids: JSON.stringify(chunkIds),
+        content_length: input.content.length,
+        ingested_at: tracked.ingested_at,
+        last_checked_at: now,
+        status: 'current',
+      });
+    });
+    replace();
+    return { parent_id: parentId, chunk_count: chunks.length, chunk_ids: chunkIds, status: 'updated' };
+  }
+
+  // NEW — first ingest of this source (or no source, or the prior parent is gone).
+  const parentId = randomUUID();
+  const summaryText = input.content.slice(0, 512);
+  const parentEmbedding = await embedder.embed(contextualizeForEmbedding(summaryText, ctx));
 
   const ingest = db.transaction(() => {
     const parentRow: MemoryRow = {
@@ -86,49 +184,25 @@ export async function handleIngest(
       confidence_score: 0.5,
       stability: 1.0,
     };
-
     insertMemory(db, parentRow, parentEmbedding);
-
-    for (let i = 0; i < chunks.length; i++) {
-      const chunkId = randomUUID();
-      chunkIds.push(chunkId);
-
-      const chunkRow: MemoryRow = {
-        id: chunkId,
-        scope,
-        namespace: input.namespace ?? null,
-        title: input.title ?? null,
-        content: chunks[i].content,
-        document_type: input.document_type ?? null,
-        source: input.source ?? null,
-        author: input.author ?? null,
-        department: input.department ?? null,
-        tags: tagsJson,
-        access_level: 'public',
-        language: 'en',
-        metadata: metadataJson,
-        parent_id: parentId,
-        chunk_index: chunks[i].chunk_index,
-        version: 1,
-        created_at: now,
-        updated_at: now,
-        expires_at: null,
-        access_count: 0,
-        last_accessed_at: null,
-        importance_score: 0.5,
-        confidence_score: 0.5,
-        stability: 1.0,
-      };
-
-      insertMemory(db, chunkRow, chunkEmbeddings[i]);
+    for (let i = 0; i < chunks.length; i++) insertMemory(db, chunkRow(i, parentId), chunkEmbeddings[i]);
+    if (input.source) {
+      // Reuse a stale tracking row's id (if the prior parent was forgotten) so we
+      // replace rather than orphan it; otherwise mint a new one.
+      upsertIngestSource(db, {
+        id: tracked?.id ?? randomUUID(),
+        source_path: input.source,
+        source_hash: sourceHash,
+        memory_id: parentId,
+        chunk_ids: JSON.stringify(chunkIds),
+        content_length: input.content.length,
+        ingested_at: now,
+        last_checked_at: now,
+        status: 'current',
+      });
     }
   });
-
   ingest();
 
-  return {
-    parent_id: parentId,
-    chunk_count: chunks.length,
-    chunk_ids: chunkIds,
-  };
+  return { parent_id: parentId, chunk_count: chunks.length, chunk_ids: chunkIds, status: 'new' };
 }

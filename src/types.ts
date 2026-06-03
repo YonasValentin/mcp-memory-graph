@@ -323,6 +323,15 @@ export interface IngestResult {
   parent_id: string;
   chunk_count: number;
   chunk_ids: string[];
+  /**
+   * Incremental-ingest outcome (keyed on `source`): 'new' = first ingest of
+   * this source (or no source given), 'unchanged' = same source + identical
+   * content, skipped (no re-embed/insert), 'updated' = same source, changed
+   * content → the parent was versioned in place and its chunks replaced.
+   */
+  status?: 'new' | 'unchanged' | 'updated';
+  /** True when the content was identical to the last ingest and nothing was written. */
+  skipped?: boolean;
 }
 
 // ── Vault Integration Types ─────────────────────────────────────────────
