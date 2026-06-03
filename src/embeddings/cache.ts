@@ -84,6 +84,16 @@ export class CachedEmbeddingProvider implements EmbeddingProvider {
     return results as Float32Array[];
   }
 
+  /**
+   * Drops the in-memory vector cache and disposes the wrapped provider so the
+   * underlying native session (if any) is released. Idempotent. See
+   * {@link EmbeddingProvider.dispose} and BATTLE-V3 P14.
+   */
+  async dispose(): Promise<void> {
+    this.cache.clear();
+    await this.inner.dispose?.();
+  }
+
   private evictIfNeeded(): void {
     if (this.cache.size >= MAX_CACHE_SIZE) {
       const oldest = this.cache.keys().next().value!;

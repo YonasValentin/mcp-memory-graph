@@ -77,6 +77,25 @@ export class TransformersEmbeddingProvider implements EmbeddingProvider {
     return this.ready;
   }
 
+  /**
+   * Releases the cached transformers.js pipeline (and the underlying
+   * onnxruntime InferenceSession it holds). Idempotent and safe to call when
+   * the model was never loaded.
+   *
+   * BATTLE-V3 P14: an in-process real embedder + an abrupt `process.exit()`
+   * aborts with `std::system_error: mutex lock failed` (exit 134) because the
+   * native ORT worker thread is torn down mid-flight. `dispose()` frees the
+   * session for long-running graceful shutdown, but does NOT by itself prevent
+   * the `process.exit()` race — force-exit scripts must additionally let the
+   * event loop drain naturally (set `process.exitCode`, do not call
+   * `process.exit()`). See scripts/battle/verify-{web,nli,hooks}.mjs.
+   */
+  async dispose(): Promise<void> {
+    await this.pipeline?.dispose?.();
+    this.pipeline = null;
+    this.ready = false;
+  }
+
   private async ensureInitialized(): Promise<void> {
     if (!this.ready) {
       await this.initialize();

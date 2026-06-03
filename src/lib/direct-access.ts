@@ -77,3 +77,29 @@ export function getEmbedder(): Promise<EmbeddingProvider> {
   }
   return embedderPromise;
 }
+
+/**
+ * Disposes the process-wide memoized embedder (if one was constructed) and
+ * clears the singleton so a later {@link getEmbedder} rebuilds it. For graceful
+ * shutdown of long-running processes that hold the real model.
+ *
+ * BATTLE-V3 P14 caveat: disposal frees the onnxruntime session but does NOT
+ * make an abrupt `process.exit()` safe — the native ORT worker still aborts
+ * with `mutex lock failed` (exit 134) if the process is hard-exited. Scripts
+ * that load the real embedder must let the event loop drain naturally (set
+ * `process.exitCode`, never call `process.exit()`); `disposeEmbedder()` is the
+ * graceful-shutdown release hook, not a force-exit fix.
+ */
+export async function disposeEmbedder(): Promise<void> {
+  if (!embedderPromise) return;
+  /* c8 ignore start -- real-embedder release path; getEmbedder above is likewise ignored */
+  const pending = embedderPromise;
+  embedderPromise = null;
+  try {
+    const embedder = await pending;
+    await embedder.dispose?.();
+  } catch {
+    // A never-resolved (failed-init) embedder has nothing to release.
+  }
+  /* c8 ignore stop */
+}

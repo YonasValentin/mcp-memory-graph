@@ -239,6 +239,12 @@ export interface EmbeddingProvider {
   embed(text: string): Promise<Float32Array>;
   embedBatch(texts: string[]): Promise<Float32Array[]>;
   isReady(): boolean;
+  /**
+   * Releases any native resources (e.g. the onnxruntime InferenceSession behind
+   * the real transformers.js provider) for graceful shutdown. Optional —
+   * mock/in-memory providers have nothing to free. Idempotent (BATTLE-V3 P14).
+   */
+  dispose?(): Promise<void>;
 }
 
 export interface VersionRecord {

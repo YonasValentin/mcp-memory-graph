@@ -307,5 +307,16 @@ try {
 process.stdout.write('\n===FINDINGS_JSON_START===\n');
 process.stdout.write(JSON.stringify(findings, null, 2));
 process.stdout.write('\n===FINDINGS_JSON_END===\n');
-// Force exit so any lingering handles (embedder workers) don't hang the run.
-setTimeout(() => process.exit(0), 500);
+
+// BATTLE-V3 P14: this process loaded the REAL embedder in-process (seed()), so
+// its onnxruntime worker thread aborts with `mutex lock failed` (exit 134) if
+// torn down by an abrupt `process.exit()` — the old `setTimeout(process.exit)`
+// here made EVERY run, pass or fail, return 134, masking real failures.
+// Dispose the embedder and let the event loop drain naturally (the same
+// pattern verify-nli.mjs and verify-hooks.mjs already rely on). The server
+// child is already killed above, so nothing keeps the loop alive.
+try {
+  const { disposeEmbedder } = await import(path.join(REPO, 'dist', 'lib', 'direct-access.js'));
+  await disposeEmbedder();
+} catch { /* dist not built / never loaded — nothing to release */ }
+process.exitCode = findings.errors.length === 0 ? 0 : 1;
