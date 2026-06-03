@@ -212,7 +212,10 @@ export function createServer(): McpServer {
     MemoryStoreSchema.shape,
     instrument('memory_store', async (input) => {
       const parsed = MemoryStoreSchema.parse(input);
-      return handleStore(getDb(), await getEmbedder(), parsed, getNli());
+      // Mirror the read tools: on a namespace-forced deployment the caller's
+      // namespace is OVERRIDDEN to the configured one, so writes can't land in
+      // another namespace (read isolation alone would leave a write leak).
+      return handleStore(getDb(), await getEmbedder(), withForcedNs(parsed), getNli());
     }),
   );
 
