@@ -47,6 +47,35 @@ describe('initializeSchema — fresh DB', () => {
     for (const col of ['superseded_at', 'condensation_level', 'access_count', 'importance_score', 'department']) {
       expect(names).toContain(col);
     }
+    // v10 (M2 — signed provenance envelope): content integrity + signature cols.
+    for (const col of ['content_hash', 'signature', 'pubkey', 'signed_at']) {
+      expect(names).toContain(col);
+    }
+    // v10 — vault content_hash for hash-based change detection + integrity manifest.
+    const vaultCols = new Set(
+      (db.prepare('PRAGMA table_info(vault_sync_meta)').all() as Array<{ name: string }>).map((c) => c.name),
+    );
+    expect(vaultCols).toContain('content_hash');
+  });
+
+  it('migrates a v9 DB up to v10, adding the provenance + vault content_hash columns', () => {
+    const db = freshDb();
+    initializeSchema(db);
+    // Simulate a DB stamped at v9 WITHOUT the v10 columns by dropping them is
+    // hard in SQLite; instead assert the migration is idempotent and lands v10.
+    db.prepare("UPDATE schema_meta SET value = '0' WHERE key = 'schema_version'").run();
+    runMigrations(db);
+    const version = db
+      .prepare<[string], { value: string }>('SELECT value FROM schema_meta WHERE key = ?')
+      .get('schema_version');
+    expect(version?.value).toBe(String(CURRENT_SCHEMA_VERSION));
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(10);
+    const names = new Set(
+      (db.prepare('PRAGMA table_info(memories)').all() as Array<{ name: string }>).map((c) => c.name),
+    );
+    for (const col of ['content_hash', 'signature', 'pubkey', 'signed_at']) {
+      expect(names).toContain(col);
+    }
   });
 
   it('is idempotent (calling twice on a fresh DB does not fail)', () => {

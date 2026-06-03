@@ -242,6 +242,33 @@ const migrations: Migration[] = [
       addColumn(db, 'ALTER TABLE memories ADD COLUMN agent_id TEXT');
     },
   },
+  {
+    version: 10,
+    up: (db) => {
+      // M2 (provenance & trust): a signed, verifiable chain of custody per
+      // memory. content_hash = sha256 of the stored content; signature = ed25519
+      // over the canonical envelope; pubkey = the signing key (so a verifier
+      // needs nothing else); signed_at = when it was signed. All nullable — a
+      // NULL signature is "unsigned" (today's behaviour), so existing rows and
+      // signing-disabled deployments are unaffected.
+      addColumn(db, 'ALTER TABLE memories ADD COLUMN content_hash TEXT');
+      addColumn(db, 'ALTER TABLE memories ADD COLUMN signature TEXT');
+      addColumn(db, 'ALTER TABLE memories ADD COLUMN pubkey TEXT');
+      addColumn(db, 'ALTER TABLE memories ADD COLUMN signed_at TEXT');
+      // Vault content hash: lets sync detect real edits by content (not mtime,
+      // which a git checkout rewrites) and powers the signed integrity manifest.
+      // Guard the ALTER: on a true legacy-v4 upgrade path vault_sync_meta may not
+      // exist yet (it is created by initializeSchema, which now includes
+      // content_hash), so only ALTER an already-present table. addColumn would
+      // (correctly) rethrow "no such table" otherwise.
+      const vaultExists = db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'vault_sync_meta'")
+        .get();
+      if (vaultExists) {
+        addColumn(db, 'ALTER TABLE vault_sync_meta ADD COLUMN content_hash TEXT');
+      }
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {
