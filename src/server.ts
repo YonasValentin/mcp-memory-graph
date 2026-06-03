@@ -293,7 +293,7 @@ export function createServer(): McpServer {
     MemoryIngestSchema.shape,
     instrument('memory_ingest', async (input) => {
       const parsed = MemoryIngestSchema.parse(input);
-      return handleIngest(getDb(), await getEmbedder(), parsed);
+      return handleIngest(getDb(), await getEmbedder(), withForcedNs(parsed));
     }),
   );
 
@@ -516,7 +516,7 @@ export function createServer(): McpServer {
     CoreMemoryGetSchema.shape,
     instrument('core_memory_get', async (input) => {
       const parsed = CoreMemoryGetSchema.parse(input);
-      return handleCoreMemoryGet(getDb(), parsed);
+      return handleCoreMemoryGet(getDb(), withForcedNs(parsed));
     }),
   );
 
@@ -527,7 +527,7 @@ export function createServer(): McpServer {
     CoreMemoryAppendSchema.shape,
     instrument('core_memory_append', async (input) => {
       const parsed = CoreMemoryAppendSchema.parse(input);
-      return handleCoreMemoryAppend(getDb(), parsed);
+      return handleCoreMemoryAppend(getDb(), withForcedNs(parsed));
     }),
   );
 
@@ -538,7 +538,7 @@ export function createServer(): McpServer {
     CoreMemoryReplaceSchema.shape,
     instrument('core_memory_replace', async (input) => {
       const parsed = CoreMemoryReplaceSchema.parse(input);
-      return handleCoreMemoryReplace(getDb(), parsed);
+      return handleCoreMemoryReplace(getDb(), withForcedNs(parsed));
     }),
   );
 
@@ -582,7 +582,7 @@ export function createServer(): McpServer {
     MemorySessionNoteSchema.shape,
     instrument('memory_session_note', async (input) => {
       const parsed = MemorySessionNoteSchema.parse(input);
-      return handleSessionNote(getDb(), await getEmbedder(), parsed);
+      return handleSessionNote(getDb(), await getEmbedder(), withForcedNs(parsed));
     }),
   );
 
