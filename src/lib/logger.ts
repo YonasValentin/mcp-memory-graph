@@ -19,7 +19,14 @@ const LEVEL_RANK: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, er
 const REDACT_KEYS = new Set([
   'authorization', 'auth', 'token', 'mcp_auth_token', 'password', 'secret',
   'api_key', 'apikey', 'cookie', 'set-cookie',
+  // F4/P8: common secret keys that previously leaked in cleartext.
+  'access_token', 'refresh_token', 'client_secret', 'private_key',
+  'session_token', 'bearer',
 ]);
+
+// Recursion is depth-capped defensively: beyond this, nested values are passed
+// through untouched so a pathological structure can never hang the logger.
+const MAX_DEPTH = 6;
 
 function levelFromEnv(): LogLevel {
   const raw = (process.env.MCP_LOG_LEVEL ?? 'info').toLowerCase();
@@ -27,16 +34,33 @@ function levelFromEnv(): LogLevel {
   return 'info';
 }
 
-function redact(input: Record<string, unknown>): Record<string, unknown> {
+/**
+ * Recursively redact secret-keyed values across nested objects AND arrays
+ * (F4/P8). A WeakSet of already-visited containers breaks circular references,
+ * and {@link MAX_DEPTH} caps depth — a logger must never throw or hang. Only
+ * own-enumerable keys are walked (Object.entries skips inherited/proto keys),
+ * key names and non-secret primitives are preserved, and the input is never
+ * mutated.
+ */
+function redactValue(value: unknown, depth: number, seen: WeakSet<object>): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  if (depth >= MAX_DEPTH) return '[REDACTED:DEPTH]';
+  if (seen.has(value)) return '[REDACTED:CIRCULAR]';
+  seen.add(value);
+  if (Array.isArray(value)) {
+    return value.map((v) => redactValue(v, depth + 1, seen));
+  }
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(input)) {
-    if (REDACT_KEYS.has(k.toLowerCase())) {
-      out[k] = '[REDACTED]';
-    } else {
-      out[k] = v;
-    }
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    out[k] = REDACT_KEYS.has(k.toLowerCase())
+      ? '[REDACTED]'
+      : redactValue(v, depth + 1, seen);
   }
   return out;
+}
+
+function redact(input: Record<string, unknown>): Record<string, unknown> {
+  return redactValue(input, 0, new WeakSet()) as Record<string, unknown>;
 }
 
 interface LogFields {
