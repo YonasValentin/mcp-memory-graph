@@ -163,7 +163,12 @@ export function updateMemory(
     return updated;
   });
 
-  return update();
+  // P9-begin-immediate: this txn READS (SELECT existing) then WRITES. A DEFAULT
+  // deferred BEGIN acquires the write lock lazily on the first write, so a
+  // concurrent writer makes the deferred → write UPGRADE throw SQLITE_BUSY
+  // INSTANTLY — busy_timeout is not honored on a lock upgrade. BEGIN IMMEDIATE
+  // takes the write lock at BEGIN, so busy_timeout applies and the txn waits.
+  return update.immediate();
 }
 
 export function deleteMemory(db: Database.Database, id: string): boolean {
@@ -189,7 +194,10 @@ export function deleteMemory(db: Database.Database, id: string): boolean {
     return true;
   });
 
-  return remove();
+  // P9-begin-immediate: READS (SELECT row) then WRITES (FTS/vec/row delete).
+  // BEGIN IMMEDIATE so a concurrent writer makes this WAIT on busy_timeout
+  // instead of throwing SQLITE_BUSY on the deferred-txn write upgrade.
+  return remove.immediate();
 }
 
 export interface DeleteFilter {
@@ -273,7 +281,10 @@ export function deleteMemoriesByFilter(
     return result.changes;
   });
 
-  return remove();
+  // P9-begin-immediate: READS (SELECT matching rows) then WRITES (bulk delete).
+  // BEGIN IMMEDIATE so a concurrent writer makes this WAIT on busy_timeout
+  // instead of throwing SQLITE_BUSY on the deferred-txn write upgrade.
+  return remove.immediate();
 }
 
 /**
