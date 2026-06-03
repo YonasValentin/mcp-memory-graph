@@ -46,7 +46,7 @@ Authoritative count: **41** (`grep -c 'server.tool(' src/server.ts`). README's "
 
 | Tool | When to use | Key params | HTTP |
 |---|---|---|---|
-| `memory_graph` | Traverse the **entity** graph: find an entity, its relationships, linked memories. Multi-hop depth 1–3. Each edge carries `strength` (evidence-count display), `evidence_count`, and `idf_strength` (the real IDF weight PageRank ranks on). | entity, entity_type, depth, include_memories, limit | ≈ `/api/graph` (diff path) |
+| `memory_graph` | Traverse the **entity** graph: find an entity (by canonical name OR a registered alias — direct name wins), its relationships, linked memories. Multi-hop depth 1–3. Each edge carries `strength` (evidence-count display), `evidence_count`, and `idf_strength` (the real IDF weight PageRank ranks on). | entity, entity_type, depth, include_memories, limit | ≈ `/api/graph` (diff path) |
 | `memory_communities` | Corpus-level **"what are the main themes?"** GraphRAG sensemaking — detects entity-cluster communities (weighted label propagation) + returns top entities/memories + an instruction to name themes. | limit, min_size | |
 | `memory_canvas` | Export the memory graph as **JSON Canvas 1.0** (`.canvas`) — opens as a spatial board in Obsidian. Nodes = memories on a deterministic grid; edges = `memory_links`. Writes into vault if `vault_path` given. | scope, namespace, limit, vault_path, name | |
 

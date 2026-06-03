@@ -65,7 +65,7 @@ A third fix landed after the overhaul pass:
 - **fix(bitemporal): `as_of` VECTOR reconstruction of retired facts** — `invalidateMemory` now RETAINS the vec row (only hard delete drops it), `superseded_at IS NULL` is scoped to current mode, and `handleRelated`/`detectConflicts` filter `valid_to`/`tx_expired`. Real-model verified (a semantic query reconstructs the retired fact at `as_of`, excludes it from current search, returns the live fact). 1001 tests green.
 
 Genuinely **open** (verified by the persona pass unless noted):
-- **`entity_aliases` is write-only** — no tool resolves aliases to entities; the read/resolution half (LEFT JOIN in `handleGraph` + search) was never wired.
+- **`entity_aliases` resolution — `memory_graph` only** (graph half fixed: `handleGraph` resolves alias → canonical entity, direct-name precedence). Still open: `memory_search`/`memory_query`/PageRank do not expand aliases.
 - **`memory_consolidate` `dry_run` under-counts merges** — apply mutates the index mid-pass; a faithful preview must simulate against a copy.
 - **Soft-forget has no un-tombstone tool** — `memory_forget {hard:false}` is recoverable only via direct DB access.
 - **Flaky test:** `src/__tests__/search/forgetting.test.ts` — timing-sensitive in the full parallel run.
