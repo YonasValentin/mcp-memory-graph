@@ -48,4 +48,36 @@ describe('vault round-trip preserves importance + timestamps it persists (VAULT-
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('recovers agent_id and access_level from frontmatter on re-sync (attribution survives)', async () => {
+    // The writer emits agent_id + access_level to frontmatter, and the rebuild
+    // path recovers them — but vault_sync hardcoded access_level='internal' and
+    // dropped agent_id, so a team export_vault → vault_sync round-trip lost
+    // attribution (memory_attribution.by_agent went unattributed) and silently
+    // downgraded access_level. The two round-trip paths must not diverge.
+    const dir = mkdtempSync(join(tmpdir(), 'vault-attr-'));
+    try {
+      const dbA = createTestDb();
+      const m = await handleStore(dbA, embedder, {
+        content: 'a decision made by a specific teammate',
+        scope: 'project',
+        namespace: basename(dir),
+      });
+      dbA
+        .prepare('UPDATE memories SET agent_id = ?, access_level = ? WHERE id = ?')
+        .run('agent-bruno', 'confidential', m.memory.id);
+
+      await handleExportVault(dbA, { vault_path: dir });
+
+      const dbB = createTestDb();
+      await handleVaultSync(dbB, embedder, { vault_path: dir });
+
+      const recovered = getMemoryById(dbB, m.memory.id);
+      expect(recovered).not.toBeNull();
+      expect(recovered?.agent_id).toBe('agent-bruno');
+      expect(recovered?.access_level).toBe('confidential');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

@@ -335,7 +335,12 @@ function buildMemoryRow(
         ? parsed.frontmatter.department
         : null,
     tags: JSON.stringify(parsed.tags),
-    access_level: 'internal',
+    // Recover access_level + agent_id from frontmatter (the writer emits both,
+    // and the rebuild path recovers them) so the export_vault → vault_sync
+    // round-trip does not silently downgrade access or drop attribution
+    // (memory_attribution.by_agent). The two round-trip paths must not diverge.
+    access_level: fmString(fm, 'access_level') ?? 'internal',
+    agent_id: fmString(fm, 'agent_id'),
     language:
       typeof parsed.frontmatter.language === 'string'
         /* c8 ignore next */
