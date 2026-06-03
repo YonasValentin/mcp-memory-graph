@@ -22,7 +22,8 @@ import { MockEmbeddingProvider } from '../../testing/mock-embedder.js';
 import { handleStore } from '../../tools/store.js';
 import { getMemoryById, rowToMemory } from '../../db/repository.js';
 import { parseVaultFile } from '../../vault/parser.js';
-import { memoryToMarkdown, safeVaultFilename, exportMemoriesToVault } from '../../vault/writer.js';
+import { memoryToMarkdown, safeVaultFilename, exportMemoriesToVault, confineToVault } from '../../vault/writer.js';
+import { writeCanvasFile } from '../../vault/canvas.js';
 import type { Memory } from '../../types.js';
 
 let db: Database.Database;
@@ -85,6 +86,51 @@ describe('symlink target confinement (TOCTOU escape)', () => {
     const abs = path.join(result.vault_path, result.files[0]);
     expect(fs.existsSync(abs)).toBe(true);
     expect(abs.startsWith(result.vault_path + path.sep)).toBe(true);
+  });
+});
+
+describe('dangling-symlink LEAF target confinement (battle-v5 round-2, CONFIRMED escape)', () => {
+  // confineToVault realpath'd only the deepest EXISTING ancestor. A write TARGET
+  // that is itself a symlink — especially a DANGLING one (link present, target
+  // absent) — was walked PAST (existsSync follows the dangling link → false), so
+  // the guard returned an in-vault path and writeFileSync then FOLLOWED the link,
+  // creating a file OUTSIDE the chosen vault. Reproduced via memory_canvas (and
+  // memory_export_vault shares the guard) with any name incl. the default.
+  it('confineToVault rejects a symlinked leaf target (dangling, pointing outside)', () => {
+    const realVault = fs.realpathSync(vaultDir);
+    const realOutside = fs.realpathSync(outsideDir);
+    // Dangling: the symlink exists, its target does NOT.
+    fs.symlinkSync(path.join(realOutside, 'pwned.canvas'), path.join(realVault, 'evil.canvas'));
+    expect(confineToVault(realVault, 'evil.canvas')).toBeNull();
+  });
+
+  it('confineToVault rejects a symlinked leaf even when its target already exists', () => {
+    const realVault = fs.realpathSync(vaultDir);
+    const realOutside = fs.realpathSync(outsideDir);
+    fs.writeFileSync(path.join(realOutside, 'live.canvas'), 'x');
+    fs.symlinkSync(path.join(realOutside, 'live.canvas'), path.join(realVault, 'live.canvas'));
+    expect(confineToVault(realVault, 'live.canvas')).toBeNull();
+  });
+
+  it('writeCanvasFile does NOT follow a dangling symlink leaf out of the vault', () => {
+    const realVault = fs.realpathSync(vaultDir);
+    const realOutside = fs.realpathSync(outsideDir);
+    // name 'evil' sanitizes to stem 'evil' → relPath 'evil.canvas'.
+    fs.symlinkSync(path.join(realOutside, 'pwned.canvas'), path.join(realVault, 'evil.canvas'));
+    const out = writeCanvasFile({ nodes: [], edges: [] }, realVault, 'evil');
+    // Nothing escaped to the outside dir through the symlink.
+    expect(fs.existsSync(path.join(realOutside, 'pwned.canvas'))).toBe(false);
+    expect(fs.readdirSync(realOutside).length).toBe(0);
+    // The write landed strictly inside the vault.
+    const rp = fs.realpathSync(out);
+    expect(rp === realVault || rp.startsWith(realVault + path.sep)).toBe(true);
+  });
+
+  it('a legitimate (non-symlink) canvas filename still writes inside the vault', () => {
+    const realVault = fs.realpathSync(vaultDir);
+    const out = writeCanvasFile({ nodes: [], edges: [] }, realVault, 'my-graph');
+    expect(fs.existsSync(out)).toBe(true);
+    expect(out.startsWith(realVault + path.sep)).toBe(true);
   });
 });
 

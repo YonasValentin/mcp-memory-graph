@@ -60,6 +60,22 @@ export function confineToVault(vaultRoot: string, relPath: string): string | nul
     return null;
   }
 
+  // The TARGET LEAF itself must not be a symlink. A DANGLING leaf symlink (link
+  // present, target absent) defeats the ancestor walk above — fs.existsSync
+  // follows it and returns false, so the loop skips PAST it up to the vault root
+  // and the realpath check passes, yet writeFileSync would FOLLOW the link and
+  // escape the vault (battle-v5 round-2, confirmed: a pre-planted
+  // <vault>/x.canvas -> /outside let memory_canvas / memory_export_vault write
+  // outside). lstat does not follow the link, so it flags the symlink itself —
+  // dangling or live — and we reject. A real new file (ENOENT) passes through.
+  try {
+    if (fs.lstatSync(absTarget).isSymbolicLink()) {
+      return null;
+    }
+  } catch {
+    /* ENOENT: nothing at the target path yet — a normal new write. */
+  }
+
   return absTarget;
 }
 
