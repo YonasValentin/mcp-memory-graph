@@ -48,6 +48,28 @@ describe('sanitizeText', () => {
     expect(sanitizeText('café 日本語')).toBe('café 日本語');
   });
 
+  it('preserves ZWJ (U+200D) and ZWNJ (U+200C) — joiners, not Trojan-Source vectors', () => {
+    // ZWJ builds legitimate emoji sequences; ZWNJ is essential in Persian/Arabic/
+    // Hindi. Stripping them corrupts real content (the old ​-‏ range
+    // swallowed both). They cannot reorder/spoof text, so they are safe to keep.
+    const family = '👨‍👩‍👧'; // ZWJ family emoji
+    const rainbowFlag = '🏳️‍🌈'; // ZWJ rainbow flag
+    const persian = 'می‌خواهم'; // ZWNJ between Persian words
+    expect(sanitizeText(family)).toBe(family);
+    expect(sanitizeText(rainbowFlag)).toBe(rainbowFlag);
+    expect(sanitizeText(persian)).toBe(persian);
+  });
+
+  it('still strips the Trojan-Source zero-width/BiDi set after excluding the joiners', () => {
+    // Excluding U+200C/U+200D must NOT weaken the spoofing defense.
+    expect(sanitizeText('a​b')).toBe('ab'); // ZERO WIDTH SPACE
+    expect(sanitizeText('a‎b')).toBe('ab'); // LEFT-TO-RIGHT MARK
+    expect(sanitizeText('a‏b')).toBe('ab'); // RIGHT-TO-LEFT MARK
+    expect(sanitizeText('a‮b')).toBe('ab'); // RIGHT-TO-LEFT OVERRIDE
+    expect(sanitizeText('a⁦b⁩c')).toBe('abc'); // isolates
+    expect(sanitizeText('﻿hi')).toBe('hi'); // BOM
+  });
+
   it('leaves clean strings unchanged', () => {
     expect(sanitizeText('just normal text 123 !@#')).toBe('just normal text 123 !@#');
   });

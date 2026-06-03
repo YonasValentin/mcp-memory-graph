@@ -15,10 +15,14 @@
  *   - C0 control chars `\x00–\x1F` and C1 controls `\x80–\x9F`, EXCEPT the
  *     benign whitespace `\t` (0x09), `\n` (0x0A), `\r` (0x0D) which are kept.
  *   - Zero-width and BiDi control chars used for Trojan-Source spoofing:
- *     U+200B–U+200F, U+202A–U+202E, U+2066–U+2069, U+FEFF.
+ *     U+200B, U+200E–U+200F, U+202A–U+202E, U+2066–U+2069, U+FEFF.
+ *     U+200C (ZWNJ) and U+200D (ZWJ) are deliberately NOT stripped — they are
+ *     joiners, not spoofing vectors: ZWJ builds legitimate emoji sequences
+ *     (👨‍👩‍👧, 🏳️‍🌈) and ZWNJ is essential in Persian/Arabic/Hindi. Removing them
+ *     corrupts real content while adding no security value.
  *
- * All other printable / Unicode text (e.g. 'café 日本語') is left intact.
- * sanitizeText is idempotent.
+ * All other printable / Unicode text (e.g. 'café 日本語', 'می‌خواهم') is left
+ * intact. sanitizeText is idempotent.
  */
 
 // ESC-introduced sequences. Order in the alternation matters: match the
@@ -53,9 +57,12 @@ const CONTROL_CHARS_RE =
   /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\x80-\x9F]/g;
 
 // Zero-width + BiDi control chars enabling Trojan-Source spoofing:
-// U+200B–U+200F, U+202A–U+202E, U+2066–U+2069, U+FEFF. Written with explicit
-// escapes (not literal invisible chars) so the set is auditable in source.
-const ZERO_WIDTH_BIDI_RE = /[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+// U+200B, U+200E–U+200F, U+202A–U+202E, U+2066–U+2069, U+FEFF. Written with
+// explicit escapes (not literal invisible chars) so the set is auditable in
+// source. The range deliberately EXCLUDES U+200C (ZWNJ) and U+200D (ZWJ): they
+// are joiners (emoji ZWJ sequences, Persian/Arabic/Hindi shaping), not spoofing
+// vectors, so stripping them only corrupts legitimate text.
+const ZERO_WIDTH_BIDI_RE = /[\u200B\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
 
 /**
  * Strip terminal-injection and Trojan-Source control characters from a string,
