@@ -10,6 +10,15 @@
  * Centralizing it guarantees every surface agrees on what "live" means.
  */
 
+/**
+ * SQLite expression for "now" in the ISO-8601-with-millis-Z format
+ * (`YYYY-MM-DDTHH:MM:SS.sssZ`). Use this everywhere a timestamp is written or
+ * lexically range-compared instead of `datetime('now')` — whose space separator
+ * (0x20) sorts before `'T'` (0x54), so a same-day ISO-Z value mis-collates
+ * against it (TTL leaks, stale tombstones out-sort live edits in git merge).
+ */
+export const NOW_ISO_SQL = "strftime('%Y-%m-%dT%H:%M:%fZ','now')";
+
 export interface LiveConditionOptions {
   /** Also exclude superseded rows (`superseded_at IS NULL`). Search-grade strictness. */
   excludeSuperseded?: boolean;
@@ -28,7 +37,7 @@ export function liveConditions(opts: LiveConditionOptions = {}): string[] {
   if (opts.excludeSuperseded) conditions.push('superseded_at IS NULL');
   if (opts.topLevelOnly) conditions.push('parent_id IS NULL');
   if (opts.excludeExpired) {
-    conditions.push("(expires_at IS NULL OR expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now'))");
+    conditions.push(`(expires_at IS NULL OR expires_at > ${NOW_ISO_SQL})`);
   }
   return conditions;
 }

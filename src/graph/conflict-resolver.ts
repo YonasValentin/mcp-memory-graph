@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import { cosineSimFromL2 } from '../search/scoring.js';
+import { NOW_ISO_SQL } from '../db/predicates.js';
 
 export type ConflictType = 'superseded' | 'contradicted' | 'duplicate';
 
@@ -132,7 +133,7 @@ export function recordConflicts(
   // stops being true the moment the superseding fact became true (the new
   // memory's valid_from). COALESCE keeps any earlier valid_to already set.
   const supersedeStmt = db.prepare(
-    `UPDATE memories SET superseded_at = datetime('now'),
+    `UPDATE memories SET superseded_at = ${NOW_ISO_SQL},
        valid_to = COALESCE(valid_to, (SELECT valid_from FROM memories WHERE id = ?))
      WHERE id = ?`,
   );

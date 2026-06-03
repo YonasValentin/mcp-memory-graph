@@ -38,13 +38,14 @@ export function handleVaultStatus(
 
     if (!meta) {
       pendingFiles++;
-    } else if (meta.mtime_ms !== Math.floor(file.mtimeMs)) {
+    } else if (meta.mtime_ms !== file.mtimeMs) {
+      // Compare the RAW fs mtimeMs exactly as vault_sync stores+compares it.
+      // Flooring here diverged from the stored raw value on sub-ms filesystems,
+      // marking every just-synced file "changed" forever (persona P4).
       changedFiles++;
-    /* c8 ignore start */
     } else {
       syncedFiles++;
     }
-    /* c8 ignore stop */
   }
 
   let deletedFiles = 0;

@@ -110,6 +110,8 @@ export interface MemoryInput {
   metadata?: Record<string, unknown>;
   expires_at?: string;
   confidence_score?: number;
+  /** Explicit importance 0-1 (governance/criticality); falls back to a content-derived signal. */
+  importance_score?: number;
   /** Identifier of the writing agent for multi-agent attribution (distinct from author). */
   agent_id?: string;
   /**
@@ -128,6 +130,7 @@ export interface MemoryUpdate {
   tags?: string[];
   expires_at?: string | null;
   changed_by?: string;
+  importance_score?: number;
 }
 
 export interface SearchOptions {

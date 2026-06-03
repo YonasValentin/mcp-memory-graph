@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { Memory, MemoryRow, ListOptions, AccessLogEntry, IngestSourceRecord } from '../types.js';
+import { NOW_ISO_SQL } from './predicates.js';
 
 export function insertMemory(
   db: Database.Database,
@@ -229,7 +230,7 @@ export function deleteMemoriesByFilter(
       params.push(filter.before_date);
     }
     if (filter.expired_only) {
-      conditions.push("expires_at IS NOT NULL AND expires_at < datetime('now')");
+      conditions.push(`expires_at IS NOT NULL AND expires_at < ${NOW_ISO_SQL}`);
     }
 
     if (conditions.length === 0) {

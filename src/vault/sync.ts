@@ -302,6 +302,11 @@ function fmString(fm: Record<string, unknown>, key: string): string | null {
   return typeof v === 'string' && v.length > 0 ? v : null;
 }
 
+function fmNumber(fm: Record<string, unknown>, key: string): number | null {
+  const v = fm[key];
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
 function buildMemoryRow(
   parsed: ParsedVaultFile,
   vaultName: string,
@@ -345,12 +350,16 @@ function buildMemoryRow(
     parent_id: null,
     chunk_index: null,
     version: 1,
-    created_at: now,
-    updated_at: now,
+    // Recover the fields the writer DOES persist to frontmatter so a
+    // export_vault → vault_sync round-trip is fidelity-preserving for them.
+    // (confidence/access/stability are NOT emitted by the writer and stay at
+    // defaults — genuinely unrecoverable from the .md.)
+    created_at: fmString(fm, 'created_at') ?? now,
+    updated_at: fmString(fm, 'updated_at') ?? now,
     expires_at: null,
     access_count: 0,
     last_accessed_at: null,
-    importance_score: 0.5,
+    importance_score: fmNumber(fm, 'importance_score') ?? 0.5,
     confidence_score: 0.6,
     stability: 1.0,
   };

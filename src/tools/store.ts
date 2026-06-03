@@ -246,7 +246,7 @@ export async function handleStore(
     expires_at: input.expires_at ?? null,
     access_count: 0,
     last_accessed_at: null,
-    importance_score: computeContentSignal(input.content),
+    importance_score: input.importance_score ?? computeContentSignal(input.content),
     confidence_score: input.confidence_score ?? 0.7,
     stability: 1.0,
     // Multi-agent attribution: explicit input wins, else a deployment-wide env

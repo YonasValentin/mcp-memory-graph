@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type BetterSqlite3 from 'better-sqlite3';
 import { resolveNamespace } from '../config/loader.js';
+import { NOW_ISO_SQL } from '../db/predicates.js';
 
 async function main(): Promise<void> {
   // Safety timeout - hooks must never hang
@@ -47,7 +48,7 @@ async function main(): Promise<void> {
 
   try {
     const total = db.prepare('SELECT COUNT(*) as cnt FROM memories WHERE parent_id IS NULL').get() as { cnt: number } | undefined;
-    const expired = db.prepare("SELECT COUNT(*) as cnt FROM memories WHERE expires_at IS NOT NULL AND expires_at < datetime('now')").get() as { cnt: number } | undefined;
+    const expired = db.prepare(`SELECT COUNT(*) as cnt FROM memories WHERE expires_at IS NOT NULL AND expires_at < ${NOW_ISO_SQL}`).get() as { cnt: number } | undefined;
 
     const totalCount = total?.cnt ?? 0;
     const expiredCount = expired?.cnt ?? 0;

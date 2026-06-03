@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { MemoryStats } from '../types.js';
-import { liveConditions, scopeConditions } from '../db/predicates.js';
+import { liveConditions, scopeConditions, NOW_ISO_SQL } from '../db/predicates.js';
 
 export function handleStats(
   db: Database.Database,
@@ -103,8 +103,8 @@ export function handleStats(
 
   const expiredFilter =
     conditions.length > 0
-      ? `WHERE expires_at IS NOT NULL AND expires_at < datetime('now') AND ${conditions.join(' AND ')}`
-      : "WHERE expires_at IS NOT NULL AND expires_at < datetime('now')";
+      ? `WHERE expires_at IS NOT NULL AND expires_at < ${NOW_ISO_SQL} AND ${conditions.join(' AND ')}`
+      : `WHERE expires_at IS NOT NULL AND expires_at < ${NOW_ISO_SQL}`;
   const expiredRow = db
     .prepare<unknown[], { count: number }>(
       `SELECT COUNT(*) as count FROM memories ${expiredFilter}`,

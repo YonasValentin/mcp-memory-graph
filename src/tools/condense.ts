@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { EmbeddingProvider } from '../types.js';
 import { getMemoryById, updateMemory } from '../db/repository.js';
+import { NOW_ISO_SQL } from '../db/predicates.js';
 
 interface CondenseEntry {
   id: string;
@@ -68,7 +69,7 @@ export async function handleCondense(
 
         if (!hasOriginal) {
           db.prepare(
-            "INSERT INTO memory_originals (memory_id, original_content, original_title, preserved_at) VALUES (?, ?, ?, datetime('now'))",
+            `INSERT INTO memory_originals (memory_id, original_content, original_title, preserved_at) VALUES (?, ?, ?, ${NOW_ISO_SQL})`,
           ).run(entry.id, stillExists.content, stillExists.title);
         }
 
@@ -77,7 +78,7 @@ export async function handleCondense(
         if (!updated) return false;
 
         db.prepare(
-          "UPDATE memories SET condensation_level = ?, condensed_at = datetime('now') WHERE id = ?",
+          `UPDATE memories SET condensation_level = ?, condensed_at = ${NOW_ISO_SQL} WHERE id = ?`,
         ).run(input.target_level, entry.id);
         return true;
       });

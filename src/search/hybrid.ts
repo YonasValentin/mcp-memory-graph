@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import type { EmbeddingProvider, SearchOptions, SearchResult, SearchResultSummary, SearchResultIdOnly, MemoryRow } from '../types.js';
 import { applyTemporalDecay } from './temporal.js';
 import { computeConfidence, confidenceLabel } from './scoring.js';
+import { NOW_ISO_SQL } from '../db/predicates.js';
 import { rowToMemory } from '../db/repository.js';
 import { extractEntitiesRegex } from '../graph/entity-extractor.js';
 import { normalizeName } from '../graph/entity-store.js';
@@ -217,7 +218,7 @@ export async function hybridSearch(
     params.push(options.date_to);
   }
 
-  whereClauses.push("(expires_at IS NULL OR expires_at > datetime('now'))");
+  whereClauses.push(`(expires_at IS NULL OR expires_at > ${NOW_ISO_SQL})`);
   whereClauses.push('superseded_at IS NULL');
 
   // Bi-temporal: currently-valid by default; point-in-time when `as_of` is set.

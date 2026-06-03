@@ -1,11 +1,11 @@
 /**
  * Group G3, Finding 10 — handleGraph must surface the REAL co-occurrence signal.
  *
- * findOrCreateRelationship only ever bumps evidence_count; strength stays at the
- * schema default 0.5 forever, so handleGraph reported a constant 0.5 carrying no
- * information. Now handleGraph surfaces evidence_count and derives a strength
- * that grows with it (saturating), so a pair seen many times reads stronger than
- * one seen once.
+ * handleGraph surfaces a stable evidence-derived display `strength` that grows
+ * with evidence_count (saturating), so a pair seen many times reads stronger than
+ * one seen once. It ALSO exposes the real IDF-weighted `strength` column that
+ * findOrCreateRelationship persists (R2, the value PageRank ranks on) as a
+ * separate `idf_strength` field so the IDF weight is inspectable via the tool.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -47,6 +47,24 @@ describe('handleGraph — F10: surfaces real co-occurrence strength + evidence_c
     // strength is a real number in [0,1].
     expect(strongRel!.strength).toBeLessThanOrEqual(1);
     expect(weakRel!.strength).toBeGreaterThan(0);
+  });
+
+  it('surfaces the real IDF-weighted strength column as idf_strength', () => {
+    const anchor = findOrCreateEntity(db, 'Kafka', 'tool');
+    const other = findOrCreateEntity(db, 'Zookeeper', 'tool');
+    findOrCreateRelationship(db, anchor, other, 'co_occurs');
+
+    const dbStrength = (
+      db
+        .prepare('SELECT strength FROM entity_relationships WHERE source_entity_id = ? OR target_entity_id = ?')
+        .get(anchor, anchor) as { strength: number }
+    ).strength;
+
+    const g = handleGraph(db, { entity: 'Kafka', depth: 1, limit: 10 });
+    const rel = relTo('Zookeeper', g, 'Kafka');
+    expect(rel?.idf_strength).toBeCloseTo(dbStrength, 6);
+    // The IDF strength is the real edge weight, NOT the dead 0.5 default.
+    expect(rel?.idf_strength).not.toBe(0.5);
   });
 
   it('surfaces evidence_count on each relationship', () => {
