@@ -69,6 +69,8 @@ npx mcp-memory-server rebuild --vault ~/team-vault   # rebuild the SQLite cache 
 
 **Why it merges cleanly:** per-memory `.md` files get native 3-way git merge; only the `.memory/graph.json` sidecar needs the union driver (bound by `vault-init`). Timestamps are stamped ISO-Z so a tombstone never lexically out-sorts a later same-day edit.
 
+**Merge requires a CLEAN working tree** (battle-v3 P-TEAM): `git pull`/`git merge` aborts with `"untracked working tree files would be overwritten by merge"` if a stale export or an aborted prior merge left incoming per-memory `.md` files untracked — the `.memory/graph.json` union driver itself merges fine; the friction is the `.md` files. Run `sync`+`commit` (or `git stash -u` / remove the stray files) so `git status` is clean **before** pulling. `vault-init` resolves the vault from `--vault` **or** `MCP_VAULT_PATH` **or** `config.json` (`vault.path`) — only the `--vault` form is shown above. (Heads-up: the package/binary name used here is `mcp-memory-server`; the hook matcher in §4 uses the server name `memory-server` — don't conflate them.)
+
 **Caveats:** `vault rebuild` **hard-deletes** the DB+WAL+SHM before rebuilding — the vault must be the source of truth. Vault `.md` round-trip resets `confidence`/`access`/`stability` signal columns (identity + content preserved) — not a full-fidelity backup. See gotchas.md.
 
 ---

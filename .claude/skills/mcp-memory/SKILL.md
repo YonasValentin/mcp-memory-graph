@@ -18,16 +18,16 @@ A local-first memory server for coding agents: durable, queryable, cross-session
 The everyday loop is two tools:
 
 ```
-memory_store  { content: "<one discrete fact/decision/pattern/fix>", document_type: "decision", tags: [...] }
+memory_store  { title: "<short label>", content: "<one discrete fact/decision/pattern/fix>", document_type: "decision", tags: [...] }
 memory_search { query: "<what you want back, in meaning not keywords>" }
 ```
 
 Five things to internalize before driving:
 
-1. **Pick the right write.** Discrete fact → `memory_store`. Large document → `memory_ingest` (auto-chunks). Running session log → `memory_session_note`. Structured note → `memory_template` then store.
-2. **Pick the right read.** Recall by meaning → `memory_search`. Compact answer to a question → `memory_query`. Exact filter → `memory_query_structured`. Discover what exists → `memory_manifest`.
-3. **Scope + privacy.** scope ∈ global|project|user|team|department; namespace defaults to the project dir. **An unscoped `memory_search` hides `scope='user'` memories** — the #1 reason a memory "isn't found". Re-search with explicit `scope:'user'`.
-4. **Rerank divergence.** `memory_search` over MCP defaults `rerank:true` (best precision, +~120–200ms). REST `/api/search` leaves it OFF (faster, lower precision). Pass `rerank:false` to trade precision for speed.
+1. **Pick the right write.** Discrete fact → `memory_store`. Large document → `memory_ingest` (auto-chunks). Running session log → `memory_session_note`. Structured note → `memory_template` then store. **Pass a `title`** — it's optional and defaults to `null`, so an omitted title leaves every search hit titleless (a column of blanks on your first corpus).
+2. **Pick the right read.** Recall by meaning → `memory_search`. Token-budgeted context for a question → `memory_query` (returns the relevant memory CONTENTS rendered into a block with `## <id>` headers + hop annotations — NOT a synthesized sentence; on a corpus with no graph links yet it's a flat list of seed memories). Exact filter → `memory_query_structured` (top-level memories only — ingested child chunks are excluded). Discover what exists → `memory_manifest`.
+3. **Scope + privacy.** scope ∈ global|project|user|team|department; namespace defaults to the project dir *when set by the MCP client/hooks* (calling a handler directly defaults scope=`global`, namespace=`null`). **An unscoped `memory_search` hides `scope='user'` memories** — the #1 reason a memory "isn't found". Re-search with explicit `scope:'user'`.
+4. **Rerank divergence.** `memory_search` over MCP defaults `rerank:true` (best precision, +~90ms Apple Silicon / ~200ms slower CPUs). REST `/api/search` **and a direct `handleSearch` call (what the `sim-*.mjs` templates do)** leave it OFF (faster, lower precision) — pass `rerank:true` there to match real MCP precision, or `rerank:false` over MCP to trade precision for speed.
 5. **Delete vs forget.** `memory_delete` is a hard delete. For anything recoverable or governed, use `memory_forget` (soft tombstone, or hard-with-export-first).
 
 Full per-tool when-to-use + params: **`references/tool-catalog.md`**.
