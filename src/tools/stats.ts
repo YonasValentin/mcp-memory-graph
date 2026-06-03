@@ -6,10 +6,18 @@ export function handleStats(
   db: Database.Database,
   input: { scope?: string; namespace?: string; department?: string },
 ): MemoryStats {
-  // Count only currently-live rows so stats agree with memory_list/search and
-  // don't drift upward with every supersede/soft-delete (BATTLE-PLAN #4).
+  // Count only currently-live rows so stats agree with memory_search and don't
+  // drift upward with every supersede/soft-delete (BATTLE-PLAN #4). excludeExpired
+  // makes total/doc/chunk/scope counts match search, which filters expires_at —
+  // without it, not-yet-pruned expired rows inflated total_memories (the separate
+  // expired_count below still reports them). memory_list intentionally does NOT
+  // filter expiry, so stats agrees with search, not list, on expired rows.
   const scope = scopeConditions(input);
-  const conditions = [...liveConditions(), ...scope.conditions];
+  const conditions = [...liveConditions({ excludeExpired: true }), ...scope.conditions];
+  // Base live set WITHOUT the exclude-expired clause — used only by the expired
+  // count, which intentionally selects expired rows (ANDing the exclude-expired
+  // predicate in would contradict `expires_at < now` and always return 0).
+  const baseConditions = [...liveConditions(), ...scope.conditions];
   const params = scope.params;
 
   const whereClause = `WHERE ${conditions.join(' AND ')}`;
@@ -102,8 +110,8 @@ export function handleStats(
   }
 
   const expiredFilter =
-    conditions.length > 0
-      ? `WHERE expires_at IS NOT NULL AND expires_at < ${NOW_ISO_SQL} AND ${conditions.join(' AND ')}`
+    baseConditions.length > 0
+      ? `WHERE expires_at IS NOT NULL AND expires_at < ${NOW_ISO_SQL} AND ${baseConditions.join(' AND ')}`
       : `WHERE expires_at IS NOT NULL AND expires_at < ${NOW_ISO_SQL}`;
   const expiredRow = db
     .prepare<unknown[], { count: number }>(

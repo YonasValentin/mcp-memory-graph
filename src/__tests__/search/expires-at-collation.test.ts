@@ -44,12 +44,20 @@ describe('expires_at TTL is enforced with ISO-Z collation (TTL-1)', () => {
     await handleStore(db, embedder, { content: 'stale ephemeral note', expires_at: expired });
     await handleStore(db, embedder, { content: 'durable note' });
 
-    const before = await handleStats(db, {});
-    expect(before.total_memories).toBe(2);
+    // Measure PHYSICAL presence, not total_memories — stats now (correctly)
+    // excludes expired rows from total_memories, so the prune must be observed by
+    // the row actually leaving the table. A mis-sorted ('T' vs ' ') same-day
+    // expired row would ESCAPE prune and leave rawCount at 2.
+    const rawCount = () =>
+      db.prepare<[], { c: number }>('SELECT COUNT(*) AS c FROM memories').get()!.c;
+    expect(rawCount()).toBe(2); // both rows physically present before prune
 
     await handleConsolidate(db, embedder, { prune_expired: true, dry_run: false });
 
-    const after = await handleStats(db, {});
-    expect(after.total_memories).toBe(1);
+    expect(rawCount()).toBe(1); // same-day expired row was physically pruned
+    const survivor = db
+      .prepare<[], { content: string }>('SELECT content FROM memories')
+      .get()!;
+    expect(survivor.content).toBe('durable note');
   });
 });

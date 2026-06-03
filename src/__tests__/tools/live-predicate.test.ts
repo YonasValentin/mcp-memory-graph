@@ -43,6 +43,19 @@ describe('live-row predicate excludes retired rows everywhere', () => {
     expect(handleStats(db, { scope: 'project', namespace: 'pred' }).total_memories).toBe(2);
   });
 
+  it('memory_stats.total_memories EXCLUDES expired rows (agrees with search)', async () => {
+    const { db, ids } = await seed(); // 2 live (ids[0], ids[1])
+    // Expire one of the two live memories with a past expires_at. search filters
+    // expiry (hybrid.ts) but stats counted it — total_memories must agree.
+    db.prepare('UPDATE memories SET expires_at = ? WHERE id = ?').run(
+      '2000-01-01T00:00:00.000Z',
+      ids[1],
+    );
+    const stats = handleStats(db, { scope: 'project', namespace: 'pred' });
+    expect(stats.total_memories).toBe(1);
+    expect(stats.expired_count).toBe(1);
+  });
+
   it('memory_manifest excludes the retired memory', async () => {
     const { db } = await seed();
     expect(handleManifest(db, { namespace: 'pred', limit: 100 }).total).toBe(2);
