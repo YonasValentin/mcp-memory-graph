@@ -35,8 +35,19 @@ try {
   await client.connect(transport);
   ok('handshake reports package version', client.getServerVersion()?.version !== '1.0.0', JSON.stringify(client.getServerVersion()));
 
+  const instructions = client.getInstructions() ?? '';
+  ok('server advertises instructions', instructions.length > 0 && /memory_search|memory_store/.test(instructions), instructions.slice(0, 60));
+
   const tools = await client.listTools();
-  ok('lists >= 34 tools', tools.tools.length >= 34, `got ${tools.tools.length}`);
+  ok('lists >= 41 tools', tools.tools.length >= 41, `got ${tools.tools.length}`);
+  // Every tool must advertise annotations (closed-world local store). Sample
+  // the read/destructive classification so a mis-tagged tool trips the gate.
+  const byName = Object.fromEntries(tools.tools.map((t) => [t.name, t.annotations]));
+  ok('every tool advertises annotations', tools.tools.every((t) => t.annotations && t.annotations.openWorldHint === false && typeof t.annotations.title === 'string'),
+    `missing on: ${tools.tools.filter((t) => !t.annotations || t.annotations.openWorldHint !== false).map((t) => t.name).join(',') || 'none'}`);
+  ok('read tools flagged readOnlyHint', byName['memory_search']?.readOnlyHint === true && byName['memory_get']?.readOnlyHint === true && byName['memory_stats']?.readOnlyHint === true);
+  ok('destructive tools flagged destructiveHint', byName['memory_forget']?.destructiveHint === true && byName['memory_delete']?.destructiveHint === true && byName['memory_import']?.destructiveHint === true && byName['memory_version_restore']?.destructiveHint === true);
+  ok('writes not mislabeled read-only', !byName['memory_store']?.readOnlyHint && !byName['memory_update']?.readOnlyHint);
 
   const s1 = await client.callTool({ name: 'memory_store', arguments: {
     content: 'PostgreSQL connection pooling reuses DB connections to avoid handshake overhead under load. We chose pgBouncer in transaction mode.',

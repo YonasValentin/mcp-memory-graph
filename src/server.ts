@@ -1,4 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { ZodRawShape } from 'zod';
 import { createRequire } from 'node:module';
 import type Database from 'better-sqlite3';
 import { getDatabase, closeDatabase } from './db/connection.js';
@@ -157,10 +159,26 @@ const { version: SERVER_VERSION } = createRequire(import.meta.url)('../package.j
   version: string;
 };
 
+// Top-level server `instructions` returned in the MCP initialize handshake.
+// This is the highest-leverage "how to use this server" surface: every MCP
+// client can read it to pick the right memory tool. Kept concise and grounded
+// in the operating manual (the mcp-memory skill).
+const SERVER_INSTRUCTIONS = [
+  'Local-first, bi-temporal knowledge-memory server. Persist and recall durable knowledge (facts, decisions, patterns, fixes) across sessions; everything runs on this machine ($0/token, no cloud).',
+  'WRITE: memory_store for one discrete fact/decision/pattern (always pass a title); memory_ingest for a large document (auto-chunks); memory_session_note for a running session log; core_memory_append for always-on pinned context.',
+  'READ: memory_search to recall by meaning (rerank defaults ON); add use_graph:true for multi-hop. memory_query for a token-budgeted context block answering a question; memory_query_structured for exact metadata filters; memory_manifest to discover what exists.',
+  'Scopes are global|project|user|team|department. An unscoped memory_search HIDES scope="user" memories — if a personal memory seems missing, re-search with scope:"user".',
+  'Prefer memory_forget (recoverable tombstone, GDPR-aware) over memory_delete (hard, irreversible). Run memory_consolidate with dry_run:true before a real consolidation.',
+].join(' ');
+
 export function createServer(): McpServer {
   // No `logging` capability is advertised: the server never emits
   // notifications/message, so advertising it would overstate what it supports.
-  const server = new McpServer({ name: 'mcp-memory-server', version: SERVER_VERSION });
+  // `instructions` advertises when-to-use guidance to every MCP client.
+  const server = new McpServer(
+    { name: 'mcp-memory-server', version: SERVER_VERSION },
+    { instructions: SERVER_INSTRUCTIONS },
+  );
 
   let db: Database.Database | null = null;
   let embedderPromise: Promise<EmbeddingProvider> | null = null;
@@ -205,8 +223,50 @@ export function createServer(): McpServer {
   const withForcedNs = scopeToNamespace;
   const idInForcedNs = (id: string): boolean => idIsInForcedNamespace(getDb(), id);
 
+  // ── MCP tool annotations (SDK behavioral hints) ───────────────────────────
+  // `reg` mirrors the deprecated 4-arg `server.tool(name, description, shape,
+  // cb)` signature exactly, so every registration below is unchanged — but it
+  // routes through `registerTool` and attaches MCP annotations so clients can
+  // auto-approve safe reads and gate destructive ops. readOnlyHint ⇒ no side
+  // effects; destructiveHint ⇒ may cause data loss (only meaningful when not
+  // read-only); openWorldHint:false ⇒ this is a closed local store, not an
+  // open-world integration. The two sets are the single source of truth and are
+  // asserted by the smoke harness (scripts/smoke-mcp.mjs).
+  const READ_ONLY_TOOLS = new Set<string>([
+    'memory_search', 'memory_get', 'memory_list', 'memory_related',
+    'memory_versions', 'memory_stats', 'memory_tiers', 'memory_export',
+    'vault_status', 'vault_search', 'memory_manifest', 'memory_graph',
+    'memory_query', 'memory_query_structured', 'core_memory_get',
+    'memory_communities', 'memory_template', 'memory_attribution',
+    'memory_questions', 'memory_history', 'memory_unlinked_mentions',
+    'memory_version_diff',
+  ]);
+  const DESTRUCTIVE_TOOLS = new Set<string>([
+    'memory_forget', 'memory_delete', 'memory_import', 'memory_version_restore',
+  ]);
+
+  function reg<Args extends ZodRawShape>(
+    name: string,
+    description: string,
+    inputSchema: Args,
+    handler: ToolCallback<Args>,
+  ): void {
+    const annotations: {
+      title: string;
+      readOnlyHint?: boolean;
+      destructiveHint?: boolean;
+      openWorldHint: boolean;
+    } = {
+      title: name.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+      openWorldHint: false,
+    };
+    if (READ_ONLY_TOOLS.has(name)) annotations.readOnlyHint = true;
+    if (DESTRUCTIVE_TOOLS.has(name)) annotations.destructiveHint = true;
+    server.registerTool(name, { description, inputSchema, annotations }, handler);
+  }
+
   // ── 1. memory_store ──────────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_store',
     'Store a new memory with content, metadata, and automatic vector embedding. Use this to save information, decisions, patterns, or knowledge for later semantic retrieval.',
     MemoryStoreSchema.shape,
@@ -220,7 +280,7 @@ export function createServer(): McpServer {
   );
 
   // ── 2. memory_search ─────────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_search',
     'Search memories using hybrid vector+keyword search. Finds semantically similar content and exact keyword matches, with optional filters for scope, department, tags, date range, and temporal decay.',
     MemorySearchSchema.shape,
@@ -235,7 +295,7 @@ export function createServer(): McpServer {
   );
 
   // ── 3. memory_get ─────────────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_get',
     'Retrieve a specific memory by its ID. Optionally include child chunks for ingested documents.',
     MemoryGetSchema.shape,
@@ -249,7 +309,7 @@ export function createServer(): McpServer {
   );
 
   // ── 4. memory_update ──────────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_update',
     'Update an existing memory. If content changes, the vector embedding is automatically regenerated. Previous versions are preserved in history.',
     MemoryUpdateSchema.shape,
@@ -262,7 +322,7 @@ export function createServer(): McpServer {
   );
 
   // ── 5. memory_delete ──────────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_delete',
     'Delete memories by ID or by filter criteria (scope, department, before_date, expired_only). Provide at least one of id or filter.',
     {
@@ -276,7 +336,7 @@ export function createServer(): McpServer {
   );
 
   // ── 6. memory_list ────────────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_list',
     'Browse memories with filtering and pagination. Supports sorting by creation date, update date, or title.',
     MemoryListSchema.shape,
@@ -287,7 +347,7 @@ export function createServer(): McpServer {
   );
 
   // ── 7. memory_ingest ──────────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_ingest',
     'Ingest a full document: automatically chunks it based on content type (text, markdown, code, legal), embeds each chunk, and stores with provenance. Use this for large documents.',
     MemoryIngestSchema.shape,
@@ -298,7 +358,7 @@ export function createServer(): McpServer {
   );
 
   // ── 8. memory_related ─────────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_related',
     'Find memories semantically related to a given memory ID. Uses vector similarity to discover connections.',
     MemoryRelatedSchema.shape,
@@ -311,7 +371,7 @@ export function createServer(): McpServer {
   );
 
   // ── 9. memory_versions ────────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_versions',
     'View the version history of a memory, showing all past edits with timestamps and who made each change.',
     MemoryVersionsSchema.shape,
@@ -323,7 +383,7 @@ export function createServer(): McpServer {
   );
 
   // ── 10. memory_stats ──────────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_stats',
     'Get usage statistics: total memories, chunks, documents, breakdowns by scope/department/type, storage size, and expired count.',
     MemoryStatsSchema.shape,
@@ -334,7 +394,7 @@ export function createServer(): McpServer {
   );
 
   // ── 10b. memory_tiers ─────────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_tiers',
     'Show the MemGPT-style tier distribution (hot / recall / archival) of currently-valid, top-level memories and list the hot working set. Tiers are derived from access recency + frequency — hot = frequently or recently accessed, archival = old and rarely touched, recall = everything in between. Read-only; optional scope/namespace filter.',
     MemoryTiersSchema.shape,
@@ -345,7 +405,7 @@ export function createServer(): McpServer {
   );
 
   // ── 11. memory_export ─────────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_export',
     'Export memories as JSON for backup or migration. Supports filtering by scope, namespace, and department. Max 1000 records per export.',
     MemoryExportSchema.shape,
@@ -356,7 +416,7 @@ export function createServer(): McpServer {
   );
 
   // ── 12. memory_import ─────────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_import',
     'Import memories from JSON. Each item is embedded and stored. Use overwrite=true to update existing memories by ID.',
     MemoryImportSchema.shape,
@@ -367,7 +427,7 @@ export function createServer(): McpServer {
   );
 
   // ── 13. vault_sync ──────────────────────────────────────────────────────
-  server.tool(
+  reg(
     'vault_sync',
     'Sync an Obsidian vault to memory. Scans for markdown files, extracts frontmatter/tags/wiki-links, embeds content, and stores as searchable memories. Uses incremental sync based on file modification times.',
     VaultSyncSchema.shape,
@@ -378,7 +438,7 @@ export function createServer(): McpServer {
   );
 
   // ── 14. vault_status ────────────────────────────────────────────────────
-  server.tool(
+  reg(
     'vault_status',
     'Check the sync status of an Obsidian vault: total files, synced/pending/changed counts, last sync time, and memory count.',
     VaultStatusSchema.shape,
@@ -389,7 +449,7 @@ export function createServer(): McpServer {
   );
 
   // ── 15. vault_search ────────────────────────────────────────────────────
-  server.tool(
+  reg(
     'vault_search',
     'Search within a synced Obsidian vault using hybrid vector+keyword search. Automatically scopes results to the vault namespace.',
     VaultSearchSchema.shape,
@@ -400,7 +460,7 @@ export function createServer(): McpServer {
   );
 
   // ── 15b. memory_export_vault ─────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_export_vault',
     'Write memories OUT to an Obsidian vault as .md files with YAML frontmatter — the reverse of vault_sync. Each currently-valid top-level memory becomes a plain markdown file a human can open and edit; namespaced memories land under <vault>/<namespace>/. Lossless: written files parse back via the vault parser. Optionally filter by scope/namespace.',
     MemoryExportVaultSchema.shape,
@@ -411,7 +471,7 @@ export function createServer(): McpServer {
   );
 
   // ── 15c. memory_canvas ────────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_canvas',
     'Export the memory graph as a JSON Canvas 1.0 .canvas — opens as a spatial board in real Obsidian. Each currently-valid top-level memory becomes a text node on a deterministic grid; memory_links become labeled, arrow-tipped edges. Optionally filter by scope/namespace and cap with limit. When vault_path is given the canvas is written there (confined under the vault) and its path returned; otherwise only the canvas object.',
     MemoryCanvasSchema.shape,
@@ -422,7 +482,7 @@ export function createServer(): McpServer {
   );
 
   // ── 16. memory_consolidate ───────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_consolidate',
     'Run the "dream cycle": find and merge near-duplicate memories, prune expired/low-quality entries, and update quality scores based on access patterns. Use dry_run=true to preview changes.',
     MemoryConsolidateSchema.shape,
@@ -433,7 +493,7 @@ export function createServer(): McpServer {
   );
 
   // ── 17. memory_extract_learnings ─────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_extract_learnings',
     'Extract decisions, patterns, error fixes, and conventions from a session transcript using heuristic analysis. Deduplicates against existing memories and optionally auto-stores.',
     MemoryExtractLearningsSchema.shape,
@@ -444,7 +504,7 @@ export function createServer(): McpServer {
   );
 
   // ── 18. memory_manifest ──────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_manifest',
     'Get a lightweight index of all memories — titles, types, tags, and scores without content. Use this to discover what knowledge exists before running expensive searches.',
     MemoryManifestSchema.shape,
@@ -455,7 +515,7 @@ export function createServer(): McpServer {
   );
 
   // ── 19. memory_graph ───────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_graph',
     'Query the knowledge graph: find entities, their relationships, and linked memories. Use entity name to start traversal, or browse all entities by type. Supports multi-hop traversal (depth 1-3).',
     MemoryGraphSchema.shape,
@@ -466,7 +526,7 @@ export function createServer(): McpServer {
   );
 
   // ── 20. memory_extract_entities ─────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_extract_entities',
     'Store LLM-extracted entities and relationships for a memory. The calling agent should analyze memory content and provide structured entity/relationship data. This enables knowledge graph queries.',
     MemoryExtractEntitiesSchema.shape,
@@ -477,7 +537,7 @@ export function createServer(): McpServer {
   );
 
   // ── 21. memory_condense ─────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_condense',
     'Apply agent-generated summaries to condense old memories. Preserves original content for later restoration. Use after consolidation reports flag condensation candidates.',
     MemoryCondenseSchema.shape,
@@ -488,7 +548,7 @@ export function createServer(): McpServer {
   );
 
   // ── 22. memory_restore ──────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_restore',
     'Bring a memory back: un-tombstones a soft-forgotten memory (memory_forget {hard:false}) by clearing valid_to/tx_expired so it re-enters default recall, AND/OR restores a condensed memory to its original full content. Both are applied when both apply. Returns reinstated/uncondensed flags.',
     MemoryRestoreSchema.shape,
@@ -499,7 +559,7 @@ export function createServer(): McpServer {
   );
 
   // ── 23. memory_query ────────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_query',
     'Answer a question with a TIGHT, relevant subgraph instead of flooding context. Seeds from hybrid search, walks the memory graph (hub-avoiding) up to max_hops, and returns a token-budgeted "context" string plus structured nodes — with an actionable hint when truncated.',
     MemoryQuerySchema.shape,
@@ -510,7 +570,7 @@ export function createServer(): McpServer {
   );
 
   // ── 24. core_memory_get ───────────────────────────────────────────────────
-  server.tool(
+  reg(
     'core_memory_get',
     'Read the pinned "core memory" block for a (scope, namespace) — a small, bounded, always-in-context note the agent maintains about who it is and what matters now. Returns content, char_limit, and used (character count).',
     CoreMemoryGetSchema.shape,
@@ -521,7 +581,7 @@ export function createServer(): McpServer {
   );
 
   // ── 25. core_memory_append ────────────────────────────────────────────────
-  server.tool(
+  reg(
     'core_memory_append',
     'Append text to the pinned core-memory block (newline-separated when non-empty). If the result would exceed char_limit the write is refused (error: core_memory_full) so you compact via core_memory_replace instead of silently overflowing.',
     CoreMemoryAppendSchema.shape,
@@ -532,7 +592,7 @@ export function createServer(): McpServer {
   );
 
   // ── 26. core_memory_replace ───────────────────────────────────────────────
-  server.tool(
+  reg(
     'core_memory_replace',
     'Replace the first occurrence of old_text with new_text in the pinned core-memory block. Returns error: not_found if old_text is absent, or core_memory_full if the result would exceed char_limit. Use this to update or compact the block.',
     CoreMemoryReplaceSchema.shape,
@@ -543,7 +603,7 @@ export function createServer(): McpServer {
   );
 
   // ── 27. memory_reflect ────────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_reflect',
     'Generative-Agents-style reflection (agent-driven, no LLM in the server). mode:"gather" (default) returns the most reflection-worthy memories (high importance × recent) as material plus an instruction to synthesize 1–3 higher-level insights. mode:"store" persists a synthesized insight (provenance="reflection") and "derived_from"-links it to its source memories.',
     MemoryReflectSchema.shape,
@@ -554,7 +614,7 @@ export function createServer(): McpServer {
   );
 
   // ── 28. memory_communities ────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_communities',
     'GraphRAG global sensemaking (agent-driven, no LLM in the server). Detects communities (densely-connected entity clusters) over the entity graph on demand via weighted label propagation, and returns each community\'s top entities + linked memories. This is the corpus-level view that chunk-level search can\'t give — synthesize named themes from the communities to answer "what are the main themes?".',
     MemoryCommunitiesSchema.shape,
@@ -565,7 +625,7 @@ export function createServer(): McpServer {
   );
 
   // ── 29. memory_template ───────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_template',
     'Fetch an Obsidian-style note scaffold for a document_type so stored memories stay structurally consistent. Returns a markdown template with ## Section headers (e.g., decision → Context/Decision/Consequences; incident → Symptom/Root Cause/Fix/Prevention; also learning, bug-fix, meeting, session). Unknown types get a generic Summary/Details/Notes scaffold (known:false). Read-only: fill the scaffold, then store it via memory_store.',
     MemoryTemplateSchema.shape,
@@ -576,7 +636,7 @@ export function createServer(): McpServer {
   );
 
   // ── 30. memory_session_note ───────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_session_note',
     'Frictionless per-session capture ("daily note for agents"). Keyed by source "session:<session_id>": the first call creates one session memory (document_type "session"); every later call for the same session_id appends to that same memory (newline-joined, re-embedded and versioned). Different session_ids stay isolated. Returns { memory_id, created, appended }.',
     MemorySessionNoteSchema.shape,
@@ -587,7 +647,7 @@ export function createServer(): McpServer {
   );
 
   // ── 31. memory_attribution ────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_attribution',
     'Multi-agent / team attribution rollup. Returns how many currently-valid top-level memories each agent (agent_id, set at store time) wrote — { by_agent, by_author, total } — distinct from author (the human/source). Memories stored without an agent_id are bucketed under "unattributed". Optional scope/namespace filters scope the rollup.',
     MemoryAttributionSchema.shape,
@@ -598,7 +658,7 @@ export function createServer(): McpServer {
   );
 
   // ── 32. memory_questions ──────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_questions',
     'Active "questions to ask" digest. Surfaces open questions / gaps the graph is uniquely positioned to find so you know what to verify or learn next: AMBIGUOUS inferred links to confirm (verify), frequently-mentioned but barely-documented entities (gap), and disconnected memories that may be stale or mis-scoped (orphan). Returns { questions: [{ question, type, evidence }], count } over currently-valid top-level memories. Optional scope/namespace filters and limit (default 20).',
     MemoryQuestionsSchema.shape,
@@ -609,7 +669,7 @@ export function createServer(): McpServer {
   );
 
   // ── 33. memory_forget ─────────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_forget',
     'GDPR-grade forget (additive — does NOT replace memory_delete). hard:false (default) soft-deletes/tombstones: stamps valid_to so the memory is excluded from default retrieval but stays queryable via as_of and is recoverable. hard:true erases for real: returns a portability "export" copy FIRST (data-subject access), THEN permanently deletes (irreversible, cascades). Returns { forgotten, mode, recoverable, export? }.',
     MemoryForgetSchema.shape,
@@ -620,7 +680,7 @@ export function createServer(): McpServer {
   );
 
   // ── 34. memory_history ────────────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_history',
     'Point-in-time history surface for one memory: its current bi-temporal timeline (created_at/updated_at/valid_from/valid_to/tx_expired/superseded_at/version) plus the full memory_versions edit history. Returns { memory_id, exists, timeline, versions } or { memory_id, exists:false }.',
     MemoryHistorySchema.shape,
@@ -632,7 +692,7 @@ export function createServer(): McpServer {
   );
 
   // ── 35. memory_unlinked_mentions ──────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_unlinked_mentions',
     'Surface "unlinked mentions" for a memory — other memories that are semantically related (vector-near + shared entities) but that you have NOT explicitly linked yet. This is Obsidian\'s killer feature, automated: instead of matching note titles as literal text, it uses embeddings + the entity graph to propose latent connections the agent never made. Auto "similar_to" suggestions are surfaced; existing wikilink/co-occurrence/typed links are excluded. Use it to discover and then confirm real connections (e.g. via memory_extract_entities or a stored link).',
     MemoryUnlinkedMentionsSchema.shape,
@@ -643,7 +703,7 @@ export function createServer(): McpServer {
   );
 
   // ── 36. memory_query_structured ───────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_query_structured',
     'Structured query over memory PROPERTIES (the agent\'s "Bases/Dataview"): filter currently-valid, top-level memories by scope/namespace/department/document_type/language/tags (AND)/min_importance/created_at range, sort by created_at|updated_at|importance_score|title, paginate, and project specific fields. Exact, deterministic retrieval that complements fuzzy memory_search — use it for "all decision memories in namespace=edc with importance>0.7, newest first".',
     MemoryQueryStructuredSchema.shape,
@@ -656,7 +716,7 @@ export function createServer(): McpServer {
   );
 
   // ── 37. memory_version_diff ───────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_version_diff',
     'Show a line-by-line diff between two revisions of a memory (Obsidian-Sync-grade trust). `to` defaults to the current version. Use it to audit exactly what an edit changed — added/removed lines plus a summary count.',
     MemoryVersionDiffSchema.shape,
@@ -668,7 +728,7 @@ export function createServer(): McpServer {
   );
 
   // ── 38. memory_version_restore ────────────────────────────────────────────
-  server.tool(
+  reg(
     'memory_version_restore',
     'Roll a memory back to a prior version\'s content. The restore is itself a versioned, re-embedded edit (the pre-restore state is snapshotted, the vault file re-mirrored) — never a destructive overwrite. Returns the restored memory.',
     MemoryVersionRestoreSchema.shape,
