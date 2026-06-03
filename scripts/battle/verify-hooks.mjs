@@ -30,6 +30,8 @@ const HOOK = {
 for (const [name, p] of Object.entries(HOOK)) {
   if (!existsSync(p)) {
     console.error(`MISSING compiled hook: ${name} -> ${p}. Run \`npm run build\` first.`);
+    // mcp-memory:allow-process-exit — fires at module top-level BEFORE any
+    // embedder is loaded (no ORT threads live); a missing build is a hard stop.
     process.exit(2);
   }
 }
@@ -381,6 +383,9 @@ async function testStop() {
     console.error(`SEED FAILED (likely model download offline): ${err.message}`);
     console.error('Reporting PARTIAL: cannot exercise read-only SessionStart without a seeded DB.');
     rmSync(TMP_HOME, { recursive: true, force: true });
+    // mcp-memory:allow-process-exit — reached only when seedDatabase() THREW, i.e.
+    // the embedder failed to initialize (offline/no model cache). No ORT worker
+    // threads are live, so this exit cannot trigger the P14 mutex-lock abort.
     process.exit(3);
   }
 

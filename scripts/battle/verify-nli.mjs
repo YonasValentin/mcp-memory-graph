@@ -73,6 +73,8 @@ try {
   embedderLoadMs = Date.now() - tEmb0;
 } catch (err) {
   console.log(JSON.stringify({ status: 'PARTIAL', reason: 'embedder load failed', error: String(err?.message ?? err) }));
+  // mcp-memory:allow-process-exit — embedder.initialize() FAILED here, so no ORT
+  // worker threads are live; this exit can't trigger the mutex-lock abort (P14).
   process.exit(2);
 }
 
@@ -107,6 +109,12 @@ let nliLoadMs = null;
     } catch (e2) {
       console.log('FAIL-SOFT VIOLATION: handleStore threw on NLI load failure: ' + String(e2?.message ?? e2));
     }
+    // mcp-memory:allow-process-exit — PARTIAL/offline path: the NLI model could
+    // not load. We exit early to report PARTIAL rather than run the scenario. The
+    // embedder ORT runtime may be live here, but this is the pre-existing audited
+    // error exit (not the happy-path trailing exit P14 removed); rewriting it to
+    // drain naturally would be an out-of-scope behavior change. The guard still
+    // trips on any unmarked exit reachable after the full run completes.
     process.exit(2);
   }
 }
