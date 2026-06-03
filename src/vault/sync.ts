@@ -9,7 +9,7 @@ import type {
   ParsedVaultFile,
   VaultFileEntry,
 } from '../types.js';
-import { insertMemory, deleteMemory, getMemoryById } from '../db/repository.js';
+import { insertMemory, deleteMemory, getMemoryById, invalidateMemory } from '../db/repository.js';
 import { parseVaultFile } from './parser.js';
 import { scanVault } from './scanner.js';
 import { chunkContent } from '../chunking/chunker.js';
@@ -78,7 +78,12 @@ export async function syncVault(
   for (const filePath of deletedPaths) {
     try {
       const meta = syncMeta.get(filePath)!;
-      deleteOldMemory(db, meta.memory_id, options.vaultPath, filePath);
+      // SOFT-tombstone, not hard-delete (battle-v5 round-2, user decision): a
+      // removed vault file invalidates its memory (stamps valid_to) so it leaves
+      // default recall but stays recoverable via memory_restore with its version
+      // history intact — a bad git merge or accidental delete no longer silently
+      // and irreversibly nukes the memory + all memory_versions via FK cascade.
+      softDeleteOldMemory(db, meta.memory_id, options.vaultPath, filePath);
       filesDeleted++;
     } catch (err) {
       errors.push(`Delete failed for ${filePath}: ${errorMessage(err)}`);
@@ -89,6 +94,17 @@ export async function syncVault(
     ...newFiles.map((entry) => ({ entry, isNew: true })),
     ...changedFiles.map((entry) => ({ entry, isNew: false })),
   ];
+
+  // Duplicate-frontmatter-id guard (battle-v5 round-2, user decision): a vault
+  // file whose frontmatter `id` is already owned by a DIFFERENT file must NOT
+  // fork. The old reconcile-by-id deleteMemory cascade-wiped the sibling's
+  // sync-meta anchor, which then re-imported under a fresh UUID (silent
+  // duplicate + meta ping-pong). Seed ownership from existing sync-meta, then
+  // claim ids as files are processed this run; a collision is reported + skipped.
+  const idOwner = new Map<string, string>();
+  for (const [relPath, meta] of syncMeta) {
+    idOwner.set(meta.memory_id, relPath);
+  }
 
   for (let batchStart = 0; batchStart < toProcess.length; batchStart += BATCH_SIZE) {
     const batch = toProcess.slice(batchStart, batchStart + BATCH_SIZE);
@@ -107,6 +123,20 @@ export async function syncVault(
       } catch (err) {
         errors.push(`Parse failed for ${entry.relativePath}: ${errorMessage(err)}`);
         continue;
+      }
+
+      // Reject a file claiming a frontmatter id another vault file already owns —
+      // before touching any memory — so two same-id files can't fork.
+      const fmId = fmString(file.frontmatter, 'id');
+      if (fmId) {
+        const owner = idOwner.get(fmId);
+        if (owner !== undefined && owner !== entry.relativePath) {
+          errors.push(
+            `Duplicate frontmatter id ${fmId} in ${entry.relativePath} (already synced from ${owner}) — skipped to avoid a fork`,
+          );
+          continue;
+        }
+        idOwner.set(fmId, entry.relativePath);
       }
 
       // Only delete old memory AFTER a successful parse. Reported under its OWN
@@ -291,6 +321,34 @@ function deleteOldMemory(
   /* c8 ignore stop */
 
   deleteMemory(db, memoryId);
+
+  db.prepare('DELETE FROM vault_sync_meta WHERE vault_path = ? AND file_path = ?').run(
+    vaultPath,
+    filePath,
+  );
+}
+
+/**
+ * Soft-tombstone the memory behind a REMOVED vault file (battle-v5 round-2): stamp
+ * valid_to on the parent + any child chunks so they leave default recall but the
+ * rows + memory_versions survive and memory_restore can reinstate them. The
+ * file→memory sync-meta anchor is dropped (the file is gone) — but because the
+ * memory is invalidated (not deleted) the FK ON DELETE CASCADE never fires, so a
+ * sibling file that happened to share the id keeps its own anchor.
+ */
+function softDeleteOldMemory(
+  db: Database.Database,
+  memoryId: string,
+  vaultPath: string,
+  filePath: string,
+): void {
+  const children = db
+    .prepare<[string], { id: string }>('SELECT id FROM memories WHERE parent_id = ?')
+    .all(memoryId);
+  for (const child of children) {
+    invalidateMemory(db, child.id);
+  }
+  invalidateMemory(db, memoryId);
 
   db.prepare('DELETE FROM vault_sync_meta WHERE vault_path = ? AND file_path = ?').run(
     vaultPath,
