@@ -10,7 +10,7 @@
  * behavior stays identical. These tests pin both the new behavior and the
  * default-unchanged invariant.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import { createTestDb } from '../../testing/test-db.js';
 import { MockEmbeddingProvider } from '../../testing/mock-embedder.js';
@@ -57,6 +57,23 @@ describe('computeRetention', () => {
 });
 
 describe("applyTemporalDecay — type 'forgetting'", () => {
+  // applyTemporalDecay reads the wall clock (`new Date()`) on EVERY call to
+  // compute age. Tests here build `createdAt` from one clock read and then
+  // compare results across separate calls — each doing its own read. Under
+  // parallel-run CPU load two adjacent reads can straddle a millisecond
+  // boundary, shifting the computed age by ~1e-8 days and the result in its
+  // ~12th digit, which flipped the strict `.toBe()` equality below (passed
+  // isolated/fast, flaked under load). Pin the clock so every read in this block
+  // returns the same instant — the assertions then test the decay invariants,
+  // not clock jitter.
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('uses stability: higher stability → less decay', () => {
     const createdAt = new Date(Date.now() - 10 * 86_400_000).toISOString();
     const low = applyTemporalDecay(1, createdAt, { type: 'forgetting' }, undefined, 2);
