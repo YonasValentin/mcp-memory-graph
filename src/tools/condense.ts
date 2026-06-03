@@ -84,7 +84,10 @@ export async function handleCondense(
         return true;
       });
 
-      const ok = persist();
+      // P9-begin-immediate: persist READS (getMemoryById + SELECT memory_originals)
+      // then WRITES. BEGIN IMMEDIATE so a concurrent writer makes it WAIT on
+      // busy_timeout instead of throwing SQLITE_BUSY on the deferred write-upgrade.
+      const ok = persist.immediate();
       if (ok) {
         result.condensed++;
       } else /* c8 ignore start */ {

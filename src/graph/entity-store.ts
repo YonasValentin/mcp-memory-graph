@@ -171,7 +171,10 @@ export function storeExtractedEntities(
     buildMemoryCooccurrenceLinks(db, memoryId, entityIds);
   });
 
-  store();
+  // P9-begin-immediate: store opens with findOrCreateEntity's SELECT then WRITES
+  // (entity upsert + links). BEGIN IMMEDIATE so a concurrent writer makes it WAIT
+  // on busy_timeout instead of throwing SQLITE_BUSY on the deferred write-upgrade.
+  store.immediate();
 }
 
 // Cap how many co-occurrence memory_links a single store creates so one memory
@@ -371,5 +374,8 @@ export function weaveGraphEdges(db: Database.Database, memoryId: string): void {
       );
     }
   });
-  update();
+  // P9-begin-immediate: update reads mentionCount (SELECT) before each UPDATE.
+  // BEGIN IMMEDIATE so a concurrent writer makes it WAIT on busy_timeout instead
+  // of throwing SQLITE_BUSY on the deferred write-upgrade.
+  update.immediate();
 }

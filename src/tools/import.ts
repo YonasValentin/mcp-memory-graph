@@ -143,7 +143,11 @@ export async function handleImport(
     }
   });
 
-  process();
+  // P9-begin-immediate: process READS (getMemoryById per item) then WRITES
+  // (updateMemory / insertMemory). BEGIN IMMEDIATE so a concurrent writer makes
+  // it WAIT on busy_timeout instead of throwing SQLITE_BUSY on the deferred
+  // write-upgrade.
+  process.immediate();
 
   return { imported, skipped, errors };
 }

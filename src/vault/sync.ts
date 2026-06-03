@@ -176,7 +176,10 @@ export async function syncVault(
           }
         });
 
-        insertBatch();
+        // P9-begin-immediate: insertBatch reads getMemoryById before delete/insert.
+        // BEGIN IMMEDIATE so a concurrent writer makes it WAIT on busy_timeout
+        // instead of throwing SQLITE_BUSY on the deferred write-upgrade.
+        insertBatch.immediate();
       } catch (err) /* c8 ignore start */ {
         for (const item of smallFiles) {
           errors.push(`Embed/insert failed for ${item.entry.relativePath}: ${errorMessage(err)}`);
@@ -422,7 +425,10 @@ async function ingestLargeFile(
     }
   });
 
-  insertAll();
+  // P9-begin-immediate: insertAll reads getMemoryById before delete/insert.
+  // BEGIN IMMEDIATE so a concurrent writer makes it WAIT on busy_timeout instead
+  // of throwing SQLITE_BUSY on the deferred write-upgrade.
+  insertAll.immediate();
 
   return { parentId: parentRow.id, count: 1 + chunks.length };
 }
@@ -497,7 +503,11 @@ function resolveVaultWikilinks(
       }
     }
   });
-  apply();
+  // P9-begin-immediate: apply runs createMemoryLink, which SELECTs the existing
+  // edge before INSERT/UPDATE. BEGIN IMMEDIATE so a concurrent writer makes it
+  // WAIT on busy_timeout instead of throwing SQLITE_BUSY on the deferred
+  // write-upgrade.
+  apply.immediate();
 }
 
 /* c8 ignore start */

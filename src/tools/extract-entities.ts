@@ -92,6 +92,9 @@ export function handleExtractEntities(
     }
   });
 
-  process();
+  // P9-begin-immediate: process READS (SELECT id FROM entities + findOrCreateEntity)
+  // then WRITES. BEGIN IMMEDIATE so a concurrent writer makes it WAIT on
+  // busy_timeout instead of throwing SQLITE_BUSY on the deferred write-upgrade.
+  process.immediate();
   return result;
 }

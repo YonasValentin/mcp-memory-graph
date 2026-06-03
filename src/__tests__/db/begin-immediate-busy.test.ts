@@ -26,7 +26,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type Database from 'better-sqlite3';
 import { Worker } from 'node:worker_threads';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,6 +35,8 @@ import { initializeSchema } from '../../db/schema.js';
 import { runMigrations } from '../../db/migrations.js';
 import { MockEmbeddingProvider } from '../../testing/mock-embedder.js';
 import { handleStore } from '../../tools/store.js';
+import { handleForget } from '../../tools/forget.js';
+import { storeExtractedEntities } from '../../graph/entity-store.js';
 import { deleteMemory, updateMemory, getMemoryById } from '../../db/repository.js';
 
 const embedder = new MockEmbeddingProvider();
@@ -118,4 +120,94 @@ describe('P9-begin-immediate — read-then-write txns honor busy_timeout under c
     expect(updated!.title).toBe('P9 updated title');
     expect(waited).toBeGreaterThan(100);
   });
+});
+
+/**
+ * P9-residual — the SAME deferred-txn write-upgrade exposure on every OTHER
+ * read-then-write `db.transaction` in the codebase (entity-store, forget,
+ * import, condense, vault/sync, extract-entities). These exercise two
+ * representative residual sites end-to-end: each does a SELECT (findOrCreateEntity
+ * / recursive descendant scan) as its first statement inside the txn, so a
+ * DEFERRED begin throws SQLITE_BUSY instantly under a concurrent writer; the
+ * `.immediate` variant makes them WAIT on busy_timeout and succeed.
+ */
+describe('P9-residual — other read-then-write txns honor busy_timeout under contention', () => {
+  it('storeExtractedEntities (entity-store) WAITS for a held write lock and SUCCEEDS', async () => {
+    const { memory } = await handleStore(actor, embedder, { content: 'P9 entity-store-under-contention fact.' });
+
+    const { released } = await holdWriteLockInWorker(250);
+
+    const t0 = Date.now();
+    // findOrCreateEntity does `SELECT id FROM entities …` FIRST, then INSERT/UPDATE.
+    // DEFERRED: SQLITE_BUSY in ~0ms (RED). IMMEDIATE: waits then commits (GREEN).
+    storeExtractedEntities(
+      actor,
+      memory.id,
+      [{ name: 'P9ResidualWidget', type: 'tool', confidence: 0.9 }],
+      'regex',
+    );
+    const waited = Date.now() - t0;
+
+    await released;
+
+    expect(waited).toBeGreaterThan(100);
+    const linked = actor
+      .prepare<[string], { n: number }>('SELECT COUNT(*) AS n FROM memory_entities WHERE memory_id = ?')
+      .get(memory.id)!;
+    expect(linked.n).toBeGreaterThan(0);
+  });
+
+  it('handleForget(hard) (forget) WAITS for a held write lock and SUCCEEDS', async () => {
+    const { memory } = await handleStore(actor, embedder, { content: 'P9 forget-under-contention fact.' });
+
+    const { released } = await holdWriteLockInWorker(250);
+
+    const t0 = Date.now();
+    // eraseDescendantIndexes opens with a recursive SELECT, then deletes — the
+    // erase txn is read-then-write and must take BEGIN IMMEDIATE.
+    const result = handleForget(actor, { id: memory.id, hard: true });
+    const waited = Date.now() - t0;
+
+    await released;
+
+    expect(result.forgotten).toBe(true);
+    expect(result.mode).toBe('hard');
+    expect(waited).toBeGreaterThan(100);
+    expect(getMemoryById(actor, memory.id)).toBeNull();
+  });
+});
+
+/**
+ * Timing-free regression tripwire for the 9 read-then-write txn sites. Spinning
+ * up a 2-connection contention test for every site is impractical (and flaky on
+ * loaded CI), so this asserts at the SOURCE level that each site whose first
+ * in-txn statement is a SELECT is invoked via `.immediate()` (BEGIN IMMEDIATE),
+ * never the deferred `<name>()`. A future refactor that drops `.immediate()` from
+ * any of them re-fails here even though no concurrent writer is present.
+ *
+ * Sites 1-5 were named by the original P9 author; sites 6-9 were found by audit
+ * (identical deferred-upgrade exposure) — see the per-site comments in source.
+ */
+describe('P9-residual — source tripwire: read-then-write txns are invoked via .immediate()', () => {
+  const root = fileURLToPath(new URL('../../', import.meta.url));
+
+  const sites: Array<{ file: string; txnConst: string }> = [
+    { file: 'tools/forget.ts', txnConst: 'erase' },
+    { file: 'tools/condense.ts', txnConst: 'persist' },
+    { file: 'tools/import.ts', txnConst: 'process' },
+    { file: 'tools/extract-entities.ts', txnConst: 'process' },
+    { file: 'graph/entity-store.ts', txnConst: 'store' },
+    { file: 'graph/entity-store.ts', txnConst: 'update' },
+    { file: 'vault/sync.ts', txnConst: 'insertBatch' },
+    { file: 'vault/sync.ts', txnConst: 'insertAll' },
+    { file: 'vault/sync.ts', txnConst: 'apply' },
+  ];
+
+  for (const { file, txnConst } of sites) {
+    it(`${file}: \`${txnConst}\` read-then-write txn is invoked via .immediate()`, () => {
+      const src = readFileSync(join(root, file), 'utf8');
+      expect(src).toContain(`const ${txnConst} = db.transaction`);
+      expect(src).toContain(`${txnConst}.immediate()`);
+    });
+  }
 });

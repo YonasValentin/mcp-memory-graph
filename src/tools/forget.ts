@@ -116,7 +116,11 @@ export function handleForget(
     eraseDescendantIndexes(db, input.id);
     deleteMemory(db, input.id);
   });
-  erase();
+  // P9-begin-immediate: erase opens with eraseDescendantIndexes' recursive SELECT
+  // then WRITES (FTS/vec/row deletes). BEGIN IMMEDIATE so a concurrent writer makes
+  // it WAIT on busy_timeout instead of throwing SQLITE_BUSY on the deferred
+  // write-upgrade.
+  erase.immediate();
   mirrorMemoryRemove(exported);
 
   return { forgotten: true, mode: 'hard', recoverable: false, export: exported, versions };
