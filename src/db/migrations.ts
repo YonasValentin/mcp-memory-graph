@@ -249,7 +249,24 @@ export function runMigrations(db: Database.Database): void {
     .prepare<[string], { value: string }>('SELECT value FROM schema_meta WHERE key = ?')
     .get('schema_version');
 
-  const currentVersion = row ? parseInt(row.value, 10) : 0;
+  // A missing row → 0 (run everything). A present row must be a clean,
+  // non-negative integer string: `parseInt('garbage')` → NaN makes every
+  // `m.version > NaN` false, so pending=[] and we'd silently no-op against an
+  // un-migrated schema (P11). `Number(...)` is strict (unlike parseInt's
+  // prefix-parse of '9abc' → 9), so a partially-numeric corrupt value also
+  // throws rather than masquerading as a real version.
+  let currentVersion = 0;
+  if (row) {
+    currentVersion = Number(row.value);
+    if (!Number.isInteger(currentVersion) || currentVersion < 0) {
+      throw new Error(
+        `Corrupt schema_version in schema_meta: '${row.value}'. Expected a ` +
+        `non-negative integer. The database's recorded migration version is ` +
+        `unreadable; refusing to run migrations against an unknown schema. ` +
+        `Restore from backup or recreate the database.`,
+      );
+    }
+  }
 
   const pending = migrations.filter((m) => m.version > currentVersion);
   if (pending.length === 0) {

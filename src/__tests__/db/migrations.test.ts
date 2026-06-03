@@ -184,6 +184,83 @@ describe('initializeSchema — legacy DB (E1 regression)', () => {
   });
 });
 
+describe('runMigrations — corrupt schema_version guard (F2 / P11)', () => {
+  it('throws (does NOT silently no-op) when schema_version is non-numeric garbage', () => {
+    const db = freshDb();
+    initializeSchema(db); // current shape + valid schema_version row
+
+    // Clobber the recorded version with a non-numeric value. Pre-fix:
+    // parseInt('garbage', 10) -> NaN, every `m.version > NaN` is false, so
+    // pending=[] and runMigrations returns silently having applied nothing —
+    // the DB then runs against an un-migrated schema with no error or climb.
+    db.prepare("UPDATE schema_meta SET value = 'garbage' WHERE key = 'schema_version'").run();
+
+    expect(() => runMigrations(db)).toThrowError(/schema_version/);
+    expect(() => runMigrations(db)).toThrowError(/garbage/);
+  });
+
+  it('throws on a partially-numeric corrupt value (strict integer check, e.g. "9abc")', () => {
+    const db = freshDb();
+    initializeSchema(db);
+
+    // parseInt('9abc', 10) would yield 9 — a strict, fully-numeric check must
+    // still reject this so a corrupt value cannot masquerade as a real version.
+    db.prepare("UPDATE schema_meta SET value = '9abc' WHERE key = 'schema_version'").run();
+
+    expect(() => runMigrations(db)).toThrowError(/schema_version/);
+  });
+
+  it('throws on a negative recorded version', () => {
+    const db = freshDb();
+    initializeSchema(db);
+
+    db.prepare("UPDATE schema_meta SET value = '-1' WHERE key = 'schema_version'").run();
+
+    expect(() => runMigrations(db)).toThrowError(/schema_version/);
+  });
+
+  it('still migrates forward correctly from a valid recorded version (regression)', () => {
+    const db = freshDb();
+    initializeSchema(db);
+
+    // initializeSchema stamps CURRENT; rewind to 5 then run forward so the
+    // valid-numeric path is exercised and converges to CURRENT.
+    db.prepare("UPDATE schema_meta SET value = '5' WHERE key = 'schema_version'").run();
+    expect(() => runMigrations(db)).not.toThrow();
+
+    const version = db
+      .prepare<[string], { value: string }>('SELECT value FROM schema_meta WHERE key = ?')
+      .get('schema_version');
+    expect(version?.value).toBe(String(CURRENT_SCHEMA_VERSION));
+  });
+
+  it('still runs all migrations from 0 when the schema_version row is missing', () => {
+    const db = freshDb();
+    // A v1/v2 base `memories` table (so v6's valid_from backfill can run) plus a
+    // schema_meta with NO schema_version row → currentVersion 0 → every
+    // migration applies. The missing-row path must keep working post-fix.
+    db.exec(`
+      CREATE TABLE memories (
+        id TEXT PRIMARY KEY NOT NULL,
+        scope TEXT NOT NULL DEFAULT 'global',
+        namespace TEXT,
+        content TEXT NOT NULL,
+        metadata TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE schema_meta (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);
+    `);
+
+    expect(() => runMigrations(db)).not.toThrow();
+
+    const objExists = (name: string) =>
+      !!db.prepare('SELECT name FROM sqlite_master WHERE name = ?').get(name);
+    // v2's vault_sync_meta is created only if migrations actually run from 0.
+    expect(objExists('vault_sync_meta')).toBe(true);
+  });
+});
+
 describe('migration v6 — bi-temporal backfill (pre-v6 upgrade path)', () => {
   it('populates valid_from from created_at for rows that predate v6', () => {
     const db = freshDb();
