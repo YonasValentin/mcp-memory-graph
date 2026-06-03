@@ -143,7 +143,8 @@ export interface SearchOptions {
   access_level?: AccessLevel;
   language?: string;
   limit: number;
-  offset: number;
+  /** Pagination start; defaults to 0 when omitted (an omitted offset means "from the start"). */
+  offset?: number;
   search_mode: SearchMode;
   temporal_decay?: TemporalDecayConfig;
   date_from?: string;

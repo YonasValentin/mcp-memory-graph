@@ -358,12 +358,16 @@ export async function hybridSearch(
     : results;
 
   // --- Paginate ---
-  const paginated = filtered.slice(options.offset, options.offset + options.limit);
+  // offset defaults to 0: an omitted offset (e.g. an internal caller that only
+  // sets query/limit, the way queryGraph seeds) must mean "from the start", not
+  // slice(undefined, NaN) → [] with total>0.
+  const offset = options.offset ?? 0;
+  const paginated = filtered.slice(offset, offset + options.limit);
 
   return {
     results: paginated,
     total: filtered.length,
-    truncated: filtered.length > options.offset + options.limit,
+    truncated: filtered.length > offset + options.limit,
   };
 }
 
