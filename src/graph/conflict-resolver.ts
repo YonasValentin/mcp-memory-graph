@@ -69,14 +69,17 @@ export function detectConflicts(
     if (candidate.distance > 0.4) break;
 
     const row = db
-      .prepare<[number], { id: string; content: string; parent_id: string | null; superseded_at: string | null }>(
-        'SELECT id, content, parent_id, superseded_at FROM memories WHERE rowid = ?',
+      .prepare<[number], { id: string; content: string; parent_id: string | null; superseded_at: string | null; valid_to: string | null; tx_expired: string | null }>(
+        'SELECT id, content, parent_id, superseded_at, valid_to, tx_expired FROM memories WHERE rowid = ?',
       )
       .get(Number(candidate.rowid));
 
     if (!row) continue;
     if (row.parent_id !== null) continue;
     if (row.superseded_at !== null) continue;
+    // vec rows are retained on bitemporal invalidation (for as_of reconstruction),
+    // so a retired/forgotten row can be a candidate here — never conflict against one.
+    if (row.valid_to !== null || row.tx_expired !== null) continue;
     if (excludeMemoryId && row.id === excludeMemoryId) continue;
 
     const vectorSim = cosineSimFromL2(candidate.distance);

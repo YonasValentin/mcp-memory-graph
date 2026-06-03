@@ -55,12 +55,17 @@ export async function handleRelated(
     if (similarity < minSimilarity) continue;
 
     const row = db
-      .prepare<[number], MemoryRow>('SELECT * FROM memories WHERE rowid = ?')
+      .prepare<[number], MemoryRow & { valid_to: string | null; tx_expired: string | null; superseded_at: string | null }>(
+        'SELECT * FROM memories WHERE rowid = ?',
+      )
       .get(rowid);
 
     /* c8 ignore next */
     if (!row) continue;
     if (row.id === input.id) continue;
+    // vec rows are retained on bitemporal invalidation (for as_of reconstruction);
+    // a retired/superseded/forgotten memory is not "related" to current work.
+    if (row.valid_to !== null || row.tx_expired !== null || row.superseded_at !== null) continue;
 
     const confidence = Math.min(similarity, 1);
     // C2: single source of truth for confidence_level cutoffs. Was 0.8/0.5

@@ -298,18 +298,14 @@ export function invalidateMemory(
     )
     .run(validTo ?? null, id);
 
-  if (result.changes > 0) {
-    // Drop the vector so a raw KNN MATCH never surfaces a retired memory and the
-    // vec index doesn't accumulate tombstones (BATTLE-PLAN #7). The row stays in
-    // `memories`, so `memory rebuild` can recompute the embedding if needed.
-    const row = db
-      .prepare<[string], { rowid: number }>('SELECT rowid FROM memories WHERE id = ?')
-      .get(id);
-    if (row) {
-      db.prepare('DELETE FROM memories_vec WHERE rowid = ?').run(BigInt(row.rowid));
-    }
-  }
-
+  // The memories_vec row is intentionally RETAINED on bitemporal invalidation so
+  // an `as_of` point-in-time VECTOR search can still rank a now-retired fact that
+  // was valid at the queried instant (persona P1). Every live-only raw
+  // `embedding MATCH` consumer — hybridSearch (current mode), handleRelated,
+  // detectConflicts, findNearDuplicates — filters retired rows by
+  // valid_to/tx_expired/superseded_at, so the retained vec row never leaks into
+  // current results. Only a HARD delete (deleteMemory / memory_forget hard) drops
+  // the vec row; consolidate prunes retired vecs in bulk.
   return result.changes;
 }
 

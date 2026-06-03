@@ -219,15 +219,18 @@ export async function hybridSearch(
   }
 
   whereClauses.push(`(expires_at IS NULL OR expires_at > ${NOW_ISO_SQL})`);
-  whereClauses.push('superseded_at IS NULL');
 
   // Bi-temporal: currently-valid by default; point-in-time when `as_of` is set.
   if (options.as_of) {
+    // Reconstruct what was valid at the instant: include facts later retired OR
+    // superseded, as long as their validity window covers `as_of`. (Do NOT filter
+    // superseded_at here — a since-superseded fact WAS the believed fact then.)
     whereClauses.push('valid_from <= ?');
     whereClauses.push('(valid_to IS NULL OR valid_to > ?)');
     whereClauses.push('(tx_expired IS NULL OR tx_expired > ?)');
     params.push(options.as_of, options.as_of, options.as_of);
   } else {
+    whereClauses.push('superseded_at IS NULL');
     whereClauses.push('valid_to IS NULL AND tx_expired IS NULL');
   }
 
