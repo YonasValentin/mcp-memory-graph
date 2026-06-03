@@ -65,23 +65,6 @@ export function updateMemory(
       return null;
     }
 
-    const versionId = `${id}_v${existing.version}`;
-    db.prepare(`
-      INSERT INTO memory_versions (id, memory_id, content, title, metadata, version, changed_by, changed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
-    `).run(
-      versionId,
-      id,
-      existing.content,
-      existing.title,
-      existing.metadata,
-      existing.version,
-      updates.author ?? null,
-    );
-
-    const setClauses: string[] = [];
-    const params: unknown[] = [];
-
     const allowedFields: (keyof MemoryRow)[] = [
       'title',
       'content',
@@ -100,11 +83,42 @@ export function updateMemory(
       'confidence_score',
     ];
 
-    for (const field of allowedFields) {
-      if (field in updates) {
-        setClauses.push(`${field} = ?`);
-        params.push(updates[field]);
-      }
+    // Only fields that are PRESENT in `updates` AND differ from the stored value
+    // count as a real change. A no-op update (id only, or every field identical)
+    // must NOT snapshot, bump the version, touch updated_at, or reindex — doing
+    // so wrote phantom memory_versions rows and inflated the version on every
+    // call (incl. the memory_version_restore-to-current path), corrupting the
+    // edit-history audit trail a power user relies on (battle-v5, confirmed).
+    const changedFields = allowedFields.filter(
+      (field) => field in updates && updates[field] !== existing[field],
+    );
+
+    if (changedFields.length === 0) {
+      return db
+        .prepare<[string], MemoryRow>('SELECT * FROM memories WHERE id = ?')
+        .get(id)!;
+    }
+
+    const versionId = `${id}_v${existing.version}`;
+    db.prepare(`
+      INSERT INTO memory_versions (id, memory_id, content, title, metadata, version, changed_by, changed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `).run(
+      versionId,
+      id,
+      existing.content,
+      existing.title,
+      existing.metadata,
+      existing.version,
+      updates.author ?? null,
+    );
+
+    const setClauses: string[] = [];
+    const params: unknown[] = [];
+
+    for (const field of changedFields) {
+      setClauses.push(`${field} = ?`);
+      params.push(updates[field]);
     }
 
     setClauses.push('version = version + 1');
