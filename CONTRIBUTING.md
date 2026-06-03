@@ -47,7 +47,7 @@ Every PR must pass:
 
 - `npm run build` (server) and `npm run build` (web)
 - `tsc --noEmit` (root) and `npm run lint` (web)
-- `npx vitest run --coverage` with thresholds: lines 75, functions 75, branches 70
+- `npx vitest run --coverage` with thresholds: lines 100, statements 100, functions 99, branches 90 (see the documented exclude list in `vitest.config.ts`)
 - `npm audit --audit-level=high` for both root and `web/`
 - CodeQL (`security-and-quality` query suite)
 

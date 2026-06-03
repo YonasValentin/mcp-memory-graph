@@ -119,7 +119,7 @@ docker compose exec memory-server \
 Expected output:
 
 ```
-schema_version|4
+schema_version|9
 embedding_dim|384
 ```
 

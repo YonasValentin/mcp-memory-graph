@@ -16,7 +16,7 @@ AI assistants lose context between sessions. Your decisions, patterns, and insti
 
 ### Core Capabilities
 
-- **37 MCP tools** — core CRUD + retrieval, a confidence-tagged knowledge graph, a self-correcting write gate, Agent-OS memory tiers, Obsidian-grade vault round-tripping, and GDPR-grade forget/history (full list below)
+- **41 MCP tools** — core CRUD + retrieval, a confidence-tagged knowledge graph, a self-correcting write gate, Agent-OS memory tiers, Obsidian-grade vault round-tripping, and GDPR-grade forget/history (full list below)
 - **Hybrid search** — Combines vector similarity (semantic meaning) with keyword matching (exact terms) using Reciprocal Rank Fusion (RRF) for best-of-both-worlds retrieval. Opt-in `rerank: true` adds a cross-encoder rerank pass; `use_graph: true` blends in HippoRAG Personalized-PageRank multi-hop scores; `as_of: <timestamp>` runs the search against the graph as it stood at a past point in time
 - **Local embeddings** — Transformers.js with all-MiniLM-L6-v2 (384 dimensions) runs entirely in Node.js. No Python, no cloud API, no GPU required
 - **SQLite storage** — Single-file database using better-sqlite3 with two extensions:
@@ -32,6 +32,17 @@ AI assistants lose context between sessions. Your decisions, patterns, and insti
 - **Temporal decay** — Configurable time-based scoring to favor recent memories (exponential or linear decay)
 - **Confidence scoring** — Each search result includes a confidence score (0-1) with a human-readable level (high/medium/low)
 - **Expiration** — Set expiry dates on time-sensitive memories. Expired memories are automatically excluded from search
+
+### Retrieval quality & scale (measured, local, $0/token)
+
+Every number below is produced on the machine running it — real embedding model, real production handlers, zero network egress. Clone the repo and re-run with `npm run bench`; full methodology + the printed gold set + misses in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
+
+| | precision@1 | precision@3 | MRR | search p95 |
+|---|---|---|---|---|
+| Hybrid (RRF) | 0.563 | 0.750 | 0.704 | ~4 ms |
+| **+ cross-encoder rerank** (MCP default) | **0.813** | **0.875** | **0.867** | ~230 ms |
+
+**Scale (real embedder, file-backed SQLite):** retrieval p95 stays sub-second far past the goal — **9.1 ms at 10K vectors, 30 ms at 50K** (the rerank pass adds a ~constant ~200 ms). vs. mem0 / Zep / Letta / Cognee / Supermemory and native ChatGPT/Claude memory — all of which lead with self-reported, cloud-hosted, per-token numbers — this is the inverse: mid-pack accuracy at **0% cloud exposure and $0/token**, reproducible from a committed corpus + runner.
 
 ### Self-Improvement Capabilities
 
@@ -274,7 +285,7 @@ In a Claude Code session, ask:
 What memory tools do you have available?
 ```
 
-Claude should list all 17 tools (12 `memory_*` + 3 `vault_*` + 2 self-improvement tools).
+Claude should list all 41 tools (35 `memory_*` + 3 `vault_*` + 3 `core_memory_*`).
 
 ---
 
@@ -696,7 +707,7 @@ Extract learnings from this session transcript with namespace=my-project
 Extract only error_fix and decision learnings from this transcript
 ```
 
-### 18–37. Graph, Agent-OS, vault round-trip, and governance tools
+### 18–41. Graph, Agent-OS, vault round-trip, and governance tools
 
 The remaining tools are summarized below (parameters are validated by Zod schemas in `src/schemas/`; each registration's full description lives in `src/server.ts`):
 
@@ -722,6 +733,10 @@ The remaining tools are summarized below (parameters are validated by Zod schema
 | 35 | `memory_questions` | "Questions to ask" digest: ambiguous links, under-documented entities, orphans |
 | 36 | `memory_forget` | GDPR-grade forget: soft-delete (recoverable) by default, or `hard` erase-after-export |
 | 37 | `memory_history` | Point-in-time bi-temporal timeline + edit-version history for one memory |
+| 38 | `memory_unlinked_mentions` | Find entity names mentioned in memory text that have no graph edge yet (suggested links) |
+| 39 | `memory_query_structured` | Exact metadata filter query over top-level memories (no semantic ranking) |
+| 40 | `memory_version_diff` | Line-level diff between two stored versions of a memory |
+| 41 | `memory_version_restore` | Roll a memory back to a previous version (snapshots the current one first) |
 
 ---
 

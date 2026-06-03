@@ -13,6 +13,7 @@ read once at process start unless noted.
 | `MCP_AUTH_OPTIONAL` | _unset_ | Set to `1` to allow unauthenticated access on a non-loopback bind. Should only be used in trusted local networks. |
 | `MCP_ALLOWED_ORIGINS` | `http://localhost:5173` | Comma-separated allowlist for CORS. Origins not in the list receive no `Access-Control-Allow-Origin` header. |
 | `MCP_BODY_LIMIT` | `256kb` | Maximum JSON body size for any request. Larger payloads return 413. |
+| `MCP_API_NAMESPACE` | _unset_ | Multi-tenancy: when set, BOTH the MCP stdio tools and the REST API force every read/write to this namespace, overriding any caller-supplied value (read AND write isolation). Unset (or empty string) → no forced scoping; the single-user stdio default. |
 | `NODE_ENV` | _unset_ | When `production`, API error responses omit the `detail` field (no internal error messages leak to clients). |
 
 ## Security headers
@@ -34,9 +35,12 @@ read once at process start unless noted.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `MCP_RATELIMIT_CAPACITY` | `30` | Token-bucket capacity per IP (burst size). |
-| `MCP_RATELIMIT_REFILL_PER_SEC` | `6` | Sustained refill rate. |
+| `MCP_RATELIMIT_CAPACITY` | `30` | Token-bucket capacity per IP (burst size) for the `/api` + `/mcp` surfaces. |
+| `MCP_RATELIMIT_REFILL_PER_SEC` | `6` | Sustained refill rate for the `/api` + `/mcp` limiter. |
+| `MCP_PUBLISH_RATELIMIT_CAPACITY` | `15` | Token-bucket capacity per IP for the read-only `/publish/:namespace` wiki (stricter than the API surface). |
+| `MCP_PUBLISH_RATELIMIT_REFILL_PER_SEC` | `2` | Sustained refill rate for the `/publish` limiter. |
 | `MCP_RATELIMIT_DISABLED` | _unset_ | Set to `1` to bypass rate limiting entirely. |
+| `MCP_TRUSTED_IP_HEADER` | _unset_ | Name of a TRUSTED, proxy-set header (e.g. `x-real-ip`) to read the client IP from for per-IP rate limiting when behind a reverse proxy. Unset → the socket peer address is used. Only enable when a proxy you control sets this header. |
 
 ## Health & metrics
 
@@ -53,6 +57,8 @@ read once at process start unless noted.
 | `MCP_MEMORY_CONFIG_PATH` | `~/.mcp-memory/config.json` | Config file consumed by hooks and the consolidate CLI. |
 | `MCP_MEMORY_CWD` | _unset_ | Override the current working directory used by hook scripts. Set internally by the Stop hook. |
 | `MCP_MEMORY_TRANSCRIPT_BASE` | `~/.claude/projects` | Allowlisted base directory for the Stop hook's `transcript_path`. Anything outside this base is rejected. |
+| `MCP_VAULT_PATH` | _unset_ (→ `config.vault.path`) | Obsidian vault root for `rebuild` and vault CLI commands. Falls back to `vault.path` in `config.json`; a `--vault <path>` flag overrides both. |
+| `MCP_VAULT_WRITE_THROUGH` | _unset_ (on) | Set to `0` to disable mirroring memory writes out to the vault as `.md` files. Default is write-through enabled (when a vault is configured). |
 
 ## Embedding
 
