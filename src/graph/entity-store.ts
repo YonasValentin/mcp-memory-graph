@@ -28,6 +28,56 @@ function djb2(s: string): string {
   return (hash >>> 0).toString(36);
 }
 
+// ── Alias resolution (read paths) ─────────────────────────────────────────
+// Single source of entity_aliases → entity resolution shared by every read
+// path. The invariant everywhere: a DIRECT entity-name match always wins, so a
+// registered alias never shadows a real entity of the same spelling.
+
+/**
+ * Resolve a single normalized name to its canonical entity normalized_name,
+ * following entity_aliases only when the name is not itself an entity. Returns
+ * the input unchanged when nothing resolves. Used by the memory_graph lookup.
+ */
+export function resolveToCanonicalName(db: Database.Database, normalized: string): string {
+  const direct = db
+    .prepare<[string], { x: number }>(
+      'SELECT 1 AS x FROM entities WHERE normalized_name = ? LIMIT 1',
+    )
+    .get(normalized);
+  if (direct) return normalized;
+  const alias = db
+    .prepare<[string], { normalized_name: string }>(
+      `SELECT e.normalized_name FROM entity_aliases a
+       JOIN entities e ON e.id = a.entity_id
+       WHERE a.normalized_alias = ? LIMIT 1`,
+    )
+    .get(normalized);
+  return alias ? alias.normalized_name : normalized;
+}
+
+/**
+ * Entity ids whose canonical normalized_name OR a registered normalized_alias is
+ * in `normalizedNames`. The alias→entity-id resolver for the search graph-seed
+ * and Personalized PageRank paths (linkQueryEntities): direct names and aliases
+ * both resolve to the owning entity id, deduped. Empty in → empty out (never
+ * builds an `IN ()` that throws).
+ */
+export function entityIdsByNameOrAlias(
+  db: Database.Database,
+  normalizedNames: string[],
+): string[] {
+  if (normalizedNames.length === 0) return [];
+  const ph = normalizedNames.map(() => '?').join(',');
+  const rows = db
+    .prepare<string[], { id: string }>(
+      `SELECT id FROM entities WHERE normalized_name IN (${ph})
+       UNION
+       SELECT entity_id AS id FROM entity_aliases WHERE normalized_alias IN (${ph})`,
+    )
+    .all(...normalizedNames, ...normalizedNames);
+  return [...new Set(rows.map((r) => r.id))];
+}
+
 // ── Entity CRUD ─────────────────────────────────────────────────────────
 
 export function findOrCreateEntity(

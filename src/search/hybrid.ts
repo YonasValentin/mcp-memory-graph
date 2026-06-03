@@ -5,7 +5,7 @@ import { computeConfidence, confidenceLabel } from './scoring.js';
 import { NOW_ISO_SQL } from '../db/predicates.js';
 import { rowToMemory } from '../db/repository.js';
 import { extractEntitiesRegex } from '../graph/entity-extractor.js';
-import { normalizeName } from '../graph/entity-store.js';
+import { normalizeName, entityIdsByNameOrAlias } from '../graph/entity-store.js';
 import { rankMemoriesByPPR } from '../graph/pagerank.js';
 import type { Reranker } from './reranker.js';
 import { logger } from '../lib/logger.js';
@@ -49,14 +49,18 @@ export interface HybridSearchResponse {
  * Query → seed entity ids for HippoRAG PPR (T5).
  *
  * Two complementary candidate sources, both normalized via {@link normalizeName}
- * and matched exactly against `entities.normalized_name`:
+ * and resolved via {@link entityIdsByNameOrAlias} (canonical name OR a registered
+ * alias → owning entity id):
  *   1. raw query tokens (so a bare "ReactService" links even though the regex
  *      only fires on 2+ humps, which it does here, but tokens also cover
  *      single-word tool/concept names already present as entities), and
  *   2. {@link extractEntitiesRegex} candidates (PascalCase, tools, patterns…).
- * Returns deduped entity ids; empty when nothing links (caller then skips PPR).
+ * Because resolution goes through entity_aliases, a query that names only an
+ * alias (e.g. "PG" / "k8s") still seeds the canonical entity ("PostgreSQL" /
+ * "Kubernetes"). Returns deduped entity ids; empty when nothing links (caller
+ * then skips PPR). Exported for direct seed-path testing.
  */
-function linkQueryEntities(db: Database.Database, query: string): string[] {
+export function linkQueryEntities(db: Database.Database, query: string): string[] {
   const candidates = new Set<string>();
   for (const token of query.split(/\s+/)) {
     const n = normalizeName(token);
@@ -66,17 +70,7 @@ function linkQueryEntities(db: Database.Database, query: string): string[] {
     const n = normalizeName(entity.name);
     if (n.length > 0) candidates.add(n);
   }
-  if (candidates.size === 0) return [];
-
-  const names = [...candidates];
-  const placeholders = names.map(() => '?').join(',');
-  const rows = db
-    .prepare<string[], { id: string }>(
-      `SELECT id FROM entities WHERE normalized_name IN (${placeholders})`,
-    )
-    .all(...names);
-
-  return [...new Set(rows.map((r) => r.id))];
+  return entityIdsByNameOrAlias(db, [...candidates]);
 }
 
 export async function hybridSearch(

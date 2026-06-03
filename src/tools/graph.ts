@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { normalizeName } from '../graph/entity-store.js';
+import { normalizeName, resolveToCanonicalName } from '../graph/entity-store.js';
 
 interface GraphInput {
   entity?: string;
@@ -58,24 +58,10 @@ export function handleGraph(db: Database.Database, input: GraphInput): GraphResu
   let entityRows: Array<{ id: string; name: string; type: string; mention_count: number }>;
 
   if (input.entity) {
-    const normalizedInput = normalizeName(input.entity);
-    // Resolve through entity_aliases when the input isn't itself an entity name:
-    // a registered alias maps to its entity's canonical normalized_name. A direct
-    // entity-name match takes precedence — an alias never shadows a real entity.
-    let normalized = normalizedInput;
-    const directExists = db
-      .prepare<[string], { x: number }>('SELECT 1 AS x FROM entities WHERE normalized_name = ? LIMIT 1')
-      .get(normalizedInput);
-    if (!directExists) {
-      const aliasRow = db
-        .prepare<[string], { normalized_name: string }>(
-          `SELECT e.normalized_name FROM entity_aliases a
-           JOIN entities e ON e.id = a.entity_id
-           WHERE a.normalized_alias = ? LIMIT 1`,
-        )
-        .get(normalizedInput);
-      if (aliasRow) normalized = aliasRow.normalized_name;
-    }
+    // Resolve through entity_aliases (shared resolver): a registered alias maps
+    // to its entity's canonical normalized_name; a direct entity-name match
+    // takes precedence — an alias never shadows a real entity.
+    const normalized = resolveToCanonicalName(db, normalizeName(input.entity));
 
     if (depth === 1) {
       // Direct neighbors only
