@@ -255,10 +255,10 @@ After building, run the init command to register hooks, config, and nightly cons
 
 ```bash
 # Global (user scope) — hooks apply to all projects
-npx @yonasvalentin/mcp-memory-server init
+npx mcp-memory-local init
 
 # Per-project — hooks and MCP registration scoped to this project only
-npx @yonasvalentin/mcp-memory-server init --scope project
+npx mcp-memory-local init --scope project
 ```
 
 **User scope** (default) writes hooks to `~/.claude/settings.json`. Hooks fire in every Claude Code session regardless of project.
@@ -275,7 +275,7 @@ Init performs these steps:
 To reverse everything:
 
 ```bash
-npx @yonasvalentin/mcp-memory-server uninstall
+npx mcp-memory-local uninstall
 ```
 
 ### Verify Installation
@@ -319,7 +319,7 @@ claude mcp add memory-server \
 
 ### Configuration File
 
-The config file at `~/.mcp-memory/config.json` controls self-improvement behavior, hook settings, and per-project overrides. Created automatically by `npx @yonasvalentin/mcp-memory-server init`, or create it manually:
+The config file at `~/.mcp-memory/config.json` controls self-improvement behavior, hook settings, and per-project overrides. Created automatically by `npx mcp-memory-local init`, or create it manually:
 
 ```json
 {
@@ -376,15 +376,15 @@ The config file at `~/.mcp-memory/config.json` controls self-improvement behavio
 
 | Command | Description |
 |---------|-------------|
-| `npx @yonasvalentin/mcp-memory-server` | Start MCP server on stdio (default) |
-| `npx @yonasvalentin/mcp-memory-server serve` | Start HTTP server with MCP transport + REST API + web dashboard |
-| `npx @yonasvalentin/mcp-memory-server init` | Interactive setup wizard: hooks, config, and nightly schedule (user scope). Add `--yes`/`-y` to accept all defaults non-interactively |
-| `npx @yonasvalentin/mcp-memory-server init --scope project` | Setup for current project only (creates `.mcp.json` + `.claude/settings.json`) |
-| `npx @yonasvalentin/mcp-memory-server uninstall` | Reverse init: remove hooks and schedule |
-| `npx @yonasvalentin/mcp-memory-server consolidate` | Run the dream cycle manually |
-| `npx @yonasvalentin/mcp-memory-server export-graph [--out <path>] [--scope <s>] [--namespace <n>]` | Write a committable, deterministic `memory-graph.json` for git sharing |
-| `npx @yonasvalentin/mcp-memory-server git-setup` | Install the `.gitattributes` entry + `memory-union` git merge driver for conflict-free graph sharing |
-| `npx @yonasvalentin/mcp-memory-server merge-graphs <ours> <theirs> <out>` | Git union merge driver for `memory-graph.json` (invoked by git, not by hand) |
+| `npx mcp-memory-local` | Start MCP server on stdio (default) |
+| `npx mcp-memory-local serve` | Start HTTP server with MCP transport + REST API + web dashboard |
+| `npx mcp-memory-local init` | Interactive setup wizard: hooks, config, and nightly schedule (user scope). Add `--yes`/`-y` to accept all defaults non-interactively |
+| `npx mcp-memory-local init --scope project` | Setup for current project only (creates `.mcp.json` + `.claude/settings.json`) |
+| `npx mcp-memory-local uninstall` | Reverse init: remove hooks and schedule |
+| `npx mcp-memory-local consolidate` | Run the dream cycle manually |
+| `npx mcp-memory-local export-graph [--out <path>] [--scope <s>] [--namespace <n>]` | Write a committable, deterministic `memory-graph.json` for git sharing |
+| `npx mcp-memory-local git-setup` | Install the `.gitattributes` entry + `memory-union` git merge driver for conflict-free graph sharing |
+| `npx mcp-memory-local merge-graphs <ours> <theirs> <out>` | Git union merge driver for `memory-graph.json` (invoked by git, not by hand) |
 
 ---
 
@@ -872,9 +872,9 @@ src/
 │   ├── consolidate.ts    # memory_consolidate handler
 │   └── extract-learnings.ts # memory_extract_learnings handler
 ├── cli/
-│   ├── init.ts           # npx @yonasvalentin/mcp-memory-server init
-│   ├── uninstall.ts      # npx @yonasvalentin/mcp-memory-server uninstall
-│   ├── consolidate.ts    # npx @yonasvalentin/mcp-memory-server consolidate
+│   ├── init.ts           # npx mcp-memory-local init
+│   ├── uninstall.ts      # npx mcp-memory-local uninstall
+│   ├── consolidate.ts    # npx mcp-memory-local consolidate
 │   └── cleanup-extracted.ts  # Utility to purge auto-extracted noise
 ├── hooks/
 │   ├── memory-session-start.ts
@@ -994,8 +994,8 @@ Only files that changed since last sync are re-processed. A `vault_sync_meta` ta
 
 - **No network calls** after initial model download (cached locally)
 - **No telemetry**, no analytics, no tracking
-- **Hooks are opt-in** — Claude Code hooks are only installed when you explicitly run `npx @yonasvalentin/mcp-memory-server init`. Without init, no hooks intercept tool calls
-- **Nightly schedule is opt-in** — The consolidation schedule is only created during init and can be removed with `npx @yonasvalentin/mcp-memory-server uninstall`
+- **Hooks are opt-in** — Claude Code hooks are only installed when you explicitly run `npx mcp-memory-local init`. Without init, no hooks intercept tool calls
+- **Nightly schedule is opt-in** — The consolidation schedule is only created during init and can be removed with `npx mcp-memory-local uninstall`
 - **Single SQLite file** — easy to backup, move, or delete
 - **Access level metadata** — tag memories as public/internal/confidential/restricted for organizational awareness
 - Data never leaves your machine
@@ -1021,7 +1021,7 @@ rm ~/.mcp-memory/memory.db
 
 ## Nightly Consolidation
 
-When installed via `npx @yonasvalentin/mcp-memory-server init`, a nightly consolidation job runs all five dream cycle stages plus access log rotation (entries older than 90 days).
+When installed via `npx mcp-memory-local init`, a nightly consolidation job runs all five dream cycle stages plus access log rotation (entries older than 90 days).
 
 **macOS:** A launchd plist is created at `~/Library/LaunchAgents/com.mcp-memory.consolidate.plist`, scheduled to run at 3:00 AM.
 
@@ -1029,13 +1029,13 @@ When installed via `npx @yonasvalentin/mcp-memory-server init`, a nightly consol
 
 ```bash
 # Add to crontab -e
-0 3 * * * /usr/local/bin/npx @yonasvalentin/mcp-memory-server consolidate
+0 3 * * * /usr/local/bin/npx mcp-memory-local consolidate
 ```
 
 To run the dream cycle manually at any time:
 
 ```bash
-npx @yonasvalentin/mcp-memory-server consolidate
+npx mcp-memory-local consolidate
 ```
 
 ---

@@ -1,14 +1,11 @@
 {
-  "name": "@yonasvalentin/mcp-memory-server",
+  "name": "mcp-memory-local",
   "version": "2.0.0",
-  "description": "Enterprise-grade vector memory MCP server with hybrid search",
+  "description": "Local-first vector + knowledge-graph memory MCP server: hybrid search, bi-temporal, signed provenance — $0/token, zero cloud",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "mcp-memory-server": "dist/index.js"
-  },
-  "publishConfig": {
-    "access": "public"
+    "mcp-memory-local": "dist/index.js"
   },
   "scripts": {
     "build": "tsc",
