@@ -48,7 +48,7 @@ web/                React 19 + Vite + Tailwind v4 + shadcn + D3 dashboard → /a
 
 Core relational tables: `memories` (central; bitemporal cols `valid_from`/`valid_to`/`tx_expired` v6, `stability` v7, `agent_id` v9; 12 indexes), `memory_versions` (pre-edit snapshots), `memory_links` (memory↔memory edges, bitemporal, UNIQUE(source,target,relation)), `core_memory` (PK scope+namespace, `''` sentinel), `entities` / `entity_aliases` / `entity_relationships` / `memory_entities`, `memory_conflicts`, `memory_originals` (condense backup), `memory_access_log`, `ingest_source_tracking`, `vault_sync_meta`, `schema_meta` (k/v: `schema_version`, `embedding_dim`).
 
-Virtual tables: **`memories_vec`** (`vec0`, `embedding float[DIM]`, keyed by `memories.rowid`; `invalidateMemory` drops the vec row on the store-supersede and `memory_forget` paths, but `recordConflicts`' heuristic supersede stamps `valid_to` **without** dropping it — so tombstoned-with-vec rows still occur and any raw `MATCH` consumer must re-filter), **`memories_fts`** (FTS5 external-content over title/content/tags/author/department).
+Virtual tables: **`memories_vec`** (`vec0`, `embedding float[DIM]`, keyed by `memories.rowid`; **retained on bitemporal invalidation** — only a hard delete drops it — so `as_of` vector search can reconstruct retired facts, and every raw `MATCH` consumer filters retired rows by `valid_to`/`tx_expired`/`superseded_at`), **`memories_fts`** (FTS5 external-content over title/content/tags/author/department).
 
 **Triple-table coupling:** every write touches `memories` + `memories_vec` (by rowid) + `memories_fts` inside one `db.transaction()`.
 

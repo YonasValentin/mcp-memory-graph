@@ -61,8 +61,10 @@ Two fix waves are CLOSED — **do not treat them as open**:
 - The original **9-bug battle queue** (embedding cache key collision, getReadOnlyDb migrate, export resurrects dead rows, stats/manifest dead rows, update raw re-embed, NLI-only-on-supersede, vec0 survives invalidation, consolidate `results_count`, extract-dedup threshold), retired into single-source modules.
 - The **battle-overhaul pass** (8-persona hands-on testing → 5 fixes, TDD, 1000 tests green): (1) `expires_at` TTL ISO-Z collation across search/stats/consolidate/expired-delete/session-start + `condensed_at`/`superseded_at` writes — expired rows had leaked into search; (2) `vault_status` raw-mtime compare (was "changed" forever on sub-ms FS); (3) `importance_score` settable on store/update; (4) `memory_graph` false strength comment + `idf_strength` surfaced; (5) vault round-trip recovers `importance_score`/`created_at`/`updated_at` from frontmatter.
 
+A third fix landed after the overhaul pass:
+- **fix(bitemporal): `as_of` VECTOR reconstruction of retired facts** — `invalidateMemory` now RETAINS the vec row (only hard delete drops it), `superseded_at IS NULL` is scoped to current mode, and `handleRelated`/`detectConflicts` filter `valid_to`/`tx_expired`. Real-model verified (a semantic query reconstructs the retired fact at `as_of`, excludes it from current search, returns the live fact). 1001 tests green.
+
 Genuinely **open** (verified by the persona pass unless noted):
-- **`as_of` vector reconstruction of superseded facts** — `search_mode:'vector'` returns nothing for retired facts (vec row dropped on invalidate; candidate set built from indexes before the as_of predicate). keyword/hybrid work. Fix needs keeping the vec row (and auditing every raw `MATCH` consumer re-filters) or unioning a bitemporal scan when `as_of` is set. **Highest-value remaining bug** (core bitemporal differentiator).
 - **`entity_aliases` is write-only** — no tool resolves aliases to entities; the read/resolution half (LEFT JOIN in `handleGraph` + search) was never wired.
 - **`memory_consolidate` `dry_run` under-counts merges** — apply mutates the index mid-pass; a faithful preview must simulate against a copy.
 - **Soft-forget has no un-tombstone tool** — `memory_forget {hard:false}` is recoverable only via direct DB access.
