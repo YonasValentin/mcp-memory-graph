@@ -69,6 +69,29 @@ If a check fails, the PR can't merge. Push fixes; CI re-runs automatically.
 - Schemas live in `src/schemas/index.ts`. New REST inputs derive from existing MCP schemas via `.pick`/`.partial` rather than defining parallel shapes.
 - Use the existing `db.transaction(...)` pattern for multi-statement writes.
 
+## Licensing of contributions
+
+This project is **source-available**, not open source: it's licensed under the
+[PolyForm Noncommercial License 1.0.0](./LICENSE) (free for noncommercial use)
+and is **also offered under separate paid commercial licenses** (see
+[COMMERCIAL.md](./COMMERCIAL.md)).
+
+For that dual model to work, the maintainer must be able to license *all* of the
+code — including your contribution — under **both** the noncommercial license and
+commercial licenses. So, by submitting a pull request, you:
+
+1. **certify the [Developer Certificate of Origin](https://developercertificate.org/)**
+   (that you wrote the contribution or have the right to submit it), and
+2. **grant the maintainer (Yonas Valentin Kristensen) a perpetual, irrevocable,
+   worldwide license to your contribution, with the right to sublicense and
+   relicense it** — including under the PolyForm Noncommercial License and under
+   commercial license terms.
+
+You retain copyright in your contribution; this only grants the relicensing right
+the dual model needs. Sign off your commits with `git commit -s` (adds the
+`Signed-off-by:` DCO line). If you can't agree to this, please open an issue to
+discuss before sending code.
+
 ## Filing security issues
 
 See [SECURITY.md](./SECURITY.md). Don't open public GitHub issues for vulnerabilities.

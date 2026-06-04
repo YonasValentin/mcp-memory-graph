@@ -1186,4 +1186,11 @@ npx mcp-memory-local consolidate
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+**Source-available, not open source.** Licensed under the
+[PolyForm Noncommercial License 1.0.0](./LICENSE) — free for any **noncommercial**
+purpose (personal projects, hobby, study, research, and charitable / educational /
+public-research / government use). **Commercial use requires a paid license** —
+see [COMMERCIAL.md](./COMMERCIAL.md).
+
+If you're unsure whether your use is commercial, check the safe harbors in the
+[license](./LICENSE) or just ask: yonasklibi@gmail.com.
