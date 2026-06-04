@@ -358,6 +358,103 @@ function createMcpJson(): void {
   dim('Collaborators who clone this project will auto-discover the memory server');
 }
 
+export interface RemoteInitOpts {
+  tokenEnv?: string;
+  token?: string;
+  noAuth?: boolean;
+}
+
+/** Normalize a server base URL to its MCP endpoint (`…/mcp`), stripping trailing slashes. */
+function normalizeMcpUrl(raw: string): string {
+  const trimmed = raw.replace(/\/+$/, '');
+  return /\/mcp$/.test(trimmed) ? trimmed : `${trimmed}/mcp`;
+}
+
+/**
+ * Build a project `.mcp.json` entry for a REMOTE (self-hosted) memory server over
+ * HTTP — the official Claude Code MCP `http` schema (`type`/`url`/`headers`).
+ * Secure by default: the bearer token is referenced as an env var
+ * (`${MEMORY_MCP_TOKEN}`, expanded by Claude Code at read time) so the committed
+ * `.mcp.json` never carries the secret. `--token` inlines a literal only when
+ * explicitly asked; `--no-auth` omits the header for an unauthenticated server.
+ */
+export function buildRemoteMcpConfig(
+  rawUrl: string,
+  opts: RemoteInitOpts = {},
+): { mcpServers: Record<string, { type: 'http'; url: string; headers?: Record<string, string> }> } {
+  const server: { type: 'http'; url: string; headers?: Record<string, string> } = {
+    type: 'http',
+    url: normalizeMcpUrl(rawUrl),
+  };
+  if (!opts.noAuth) {
+    const bearer = opts.token ? opts.token : `\${${opts.tokenEnv ?? 'MEMORY_MCP_TOKEN'}}`;
+    server.headers = { Authorization: `Bearer ${bearer}` };
+  }
+  return { mcpServers: { 'memory-server': server } };
+}
+
+export interface RemoteSpec {
+  url: string;
+  tokenEnv?: string;
+  token?: string;
+  noAuth?: boolean;
+}
+
+/** Parse `--remote <url> [--token-env NAME | --token VALUE] [--no-auth]`, or null. */
+export function parseRemote(argv: string[] = process.argv): RemoteSpec | null {
+  const i = argv.indexOf('--remote');
+  if (i === -1 || !argv[i + 1]) return null;
+  const flagVal = (name: string): string | undefined => {
+    const idx = argv.indexOf(name);
+    return idx !== -1 && argv[idx + 1] ? argv[idx + 1] : undefined;
+  };
+  const out: RemoteSpec = { url: argv[i + 1] };
+  const te = flagVal('--token-env');
+  if (te) out.tokenEnv = te;
+  const t = flagVal('--token');
+  if (t) out.token = t;
+  if (argv.includes('--no-auth')) out.noAuth = true;
+  return out;
+}
+
+function createRemoteMcpJson(remote: RemoteSpec): void {
+  const mcpJsonPath = join(process.cwd(), '.mcp.json');
+  if (existsSync(mcpJsonPath)) {
+    dim(`MCP config already exists at ${mcpJsonPath} — leaving it untouched`);
+    return;
+  }
+  const cfg = buildRemoteMcpConfig(remote.url, remote);
+  writeFileSync(mcpJsonPath, JSON.stringify(cfg, null, 2) + '\n', 'utf-8');
+  success(`Created .mcp.json (remote HTTP server: ${cfg.mcpServers['memory-server'].url})`);
+  dim('Collaborators who clone this project will connect to the shared server');
+}
+
+/**
+ * Remote/team init: register the shared self-hosted server over HTTP + write the
+ * CLAUDE.md guidance. The local-DB hooks, local config, and scheduled
+ * consolidation are intentionally SKIPPED — in remote mode the memory lives on
+ * the server, not in a local SQLite file the hooks would read.
+ */
+function runRemoteInit(remote: RemoteSpec): void {
+  console.log(`\n${CYAN}MCP Memory Server — Init (remote / team)${RESET}\n`);
+
+  info('Step 1/2: Writing .mcp.json (HTTP MCP server registration)...');
+  createRemoteMcpJson(remote);
+
+  console.log('');
+  info('Step 2/2: Setting up CLAUDE.md instructions...');
+  createClaudeMd('project');
+
+  console.log('');
+  if (!remote.noAuth && !remote.token) {
+    const envName = remote.tokenEnv ?? 'MEMORY_MCP_TOKEN';
+    info('Set the server bearer token in your shell before starting Claude:');
+    dim(`export ${envName}=<your server token>`);
+  }
+  info('Local hooks/DB are NOT installed in remote mode — memory lives on the server.');
+  console.log(`\n${GREEN}Remote init complete!${RESET}\n`);
+}
+
 const CLAUDE_MD_MARKER = '## MCP Memory Server';
 
 const CLAUDE_MD_CONTENT = `## MCP Memory Server
@@ -400,6 +497,13 @@ function createClaudeMd(scope: Scope): void {
 export { CLAUDE_MD_MARKER };
 
 export async function runInit(): Promise<void> {
+  // `--remote <url>` switches to the team/self-hosted HTTP path (no local hooks/DB).
+  const remote = parseRemote();
+  if (remote) {
+    runRemoteInit(remote);
+    return;
+  }
+
   const scope = resolveScope();
   // `--project` (now an alias for `--scope project`) writes a repo-local config;
   // otherwise it lands in ~/.mcp-memory.
