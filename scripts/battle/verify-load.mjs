@@ -120,7 +120,10 @@ const result = {};
 // ════════════════ PHASE 1 — auth + rate limiting (small bucket) ════════════════
 let s1 = bootServer({ MCP_RATELIMIT_CAPACITY: '20', MCP_RATELIMIT_REFILL_PER_SEC: '5' });
 const up1 = await waitHealthy();
-if (!up1) { console.error('server (phase1) failed to come up:', s1.getErr()); await killServer(s1); process.exit(1); }
+// Natural drain on the error path (P14): no process.exit() while the real
+// embedder's onnxruntime workers are live (a hard exit can abort 134, masking
+// the result). exitCode + throw fails loudly without the abrupt exit.
+if (!up1) { console.error('server (phase1) failed to come up:', s1.getErr()); await killServer(s1); process.exitCode = 1; throw new Error('phase1 server failed to come up'); }
 
 // Auth matrix (bucket is full: well under 20 requests here).
 const noTok = await req('/api/stats', { token: undefined });
@@ -164,7 +167,7 @@ await sleep(500);
 // ════════════════ PHASE 2 — concurrent load correctness (generous bucket) ═══════
 let s2 = bootServer({ MCP_RATELIMIT_CAPACITY: '1000000', MCP_RATELIMIT_REFILL_PER_SEC: '1000000' });
 const up2 = await waitHealthy();
-if (!up2) { console.error('server (phase2) failed to come up:', s2.getErr()); await killServer(s2); process.exit(1); }
+if (!up2) { console.error('server (phase2) failed to come up:', s2.getErr()); await killServer(s2); process.exitCode = 1; throw new Error('phase2 server failed to come up'); }
 
 // Warm the server's embedder so the concurrent search phase isn't all paying the
 // one-time model load.

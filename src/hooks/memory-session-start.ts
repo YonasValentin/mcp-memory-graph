@@ -94,9 +94,17 @@ async function main(): Promise<void> {
     let branch: string | null = null;
     try {
       const { execSync } = await import('node:child_process');
-      branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd, timeout: 2000, encoding: 'utf-8' }).trim();
+      // stdio: capture stdout, but SILENCE stderr — outside a git repo `git
+      // rev-parse` prints "fatal: not a git repository" to stderr, which would
+      // otherwise leak into the hook's stderr on every non-git session.
+      branch = execSync('git rev-parse --abbrev-ref HEAD', {
+        cwd,
+        timeout: 2000,
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim();
     } catch {
-      // Not a git repo
+      // Not a git repo (or git missing) — namespace falls back to the dir name.
     }
 
     // Resolve project namespace via the same logic the rest of the codebase

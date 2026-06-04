@@ -127,10 +127,20 @@ function verifyHookScripts(): void {
 
 type Scope = 'user' | 'project';
 
-function parseScope(): Scope {
-  const idx = process.argv.indexOf('--scope');
-  if (idx !== -1 && process.argv[idx + 1]) {
-    const val = process.argv[idx + 1];
+/**
+ * Resolve the install scope from argv. `--project` is a first-class ALIAS for
+ * `--scope project` (it must set the settings.json location AND trigger the
+ * project `.mcp.json` registration). Previously only `--scope project` was
+ * honored, so `memory init --project` silently installed user-scoped hooks and
+ * never wrote `.mcp.json` — the "user scope" line in the output was the only hint.
+ * Exported (pure over argv) so the resolution is unit-tested even though the
+ * surrounding CLI/filesystem wiring is coverage-excluded.
+ */
+export function resolveScope(argv: string[] = process.argv): Scope {
+  if (argv.includes('--project')) return 'project';
+  const idx = argv.indexOf('--scope');
+  if (idx !== -1 && argv[idx + 1]) {
+    const val = argv[idx + 1];
     if (val === 'user' || val === 'project') return val;
     warn(`Unknown scope "${val}", using "user"`);
   }
@@ -390,9 +400,10 @@ function createClaudeMd(scope: Scope): void {
 export { CLAUDE_MD_MARKER };
 
 export async function runInit(): Promise<void> {
-  const scope = parseScope();
-  // `--project` writes a repo-local config; otherwise it lands in ~/.mcp-memory.
-  const projectScoped = process.argv.includes('--project') || scope === 'project';
+  const scope = resolveScope();
+  // `--project` (now an alias for `--scope project`) writes a repo-local config;
+  // otherwise it lands in ~/.mcp-memory.
+  const projectScoped = scope === 'project';
   // `--yes`/`-y` skips prompts and writes an all-default (still valid) config.
   const interactive = !process.argv.includes('--yes') && !process.argv.includes('-y');
 
