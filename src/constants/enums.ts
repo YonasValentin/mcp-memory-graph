@@ -30,6 +30,12 @@ export const ENTITY_TYPES = [
   'file',
   'package',
   'pattern',
+  // M4.1 ecosystem anchors — the stable identifiers the dev ecosystem already
+  // agrees on, so a memory mentioning "PBI-146146" or a commit SHA becomes a
+  // graph node connectors and search can resolve.
+  'work_item',
+  'pull_request',
+  'commit',
 ] as const;
 
 /** Categories of auto-extracted learnings. */

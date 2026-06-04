@@ -4,6 +4,7 @@ import { findNearDuplicates, getMemoryById, updateMemory } from '../db/repositor
 import { contextualizeForEmbedding } from '../search/contextual.js';
 import { DEDUP_L2_DISTANCE } from '../constants/thresholds.js';
 import { handleStore } from './store.js';
+import { extractSignalText } from '../cli/turn-signal.js';
 
 type LearningType = ExtractedLearning['type'];
 
@@ -123,7 +124,10 @@ export function extractFromTranscript(
   transcript: string,
   categories?: LearningType[],
 ): ExtractedLearning[] {
-  const cleaned = preprocessTranscript(transcript);
+  // M4.4 turn-signal gate: when the transcript is real Claude Code JSONL, mine
+  // only the substantive turns (drop tool blocks / acks / coordination). A
+  // plain-text transcript passes through unchanged (fall-safe).
+  const cleaned = preprocessTranscript(extractSignalText(transcript));
   const allowedTypes = categories && categories.length > 0 ? new Set(categories) : null;
   const learnings: ExtractedLearning[] = [];
   const seenContent = new Set<string>();

@@ -96,7 +96,12 @@ export function findOrCreateEntity(
   if (existing) {
     // LLM-provided types ('person','project','tool','organization') are more specific
     // than regex-inferred types ('concept','file','pattern') — upgrade if applicable.
-    const SPECIFIC_TYPES = new Set(['person', 'project', 'tool', 'organization']);
+    // M4.1 ecosystem anchors (work_item/pull_request/commit) are exact identifiers,
+    // also specific — never let a later generic regex hit downgrade them.
+    const SPECIFIC_TYPES = new Set([
+      'person', 'project', 'tool', 'organization',
+      'work_item', 'pull_request', 'commit',
+    ]);
     const GENERIC_TYPES = new Set(['concept', 'file', 'pattern']);
     const currentType = db
       .prepare<[string], { type: string }>('SELECT type FROM entities WHERE id = ?')

@@ -6,10 +6,13 @@ import {
   findOrCreateRelationship,
   normalizeName,
 } from '../graph/entity-store.js';
+import type { ENTITY_TYPES } from '../constants/enums.js';
 
 interface EntityInput {
   name: string;
-  type: 'person' | 'project' | 'tool' | 'concept' | 'organization' | 'file' | 'package' | 'pattern';
+  // Derived from the canonical ENTITY_TYPES tuple so adding an anchor type
+  // (work_item/pull_request/commit) widens this in lockstep — no drift.
+  type: (typeof ENTITY_TYPES)[number];
   aliases?: string[];
 }
 
