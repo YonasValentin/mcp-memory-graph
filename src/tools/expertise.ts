@@ -72,7 +72,7 @@ function findExpertiseRow(
           AND scope = ?
           AND ${namespace == null ? 'namespace IS NULL' : 'namespace = ?'}
           AND json_extract(metadata, '$.topic') = ?
-          AND valid_to IS NULL AND tx_expired IS NULL AND parent_id IS NULL
+          AND valid_to IS NULL AND tx_expired IS NULL AND superseded_at IS NULL AND parent_id IS NULL
         ORDER BY updated_at DESC LIMIT 1`,
     )
     .get(...(namespace == null ? [scope, topic] : [scope, namespace, topic]) as [string, string | null, string]);

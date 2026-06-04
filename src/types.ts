@@ -289,6 +289,16 @@ export interface MemoryStats {
   total_content_bytes: number;
   database_size_bytes: number;
   expired_count: number;
+  /** M6.2 compute-governor window snapshot — present only when the governor is
+   *  enabled (MCP_COMPUTE_GOVERNOR_MODE != off), so warn mode is observable. */
+  compute_window?: {
+    mode: string;
+    capacity: number;
+    refill_per_sec: number;
+    remaining: number;
+    window_seconds: number;
+    degraded: boolean;
+  };
 }
 
 export interface ListOptions {

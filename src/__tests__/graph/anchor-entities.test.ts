@@ -8,11 +8,18 @@ function typesByName(content: string): Map<string, string> {
 }
 
 describe('M4.1 anchor entities — work_item', () => {
-  it('extracts Jira/ADO-style keys', () => {
-    const t = typesByName('Fixed in PBI-146146 and also API-42, see EDC-1234.');
-    expect(t.get('PBI-146146')).toBe('work_item');
-    expect(t.get('API-42')).toBe('work_item');
-    expect(t.get('EDC-1234')).toBe('work_item');
+  it('extracts Jira/ADO-style keys when a tracker keyword is in the same clause', () => {
+    expect(typesByName('Fixed in PBI-146146.').get('PBI-146146')).toBe('work_item');
+    expect(typesByName('see ticket API-42 for details').get('API-42')).toBe('work_item');
+    expect(typesByName('resolves EDC-1234 this sprint').get('EDC-1234')).toBe('work_item');
+  });
+
+  it('does NOT match the OPEN set of standards/product look-alikes in bare prose', () => {
+    // The killer case the blocklist could never close — no tracker keyword nearby.
+    const names = extractEntitiesRegex(
+      'The USB-30 spec and HTTP-404 responses use GCM-256 and CRC-32 per WCAG-21 / IEEE-754 / GPT-40.',
+    ).filter((e) => e.type === 'work_item');
+    expect(names).toEqual([]);
   });
 
   it('does NOT match prose standards tokens (COVID-19, ISO-8601, UTF-8, SHA-256, UTF-16)', () => {
@@ -22,10 +29,15 @@ describe('M4.1 anchor entities — work_item', () => {
     expect(names).toEqual([]);
   });
 
+  it('does NOT match a key with no tracker keyword nearby', () => {
+    const names = extractEntitiesRegex('The ABC-123 module shipped.').filter((e) => e.type === 'work_item');
+    expect(names).toEqual([]); // "module shipped" is not a tracker context
+  });
+
   it('does NOT match decimals or dates', () => {
-    const names = extractEntitiesRegex('Version 1.2.3, ratio 3.14, date 2024-01-15, value 100-200.')
+    const names = extractEntitiesRegex('ticket Version 1.2.3, ratio 3.14, date 2024-01-15, value 100-200.')
       .filter((e) => e.type === 'work_item');
-    // 2024-01 starts with a digit → not a key; 100-200 starts with a digit too.
+    // digit-leading tokens never match the key shape, keyword or not.
     expect(names).toEqual([]);
   });
 });
@@ -42,6 +54,12 @@ describe('M4.1 anchor entities — pull_request', () => {
     const names = extractEntitiesRegex('See section #146 and item #3 of the list.')
       .filter((e) => e.type === 'pull_request');
     expect(names).toEqual([]);
+  });
+
+  it('does NOT match lowercase prose (Mr 5, mr 12, pr 2024)', () => {
+    const names = extractEntitiesRegex('Mr 5 said pr 2024 was a good year, mr 12 agreed.')
+      .filter((e) => e.type === 'pull_request');
+    expect(names).toEqual([]); // case-sensitive: only uppercase PR/MR
   });
 });
 

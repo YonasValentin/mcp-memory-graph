@@ -88,24 +88,33 @@ export function parseTranscriptTurns(transcript: string): TranscriptTurn[] | nul
 
 const MIN_TURN_CHARS = 40;
 
-// Whole-turn acknowledgements / coordination — no durable content to mine.
+// Whole-turn acknowledgements — no durable content. The trailing `+` matches a
+// turn that is ENTIRELY a sequence of ack tokens ("ok ok thanks sounds good got
+// it perfect"), not just a single one, so a long pile of acks is still noise.
 const NOISE_TURN_RE =
-  /^(?:ok(?:ay)?|sure|thanks?|thank you|yes|yep|yeah|no|nope|got it|sounds good|perfect|great|cool|nice|done|continue|go ahead|proceed|please do|do it|right|correct|exactly|makes sense)[\s.!,]*$/i;
+  /^(?:(?:ok(?:ay)?|sure|thanks?|thank you|yes|yep|yeah|no|nope|got it|sounds good|perfect|great|cool|nice|done|continue|go ahead|proceed|please do|do it|right|correct|exactly|makes sense)[\s.!,]*)+$/i;
 
 const COORDINATION_RE =
   /^(?:let me\b|i'?ll now\b|i'?ll go ahead\b|running\b|let'?s\b|now i'?ll\b|i'?m going to\b|here'?s what i'?ll do)/i;
 
 /**
  * True if a turn is substantive enough to mine. Drops empty/tool-only turns,
- * short acknowledgements, and pure coordination lines.
+ * whole-turn acknowledgements, and coordination turns whose CONTENT after the
+ * opener is itself non-substantive ("Let me run the tests." → drop), while
+ * keeping a turn that merely OPENS with a coordination phrase before real
+ * material ("Let me explain the reasoning: <substance>" → keep). The earlier
+ * fixed 120-char cutoff dropped substantive 40-119-char turns that happened to
+ * open with "Let me…".
  */
 export function classifyTurnSignal(turn: TranscriptTurn): boolean {
   const text = turn.text.trim();
   if (text.length < MIN_TURN_CHARS) return false;
   if (NOISE_TURN_RE.test(text)) return false;
-  // A short coordination turn ("Let me run the tests.") is noise; a long turn
-  // that merely opens with "Let me…" before real substance is kept.
-  if (COORDINATION_RE.test(text) && text.length < 120) return false;
+  const coord = COORDINATION_RE.exec(text);
+  if (coord) {
+    const remainder = text.slice(coord[0].length).trim();
+    if (remainder.length < MIN_TURN_CHARS) return false; // opener + nothing real
+  }
   return true;
 }
 

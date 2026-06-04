@@ -61,6 +61,20 @@ describe('M4.4 turn-signal: classification', () => {
       "Let me explain the reasoning: the pattern we settled on is to debounce the watcher and route restricted memories away from the git vault, which avoids the leak entirely.";
     expect(classifyTurnSignal({ role: 'assistant', text: long })).toBe(true);
   });
+
+  it('keeps a substantive 40-119 char turn even when it opens with a coordination phrase', () => {
+    // Regression: the old 120-char cutoff wrongly dropped this.
+    const mid = "Let me note we chose pgBouncer transaction mode here.";
+    expect(mid.length).toBeGreaterThanOrEqual(40);
+    expect(mid.length).toBeLessThan(120);
+    expect(classifyTurnSignal({ role: 'assistant', text: mid })).toBe(true);
+  });
+
+  it('drops a long pile of repeated acknowledgements (not just a single ack)', () => {
+    expect(
+      classifyTurnSignal({ role: 'user', text: 'ok ok thanks thanks sounds good got it perfect great' }),
+    ).toBe(false);
+  });
 });
 
 describe('M4.4 turn-signal: extractSignalText', () => {

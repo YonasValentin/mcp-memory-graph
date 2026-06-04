@@ -44,6 +44,15 @@ describe('redactContent — whitespace-split defense (M2-LOW)', () => {
     expect(r.redactions).toBe(0);
   });
 
+  it('does NOT false-positive on multi-word prose that contains the literal AKIA sigil', () => {
+    // The collapsed scan would glue "AKIA NORTH AMERICA US WEST 2 PLAN" into an
+    // AKIA+16 shape — but that span has MANY whitespace gaps, not the ONE wrap
+    // point a real wrapped credential has, so it must be rejected.
+    const r = redactContent('AKIA NORTH AMERICA US WEST 2 PLAN AND MORE WORDS HERE', 'scrub');
+    expect(r.redactions).toBe(0);
+    expect(r.content).toContain('NORTH AMERICA'); // prose left intact
+  });
+
   it('does NOT bridge whitespace for prose-adjacent sigils (sk-/bearer excluded)', () => {
     // "ask- " + a long word must not glue into an sk- key; "bearer of" must not match.
     const r1 = redactContent('please ask- someverylongwordwithtwentychars here', 'scrub');

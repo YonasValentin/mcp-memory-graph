@@ -61,6 +61,9 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
 
   async embed(text: string): Promise<Float32Array> {
     const [vec] = await this.request(text);
+    // An empty `embeddings: []` array passes request()'s per-row dimension check
+    // (it never iterates), so guard here — never return undefined as a vector.
+    if (!vec) throw new Error('Ollama returned no embedding for the input.');
     return vec;
   }
 

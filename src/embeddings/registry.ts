@@ -4,6 +4,14 @@ import type { EmbeddingProvider } from './provider.js';
 /**
  * M6.4 (R8) — Pluggable embeddings / Ollama router, privacy-gated.
  *
+ * STATUS: this is the OPT-IN pluggable-embeddings LAYER, not yet wired into the
+ * MCP server's singleton embedder hot path. Today the server uses one fixed
+ * local provider (MCP_MEMORY_MODEL); a deployment opts into multi-model routing
+ * by constructing an EmbeddingRegistry and calling selectEmbedder itself.
+ * Auto-wiring selectEmbedder into store/search (threading per-call access_level)
+ * is the remaining follow-up. The v11 `embedding_model`/`embedding_dim` columns
+ * are the per-row recording foundation for that. The module is fully tested.
+ *
  * A logical-key -> {@link EmbeddingProvider} registry plus
  * {@link selectEmbedder}, which picks a provider for a given operation. The
  * load-bearing invariant: `confidential` and `restricted` memories are ALWAYS

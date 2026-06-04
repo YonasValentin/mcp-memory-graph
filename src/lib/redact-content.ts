@@ -228,9 +228,16 @@ export function redactContent(text: string, mode: RedactMode): RedactResult {
         }
         const origStart = idxMap[m.index];
         const origEnd = idxMap[m.index + m[0].length - 1] + 1;
-        // Only add it if the original span actually spans whitespace (otherwise
-        // it duplicates a contiguous match already found above).
-        if (origEnd - origStart > m[0].length) {
+        // Only a SINGLE wrap point counts. A terminal/email-wrapped credential is
+        // broken exactly ONCE (one contiguous whitespace run); all-caps PROSE that
+        // happens to contain the literal sigil (`AKIA NORTH AMERICA US WEST 2`)
+        // has MANY gaps. Require the original span to be exactly two non-space
+        // chunks split by one whitespace run whose concatenation IS the secret —
+        // otherwise it is prose, not a wrapped secret. (origEnd-origStart ===
+        // m[0].length means no whitespace was bridged → a contiguous dup.)
+        const orig = scan.slice(origStart, origEnd);
+        const oneWrap = /^(\S+)(\s+)(\S+)$/.exec(orig);
+        if (oneWrap && oneWrap[1] + oneWrap[3] === m[0]) {
           spans.push({ start: origStart, end: origEnd, kind });
         }
       }

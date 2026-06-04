@@ -52,6 +52,9 @@ export interface SessionStateResult {
   action: 'save' | 'resume';
   found?: boolean;
   saved?: boolean;
+  /** True on a save whose state was byte-identical to the stored row → no new
+   *  version was snapshotted (updateMemory is a no-op on an unchanged content). */
+  unchanged?: boolean;
   session_key: string;
   memory_id?: string;
   version?: number;
@@ -95,7 +98,7 @@ function findRow(
           AND scope = ?
           AND ${namespace == null ? 'namespace IS NULL' : 'namespace = ?'}
           AND json_extract(metadata, '$.session_key') = ?
-          AND valid_to IS NULL AND tx_expired IS NULL AND parent_id IS NULL
+          AND valid_to IS NULL AND tx_expired IS NULL AND superseded_at IS NULL AND parent_id IS NULL
         ORDER BY updated_at DESC LIMIT 1`,
     )
     .get(...(namespace == null ? [scope, key] : [scope, namespace, key]));
@@ -153,12 +156,14 @@ export async function handleSessionState(
       { content, metadata: JSON.stringify(meta) },
       embedding,
     );
+    const newVersion = updated?.version ?? existing.version;
     return {
       action: 'save',
       saved: true,
+      unchanged: newVersion === existing.version,
       session_key: key,
       memory_id: existing.id,
-      version: updated?.version ?? existing.version,
+      version: newVersion,
     };
   }
 

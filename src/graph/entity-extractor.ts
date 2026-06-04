@@ -62,10 +62,21 @@ const PACKAGE_RE = /@[\w-]+\/[\w.-]+/g;
 // SHA-256, RFC-822, AES-256, UTF-16). A real ticket prefix like API/EDC stays.
 const WORK_ITEM_RE = /\b([A-Z][A-Z0-9]{1,9})-(\d{2,})\b/g;
 const NON_TICKET_PREFIXES = new Set(['COVID', 'ISO', 'RFC', 'SHA', 'AES', 'RSA', 'UTF', 'UTC']);
+// `[A-Z]{2,10}-\d{2,}` is also the shape of countless standards/product tokens
+// (USB-30, HTTP-404, GCM-256, CRC-32, WCAG-21, IEEE-754, GPT-40…) — an OPEN set
+// no blocklist can close. So a work_item is only emitted when a tracker keyword
+// sits in the ~48 chars before it (same clause), mirroring how PR_RE already
+// demands a PR/MR keyword. "Fixed in PBI-146146" / "see JIRA-1234" / "ticket
+// ABC-99" / "closes EDC-12" qualify; a bare "USB-30 spec" in prose does not.
+const WORK_ITEM_CONTEXT_RE =
+  /(?:issue|ticket|bug|story|task|epic|jira|ado|work[ -]?item|backlog|sprint|board|pbi|fix(?:e[sd])?|close[sd]?|resolve[sd]?|implement(?:ed|s)?|ref(?:s|erence[sd]?)?|see)\b[^.!?\n]*$/i;
+const WORK_ITEM_LOOKBEHIND = 48;
 
-// pull_request: an explicit PR/MR reference (PR #146, PR-146, MR12). The keyword
-// requirement is what keeps a bare "#146" (ambiguous with an issue/heading) out.
-const PR_RE = /\b(PR|MR)[ -]?#?\s*(\d+)\b/gi;
+// pull_request: an explicit UPPERCASE PR/MR reference (PR #146, PR-146, MR12).
+// Case-SENSITIVE: the `i` flag let prose "Mr 5" (Mister), "mr 12", "pr 2024"
+// match as pull requests. Requiring uppercase PR/MR keeps the convention intact
+// while dropping lowercase prose; a bare "#146" (ambiguous heading) stays out.
+const PR_RE = /\b(PR|MR)[ -]?#?\s*(\d+)\b/g;
 
 // commit: a 7–40 char lowercase git SHA. Two guards make it precise: it must
 // contain at least one a–f letter (so a pure-decimal run like "1234567" is NOT a
@@ -114,9 +125,13 @@ export function extractEntitiesRegex(content: string): ExtractedEntity[] {
     add(match[1], 'file', 0.4);
   }
 
-  // 6. Work-item keys (Jira/ADO) — confidence 0.7. Skip standards-token prefixes.
+  // 6. Work-item keys (Jira/ADO) — confidence 0.7. Require a tracker keyword in
+  // the preceding clause (kills the open set of standards/product look-alikes)
+  // and still skip the named standards prefixes as a cheap first filter.
   for (const match of content.matchAll(WORK_ITEM_RE)) {
     if (NON_TICKET_PREFIXES.has(match[1])) continue;
+    const before = content.slice(Math.max(0, match.index - WORK_ITEM_LOOKBEHIND), match.index);
+    if (!WORK_ITEM_CONTEXT_RE.test(before)) continue;
     add(`${match[1]}-${match[2]}`, 'work_item', 0.7);
   }
 

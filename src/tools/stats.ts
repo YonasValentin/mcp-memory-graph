@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { MemoryStats } from '../types.js';
 import { liveConditions, scopeConditions, NOW_ISO_SQL } from '../db/predicates.js';
+import { getComputeGovernor } from '../lib/compute-governor.js';
 
 export function handleStats(
   db: Database.Database,
@@ -120,6 +121,11 @@ export function handleStats(
     .get(...params);
   const expiredCount = expiredRow?.count ?? 0;
 
+  // M6.2: surface the compute-governor window when enabled (warn mode's whole
+  // purpose is observing headroom — otherwise window()/degraded were dead code).
+  const cw = getComputeGovernor().window();
+  const computeWindow = cw.mode === 'off' ? undefined : cw;
+
   return {
     total_memories: totalMemories,
     total_chunks: totalChunks,
@@ -130,5 +136,6 @@ export function handleStats(
     total_content_bytes: totalContentBytes,
     database_size_bytes: databaseSizeBytes,
     expired_count: expiredCount,
+    ...(computeWindow ? { compute_window: computeWindow } : {}),
   };
 }

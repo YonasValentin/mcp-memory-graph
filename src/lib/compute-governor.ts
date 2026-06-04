@@ -37,7 +37,15 @@
  *   MCP_COMPUTE_GOVERNOR_REFILL_PER_SEC default 60    sustained refill
  */
 
-/** The heavy ops the governor weights. The free path (vector + FTS) is unmetered. */
+/**
+ * The heavy ops the governor weights. The free path (vector + FTS) is unmetered.
+ * NOTE: `embed` carries a weight for completeness, but the live wiring only
+ * preflights `rerank` (search.ts) and `nli` (store.ts) — the two ops that have a
+ * FREE fallback to shed to. Embedding is MANDATORY on every store/search with no
+ * cheaper alternative, so it is deliberately NOT preflighted (shedding it would
+ * just error, which the governor's whole contract forbids). It remains a defined
+ * op so a future budget-accounting view can still account for it.
+ */
 export type ComputeOp = 'embed' | 'rerank' | 'nli';
 
 /** Governor enforcement strength. */
@@ -246,4 +254,14 @@ export function getComputeGovernor(): ComputeGovernor {
     singleton = new ComputeGovernor(defaultGovernorConfig());
   }
   return singleton;
+}
+
+/**
+ * Drop the singleton so the next {@link getComputeGovernor} rebuilds it from the
+ * current MCP_COMPUTE_GOVERNOR_* env. The lazy singleton freezes its config at
+ * first use, so without this an env change (or a test switching modes) is
+ * silently ignored. Mirrors disposeEmbedder() in direct-access.ts.
+ */
+export function resetComputeGovernor(): void {
+  singleton = null;
 }
