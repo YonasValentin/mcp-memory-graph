@@ -58,6 +58,12 @@ import {
   MemoryQueryStructuredSchema,
   MemoryVersionDiffSchema,
   MemoryVersionRestoreSchema,
+  MemoryWebhookSchema,
+  MemoryInsightsSchema,
+  MemoryHealthSchema,
+  MemoryRevalidateSchema,
+  MemorySessionStateSchema,
+  MemoryExpertiseSchema,
 } from './schemas/index.js';
 import { handleStore } from './tools/store.js';
 import { CrossEncoderNli, type NliClassifier } from './graph/contradiction.js';
@@ -102,6 +108,12 @@ import { handleHistory } from './tools/history.js';
 import { handleUnlinkedMentions } from './tools/unlinked-mentions.js';
 import { runStructuredQuery } from './search/structured-query.js';
 import { handleVersionDiff, handleVersionRestore } from './tools/version-history.js';
+import { handleWebhook } from './tools/webhooks.js';
+import { handleInsights } from './tools/insights.js';
+import { handleHealth } from './tools/health.js';
+import { handleRevalidate } from './tools/revalidate.js';
+import { handleSessionState } from './tools/session-state.js';
+import { handleExpertise } from './tools/expertise.js';
 
 import { metrics } from './api/metrics.js';
 import { logger } from './lib/logger.js';
@@ -242,11 +254,15 @@ export function createServer(): McpServer {
     'memory_query', 'memory_query_structured', 'core_memory_get',
     'memory_communities', 'memory_template', 'memory_attribution',
     'memory_questions', 'memory_history', 'memory_unlinked_mentions',
-    'memory_version_diff',
+    'memory_version_diff', 'memory_insights', 'memory_health',
   ]);
   const DESTRUCTIVE_TOOLS = new Set<string>([
     'memory_forget', 'memory_delete', 'memory_import', 'memory_version_restore',
   ]);
+  // Tools that reach OUTSIDE this local store (the only open-world surface):
+  // the webhook bus makes outbound HTTP. openWorldHint:true tells clients it is
+  // not a closed local operation.
+  const OPEN_WORLD_TOOLS = new Set<string>(['memory_webhook']);
 
   function reg<Args extends ZodRawShape>(
     name: string,
@@ -261,7 +277,7 @@ export function createServer(): McpServer {
       openWorldHint: boolean;
     } = {
       title: name.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
-      openWorldHint: false,
+      openWorldHint: OPEN_WORLD_TOOLS.has(name),
     };
     if (READ_ONLY_TOOLS.has(name)) annotations.readOnlyHint = true;
     if (DESTRUCTIVE_TOOLS.has(name)) annotations.destructiveHint = true;
@@ -753,6 +769,72 @@ export function createServer(): McpServer {
     instrument('memory_version_restore', async (input) => {
       const parsed = MemoryVersionRestoreSchema.parse(input);
       return handleVersionRestore(getDb(), await getEmbedder(), parsed);
+    }),
+  );
+
+  // ── 39. memory_webhook (M3.1) ─────────────────────────────────────────────
+  reg(
+    'memory_webhook',
+    'Manage the active-infrastructure event bus (gated on MCP_WEBHOOKS). register an outbound webhook target (URL is SSRF-validated — public http(s) only), list targets (secrets never returned), delete a target, or dispatch the durable delivery queue now. Mutations to memories (created/updated/superseded/deleted/forgotten) enqueue HMAC-signed deliveries that this tool drains with retry + circuit-breaker + dead-letter.',
+    MemoryWebhookSchema.shape,
+    instrument('memory_webhook', async (input) => {
+      const parsed = MemoryWebhookSchema.parse(input);
+      return handleWebhook(getDb(), parsed);
+    }),
+  );
+
+  // ── 40. memory_insights (M3.2) ────────────────────────────────────────────
+  reg(
+    'memory_insights',
+    'Active advisor digest: what in the store needs ATTENTION now — unresolved conflicts, memories flagged stale by change-propagation, most-contradicted facts, and decisions recorded with no supporting evidence. Complements memory_questions (what to capture next). Read-only; optionally scoped.',
+    MemoryInsightsSchema.shape,
+    instrument('memory_insights', async (input) => {
+      const parsed = MemoryInsightsSchema.parse(input);
+      return handleInsights(getDb(), withForcedNs(parsed));
+    }),
+  );
+
+  // ── 41. memory_health (M3.2) ──────────────────────────────────────────────
+  reg(
+    'memory_health',
+    'Store health report: live/retired/stale counts, aging buckets, unresolved conflicts, and webhook delivery health, rolled up to a single ok|attention status with reasons. Read-only; optionally scoped.',
+    MemoryHealthSchema.shape,
+    instrument('memory_health', async (input) => {
+      const parsed = MemoryHealthSchema.parse(input);
+      return handleHealth(getDb(), withForcedNs(parsed));
+    }),
+  );
+
+  // ── 42. memory_revalidate (M3.3) ──────────────────────────────────────────
+  reg(
+    'memory_revalidate',
+    'Change-propagation surface. action=list: memories flagged needs_revalidation (a source they were derived from changed). action=preview: the blast radius of a change to `id` (which dependents WOULD be flagged) without mutating anything. action=confirm: clear `id`\'s stale flag after re-verifying it.',
+    MemoryRevalidateSchema.shape,
+    instrument('memory_revalidate', async (input) => {
+      const parsed = MemoryRevalidateSchema.parse(input);
+      return handleRevalidate(getDb(), withForcedNs(parsed));
+    }),
+  );
+
+  // ── 43. memory_session_state (M5.1) ───────────────────────────────────────
+  reg(
+    'memory_session_state',
+    'Save or resume a resumable session-state ("where was I"): structured summary/next_steps/open_questions/files_touched/branch keyed by session_key. save upserts (versioned, so you can diff sessions via memory_version_diff); resume returns the latest. Bypasses the dedup write-gate so an incremental save always persists.',
+    MemorySessionStateSchema.shape,
+    instrument('memory_session_state', async (input) => {
+      const parsed = MemorySessionStateSchema.parse(input);
+      return handleSessionState(getDb(), await getEmbedder(), withForcedNs(parsed));
+    }),
+  );
+
+  // ── 44. memory_expertise (M5.2) ───────────────────────────────────────────
+  reg(
+    'memory_expertise',
+    "Adaptive per-user expertise profile. action=observe records demonstrated knowledge of a topic (level rises on a saturating curve, never collapses other topics); action=get returns the profile. The agent supplies the classified topic — the server just tracks evidence over time.",
+    MemoryExpertiseSchema.shape,
+    instrument('memory_expertise', async (input) => {
+      const parsed = MemoryExpertiseSchema.parse(input);
+      return handleExpertise(getDb(), await getEmbedder(), withForcedNs(parsed));
     }),
   );
 

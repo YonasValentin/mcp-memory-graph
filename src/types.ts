@@ -92,6 +92,20 @@ export interface MemoryRow {
   provenance?: string;
   /** Which agent wrote this memory (multi-agent attribution), distinct from `author`. */
   agent_id?: string | null;
+  /** M2 signed-provenance envelope (NULL = unsigned — today's default). */
+  content_hash?: string | null;
+  signature?: string | null;
+  pubkey?: string | null;
+  signed_at?: string | null;
+  /**
+   * M3.3 change-propagation. 'stale' when a source/dependency this memory was
+   * derived from has been retired or edited and the memory has not been
+   * re-confirmed. NULL = never flagged (today's behaviour).
+   */
+  revalidation_status?: string | null;
+  /** M6.4 which embedder produced this row's vector (NULL = deployment default). */
+  embedding_model?: string | null;
+  embedding_dim?: number | null;
   rowid?: number;
 }
 

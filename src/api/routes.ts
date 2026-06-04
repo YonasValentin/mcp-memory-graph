@@ -12,6 +12,9 @@ import { handleRelated } from '../tools/related.js';
 import { handleVersions } from '../tools/versions.js';
 import { handleStats } from '../tools/stats.js';
 import { handleManifest } from '../tools/manifest.js';
+import { handleInsights } from '../tools/insights.js';
+import { handleHealth } from '../tools/health.js';
+import { handleWebhook } from '../tools/webhooks.js';
 import { getLinksAmong } from '../graph/memory-links.js';
 import {
   getPublishedPages,
@@ -437,5 +440,60 @@ export function registerPublishRoutes(
     }
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(renderPageHtml(namespace, page));
+  }));
+
+  // ── M3.2 GET /api/insights ──────────────────────────────────────────────
+  router.get('/api/insights', asyncHandler('GET /api/insights', (req, res) => {
+    const limit = req.query.limit !== undefined ? Number(req.query.limit) : undefined;
+    res.json(
+      handleInsights(getDb(), {
+        scope: typeof req.query.scope === 'string' ? req.query.scope : undefined,
+        namespace: forcedApiNamespace() ?? (typeof req.query.namespace === 'string' ? req.query.namespace : undefined),
+        limit: Number.isFinite(limit) ? limit : undefined,
+      }),
+    );
+  }));
+
+  // ── M3.2 GET /api/health ────────────────────────────────────────────────
+  router.get('/api/health', asyncHandler('GET /api/health', (req, res) => {
+    res.json(
+      handleHealth(getDb(), {
+        scope: typeof req.query.scope === 'string' ? req.query.scope : undefined,
+        namespace: forcedApiNamespace() ?? (typeof req.query.namespace === 'string' ? req.query.namespace : undefined),
+      }),
+    );
+  }));
+
+  // ── M3.1 webhook bus management (gated on MCP_WEBHOOKS inside the handler) ──
+  // These sit behind the same bearer middleware as the rest of /api. The handler
+  // SSRF-validates any URL before persisting and never returns secrets.
+  router.get('/api/webhooks', asyncHandler('GET /api/webhooks', async (_req, res) => {
+    res.json(await handleWebhook(getDb(), { action: 'list' }));
+  }));
+
+  router.post('/api/webhooks', asyncHandler('POST /api/webhooks', async (req, res) => {
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    try {
+      res.json(
+        await handleWebhook(getDb(), {
+          action: 'register',
+          url: typeof b.url === 'string' ? b.url : undefined,
+          secret: typeof b.secret === 'string' ? b.secret : undefined,
+          events: typeof b.events === 'string' ? b.events : undefined,
+          scope: typeof b.scope === 'string' ? b.scope : undefined,
+          namespace: typeof b.namespace === 'string' ? b.namespace : undefined,
+        }),
+      );
+    } catch (err) {
+      throw new HttpError(400, 'INVALID_INPUT', err instanceof Error ? err.message : 'Invalid webhook target');
+    }
+  }));
+
+  router.delete('/api/webhooks/:id', asyncHandler('DELETE /api/webhooks/:id', async (req, res) => {
+    res.json(await handleWebhook(getDb(), { action: 'delete', id: param(req, 'id') }));
+  }));
+
+  router.post('/api/webhooks/dispatch', asyncHandler('POST /api/webhooks/dispatch', async (_req, res) => {
+    res.json(await handleWebhook(getDb(), { action: 'dispatch' }));
   }));
 }

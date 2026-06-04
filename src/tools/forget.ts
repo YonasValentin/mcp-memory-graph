@@ -7,6 +7,7 @@ import {
   rowToMemory,
 } from '../db/repository.js';
 import { mirrorMemoryWrite, mirrorMemoryRemove } from '../vault/write-through.js';
+import { notify, rowToEventPayload, propagateSafe } from '../events/hooks.js';
 
 export interface ForgetResult {
   forgotten: boolean;
@@ -100,6 +101,10 @@ export function handleForget(
     // Write-through: mirrorMemoryWrite sees the now-stamped valid_to and moves
     // the file to .memory/deleted/ so the tombstone travels through git.
     mirrorMemoryWrite(db, input.id);
+    // M3: the fact is retired → flag dependents stale + announce. Edges still
+    // present (soft retire doesn't cascade), so propagate after invalidate.
+    propagateSafe(db, input.id);
+    notify(db, 'memory.forgotten', rowToEventPayload(row));
     return { forgotten: true, mode: 'soft', recoverable: true };
   }
 
@@ -112,6 +117,10 @@ export function handleForget(
     )
     .all(input.id);
 
+  // M3 change-propagation: flag dependents stale BEFORE erase — the FK cascade
+  // drops the dependency edges, so they must be read while they still exist.
+  propagateSafe(db, input.id);
+
   const erase = db.transaction(() => {
     eraseDescendantIndexes(db, input.id);
     deleteMemory(db, input.id);
@@ -122,6 +131,7 @@ export function handleForget(
   // write-upgrade.
   erase.immediate();
   mirrorMemoryRemove(exported);
+  notify(db, 'memory.deleted', rowToEventPayload(row));
 
   return { forgotten: true, mode: 'hard', recoverable: false, export: exported, versions };
 }

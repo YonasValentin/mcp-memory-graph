@@ -3,6 +3,8 @@ import type { EmbeddingProvider, Memory, MemoryRow, MemoryUpdate } from '../type
 import { getMemoryById, updateMemory, rowToMemory } from '../db/repository.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
 import { mirrorMemoryWrite } from '../vault/write-through.js';
+import { notify, rowToEventPayload, propagateSafe } from '../events/hooks.js';
+import { clearRevalidation } from '../graph/propagate.js';
 
 export async function handleUpdate(
   db: Database.Database,
@@ -66,6 +68,16 @@ export async function handleUpdate(
 
   // Write-through: refresh the vault .md file (no-op unless a vault is configured).
   mirrorMemoryWrite(db, input.id);
+
+  // M3 active infra. An edit is the memory's OWN revalidation → clear its stale
+  // flag. If the CONTENT changed, anything derived from it may no longer hold →
+  // flag those dependents stale. Then announce the update. Fail-soft + gated.
+  const contentChanged = updates.content !== undefined && updates.content !== existing.content;
+  if (contentChanged) {
+    clearRevalidation(db, input.id);
+    propagateSafe(db, input.id);
+  }
+  notify(db, 'memory.updated', rowToEventPayload(updatedRow));
 
   return rowToMemory(updatedRow);
 }

@@ -277,43 +277,63 @@ export interface DeleteFilter {
   expired_only?: boolean;
 }
 
+/**
+ * Build the shared WHERE clause for a DeleteFilter, or null when the filter is
+ * empty (no conditions → a guard against an accidental delete-everything). Used
+ * by both {@link deleteMemoriesByFilter} and {@link listMemoriesByFilter} so the
+ * "what would this delete" preview and the delete itself never diverge.
+ */
+function filterToWhere(filter: DeleteFilter): { whereClause: string; params: unknown[] } | null {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+
+  if (filter.scope !== undefined) {
+    conditions.push('scope = ?');
+    params.push(filter.scope);
+  }
+  if (filter.namespace !== undefined) {
+    conditions.push('namespace = ?');
+    params.push(filter.namespace);
+  }
+  if (filter.department !== undefined) {
+    conditions.push('department = ?');
+    params.push(filter.department);
+  }
+  if (filter.document_type !== undefined) {
+    conditions.push('document_type = ?');
+    params.push(filter.document_type);
+  }
+  if (filter.before_date !== undefined) {
+    conditions.push('created_at < ?');
+    params.push(filter.before_date);
+  }
+  if (filter.expired_only) {
+    conditions.push(`expires_at IS NOT NULL AND expires_at < ${NOW_ISO_SQL}`);
+  }
+
+  if (conditions.length === 0) return null;
+  return { whereClause: conditions.join(' AND '), params };
+}
+
+/** The memories a DeleteFilter would match (for pre-delete propagation/events). */
+export function listMemoriesByFilter(db: Database.Database, filter: DeleteFilter): MemoryRow[] {
+  const where = filterToWhere(filter);
+  if (!where) return [];
+  return db
+    .prepare<unknown[], MemoryRow>(`SELECT * FROM memories WHERE ${where.whereClause}`)
+    .all(...where.params);
+}
+
 export function deleteMemoriesByFilter(
   db: Database.Database,
   filter: DeleteFilter,
 ): number {
   const remove = db.transaction(() => {
-    const conditions: string[] = [];
-    const params: unknown[] = [];
-
-    if (filter.scope !== undefined) {
-      conditions.push('scope = ?');
-      params.push(filter.scope);
-    }
-    if (filter.namespace !== undefined) {
-      conditions.push('namespace = ?');
-      params.push(filter.namespace);
-    }
-    if (filter.department !== undefined) {
-      conditions.push('department = ?');
-      params.push(filter.department);
-    }
-    if (filter.document_type !== undefined) {
-      conditions.push('document_type = ?');
-      params.push(filter.document_type);
-    }
-    if (filter.before_date !== undefined) {
-      conditions.push('created_at < ?');
-      params.push(filter.before_date);
-    }
-    if (filter.expired_only) {
-      conditions.push(`expires_at IS NOT NULL AND expires_at < ${NOW_ISO_SQL}`);
-    }
-
-    if (conditions.length === 0) {
+    const where = filterToWhere(filter);
+    if (!where) {
       return 0;
     }
-
-    const whereClause = conditions.join(' AND ');
+    const { whereClause, params } = where;
 
     const rows = db
       .prepare<unknown[], MemoryRow & { rowid: number }>(

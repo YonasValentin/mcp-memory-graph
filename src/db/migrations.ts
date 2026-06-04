@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { CURRENT_SCHEMA_VERSION, MEMORY_LINKS_DDL, CORE_MEMORY_DDL } from './schema.js';
+import { CURRENT_SCHEMA_VERSION, MEMORY_LINKS_DDL, CORE_MEMORY_DDL, WEBHOOKS_DDL } from './schema.js';
 
 interface Migration {
   version: number;
@@ -267,6 +267,29 @@ const migrations: Migration[] = [
       if (vaultExists) {
         addColumn(db, 'ALTER TABLE vault_sync_meta ADD COLUMN content_hash TEXT');
       }
+    },
+  },
+  {
+    version: 11,
+    up: (db) => {
+      // M3 (active infrastructure) + M6.4 (pluggable embeddings) foundation.
+      //
+      // M3.1 event bus — crash-durable webhook target + delivery queue (empty
+      // unless MCP_WEBHOOKS=1). Shared DDL with initializeSchema.
+      db.exec(WEBHOOKS_DDL);
+
+      // M3.3 change-propagation — a memory whose source/dependency was retired or
+      // edited is flagged 'stale' so search can downrank it and an agent can
+      // re-confirm it. NULL = never flagged (today's behaviour); all existing
+      // rows backfill to NULL automatically (additive, backward-compatible).
+      addColumn(db, 'ALTER TABLE memories ADD COLUMN revalidation_status TEXT');
+
+      // M6.4 pluggable embeddings — record WHICH model + dimension produced each
+      // row's vector so a multi-model deployment can target re-embeds. Nullable:
+      // a NULL embedding_model means "the deployment default" (today's single
+      // fixed model), so existing rows are unaffected.
+      addColumn(db, 'ALTER TABLE memories ADD COLUMN embedding_model TEXT');
+      addColumn(db, 'ALTER TABLE memories ADD COLUMN embedding_dim INTEGER');
     },
   },
 ];

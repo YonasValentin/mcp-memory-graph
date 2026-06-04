@@ -13,6 +13,8 @@ import { redactRecord, redactModeFromEnv } from '../lib/redact-content.js';
 import { decideWriteOperation, type WriteOp } from '../graph/write-gate.js';
 import { logger } from '../lib/logger.js';
 import { mirrorMemoryWrite } from '../vault/write-through.js';
+import { notify, rowToEventPayload, propagateSafe } from '../events/hooks.js';
+import { clearRevalidation } from '../graph/propagate.js';
 
 /**
  * Containment-aware merge for the UPDATE path. Mirrors consolidate's mergeContent
@@ -226,6 +228,12 @@ export async function handleStore(
         mergedEmbedding,
       );
       if (updatedRow) {
+        // M3: this path edits content via updateMemory just like handleUpdate —
+        // mirror its active-infra side effects (clear own stale flag, propagate
+        // to dependents, announce the update). Fail-soft + gated.
+        clearRevalidation(db, existing.id);
+        propagateSafe(db, existing.id);
+        notify(db, 'memory.updated', rowToEventPayload(updatedRow));
         return {
           stored: true,
           memory: rowToMemory(updatedRow),
@@ -340,6 +348,16 @@ export async function handleStore(
   // Write-through: mirror the new top-level memory to its vault .md file (no-op
   // unless a vault is configured). After the insert so the row is committed.
   mirrorMemoryWrite(db, row.id);
+
+  // M3 active infra: announce the new memory and, for any fact this store
+  // retired (NLI contradiction / supersede / delete-intent), announce the
+  // retirement and flag anything derived from it stale. Fail-soft + gated.
+  notify(db, 'memory.created', rowToEventPayload(row));
+  for (const retiredId of new Set([...nliInvalidated, ...(deleteTargetId ? [deleteTargetId] : [])])) {
+    const retired = getMemoryById(db, retiredId);
+    if (retired) notify(db, 'memory.superseded', rowToEventPayload(retired));
+    propagateSafe(db, retiredId);
+  }
 
   // Surface a supersede that found nothing to retire. A natural-language
   // reversal often uses new vocabulary, so neither the heuristic nor NLI matches

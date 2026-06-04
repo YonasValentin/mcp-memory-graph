@@ -1228,6 +1228,97 @@ export const MemoryHistorySchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// M3.1 MemoryWebhookSchema — active-infrastructure event bus management
+// ---------------------------------------------------------------------------
+
+export const MemoryWebhookSchema = z.object({
+  action: z
+    .enum(['register', 'list', 'delete', 'dispatch'])
+    .default('list')
+    .describe('register a target | list targets | delete a target | dispatch the queue now'),
+  url: z
+    .string()
+    .optional()
+    .describe('Target URL (action=register). Validated against the SSRF guard: public http(s) only.'),
+  secret: z
+    .string()
+    .optional()
+    .describe('Optional HMAC-SHA256 signing secret; sent as X-Memory-Signature on each delivery.'),
+  events: z
+    .string()
+    .optional()
+    .describe("Comma-separated event types or '*' (default all): memory.created/updated/superseded/deleted/forgotten."),
+  scope: z.string().optional().describe('Only deliver events for memories in this scope.'),
+  namespace: z.string().optional().describe('Only deliver events for memories in this namespace.'),
+  id: z.string().optional().describe('Target id (action=delete).'),
+});
+
+// ---------------------------------------------------------------------------
+// M3.2 MemoryInsightsSchema / MemoryHealthSchema — active advisor surfaces
+// ---------------------------------------------------------------------------
+
+export const MemoryInsightsSchema = z.object({
+  scope: scopeField(false),
+  namespace: namespaceField(),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(20)
+    .describe('Maximum number of insights to return (default 20)'),
+});
+
+export const MemoryHealthSchema = z.object({
+  scope: scopeField(false),
+  namespace: namespaceField(),
+});
+
+// ---------------------------------------------------------------------------
+// M3.3 MemoryRevalidateSchema — change-propagation list/preview/confirm
+// ---------------------------------------------------------------------------
+
+export const MemoryRevalidateSchema = z.object({
+  action: z
+    .enum(['list', 'preview', 'confirm'])
+    .default('list')
+    .describe('list stale memories | preview the blast radius of a change to `id` (dry-run) | confirm `id` is current'),
+  id: z.string().optional().describe('Memory id (required for preview/confirm).'),
+  scope: scopeField(false),
+  namespace: namespaceField(),
+  limit: z.number().int().min(1).max(500).default(100).describe('Max stale memories to list.'),
+});
+
+// ---------------------------------------------------------------------------
+// M5.1 MemorySessionStateSchema — resumable session-state save/resume
+// ---------------------------------------------------------------------------
+
+export const MemorySessionStateSchema = z.object({
+  action: z.enum(['save', 'resume']).default('resume').describe('save the current session state | resume the latest'),
+  session_key: z.string().optional().describe('Stable key for the work thread (defaults to branch, else "default").'),
+  scope: scopeField(false),
+  namespace: namespaceField(),
+  summary: z.string().optional().describe('Where things stand right now.'),
+  next_steps: z.array(z.string()).optional().describe('Ordered list of what to do next.'),
+  open_questions: z.array(z.string()).optional().describe('Unresolved questions.'),
+  files_touched: z.array(z.string()).optional().describe('Files in flight.'),
+  branch: z.string().optional().describe('Git branch this session is on.'),
+  extra: z.record(z.unknown()).optional().describe('Any additional caller-defined state fields.'),
+});
+
+// ---------------------------------------------------------------------------
+// M5.2 MemoryExpertiseSchema — adaptive per-user expertise profile
+// ---------------------------------------------------------------------------
+
+export const MemoryExpertiseSchema = z.object({
+  action: z.enum(['observe', 'get']).default('get').describe('observe demonstrated knowledge of a topic | get the profile'),
+  topic: z.string().optional().describe('The topic (required for observe; optional filter for get).'),
+  scope: z.string().optional().describe("Scope (default 'user')."),
+  namespace: namespaceField(),
+  weight: z.number().int().min(1).max(100).optional().describe('Evidence increment for observe (default 1).'),
+});
+
+// ---------------------------------------------------------------------------
 // REST API query/body schemas — derived from the MCP schemas above.
 // Express query strings arrive as `string | string[] | undefined`, so each
 // field uses zod preprocess to coerce numbers/arrays out of strings before

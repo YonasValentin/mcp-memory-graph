@@ -4,7 +4,7 @@ import type Database from 'better-sqlite3';
  * The current schema version baked into this codebase. Updated together with
  * a new entry in `runMigrations`.
  */
-export const CURRENT_SCHEMA_VERSION = 10;
+export const CURRENT_SCHEMA_VERSION = 11;
 
 /**
  * Persistent memory-to-memory edge store (Pillar 1). Edges carry a confidence
@@ -56,6 +56,49 @@ export const CORE_MEMORY_DDL = `
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (scope, namespace)
   );
+`;
+
+/**
+ * Active-infrastructure event bus (M3.1). `webhook_targets` are the registered
+ * outbound sinks; `webhook_deliveries` is a crash-durable, bounded delivery
+ * queue (one row per (event, target)) so a mutation that fires while the sink is
+ * down is retried later instead of lost. Persisting the queue — rather than an
+ * in-process buffer — is what makes the bus survive a restart on a single-file
+ * local server. `secret` signs the HMAC-SHA256 body; `failure_count` +
+ * `circuit_open_until` implement a per-target circuit breaker so one dead sink
+ * never blocks the dispatcher. Shared verbatim by {@link initializeSchema}
+ * (fresh DBs) and migration v11 (existing DBs) so the two paths never diverge.
+ * The bus is OFF unless `MCP_WEBHOOKS=1` — these tables stay empty otherwise.
+ */
+export const WEBHOOKS_DDL = `
+  CREATE TABLE IF NOT EXISTS webhook_targets (
+    id TEXT PRIMARY KEY NOT NULL,
+    url TEXT NOT NULL,
+    secret TEXT,
+    events TEXT NOT NULL DEFAULT '*',
+    scope TEXT,
+    namespace TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    failure_count INTEGER NOT NULL DEFAULT 0,
+    circuit_open_until TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_delivery_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    id TEXT PRIMARY KEY NOT NULL,
+    target_id TEXT NOT NULL REFERENCES webhook_targets(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_error TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    delivered_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_target ON webhook_deliveries(target_id);
+  CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_ready ON webhook_deliveries(status, next_attempt_at);
 `;
 
 /**
@@ -201,7 +244,10 @@ export function initializeSchema(db: Database.Database): void {
       content_hash TEXT,
       signature TEXT,
       pubkey TEXT,
-      signed_at TEXT
+      signed_at TEXT,
+      revalidation_status TEXT,
+      embedding_model TEXT,
+      embedding_dim INTEGER
     );
 
     CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
@@ -367,6 +413,9 @@ export function initializeSchema(db: Database.Database): void {
 
   // Pinned "core memory" block per (scope, namespace) (Pillar 5).
   db.exec(CORE_MEMORY_DDL);
+
+  // Active-infrastructure event bus (M3.1) — empty unless MCP_WEBHOOKS=1.
+  db.exec(WEBHOOKS_DDL);
 
   // Stamp the schema version + embedding dimension for future opens.
   const haveVersion = !!db

@@ -42,12 +42,14 @@ try {
   ok('server advertises instructions', instructions.length > 0 && /memory_search|memory_store/.test(instructions), instructions.slice(0, 60));
 
   const tools = await client.listTools();
-  ok('lists >= 42 tools', tools.tools.length >= 42, `got ${tools.tools.length}`);
-  // Every tool must advertise annotations (closed-world local store). Sample
-  // the read/destructive classification so a mis-tagged tool trips the gate.
+  ok('lists >= 48 tools', tools.tools.length >= 48, `got ${tools.tools.length}`);
+  // Every tool must advertise annotations. The store is a closed-world local
+  // store (openWorldHint:false) EXCEPT the M3 webhook bus, the one tool that
+  // makes outbound HTTP — it is honestly tagged openWorldHint:true.
+  const OPEN_WORLD = new Set(['memory_webhook']);
   const byName = Object.fromEntries(tools.tools.map((t) => [t.name, t.annotations]));
-  ok('every tool advertises annotations', tools.tools.every((t) => t.annotations && t.annotations.openWorldHint === false && typeof t.annotations.title === 'string'),
-    `missing on: ${tools.tools.filter((t) => !t.annotations || t.annotations.openWorldHint !== false).map((t) => t.name).join(',') || 'none'}`);
+  ok('every tool advertises annotations', tools.tools.every((t) => t.annotations && typeof t.annotations.title === 'string' && t.annotations.openWorldHint === OPEN_WORLD.has(t.name)),
+    `bad on: ${tools.tools.filter((t) => !t.annotations || typeof t.annotations.title !== 'string' || t.annotations.openWorldHint !== OPEN_WORLD.has(t.name)).map((t) => t.name).join(',') || 'none'}`);
   ok('read tools flagged readOnlyHint', byName['memory_search']?.readOnlyHint === true && byName['memory_get']?.readOnlyHint === true && byName['memory_stats']?.readOnlyHint === true);
   ok('destructive tools flagged destructiveHint', byName['memory_forget']?.destructiveHint === true && byName['memory_delete']?.destructiveHint === true && byName['memory_import']?.destructiveHint === true && byName['memory_version_restore']?.destructiveHint === true);
   ok('writes not mislabeled read-only', !byName['memory_store']?.readOnlyHint && !byName['memory_update']?.readOnlyHint);
