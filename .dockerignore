@@ -1,8 +1,21 @@
+# Dependency trees are reinstalled in the image via `npm ci` — never ship them
+# from the host (wrong-arch risk, bloats the build context, and `COPY web/ ./web/`
+# would otherwise clobber the freshly-installed web/node_modules). The `**/` form
+# also covers web/node_modules, not just the top-level tree.
 node_modules
+**/node_modules
 dist
+**/dist
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
 .git
 .DS_Store
+
+# Battle-test runtime artifacts (throwaway DBs, vault scratch, screenshots),
+# agent worktrees, and coverage output — never part of an image.
+.battle/artifacts
+scripts/battle/web-shots
+.claude/worktrees
+coverage
