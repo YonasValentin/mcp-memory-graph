@@ -161,6 +161,24 @@ async function main(): Promise<void> {
       // Table may not exist yet
     }
 
+    // M5.3 — auto-load pinned core memory (MemGPT working RAM). Previously the
+    // core_memory block was never surfaced at session start. Load the blocks for
+    // the REAL resolved namespace (project pin) AND the global pin (namespace '')
+    // — NOT a hardcoded scope — and emit them VERBATIM (newlines preserved) as
+    // their own block, so the agent reads its standing instructions each session.
+    let coreBlocks: Array<{ scope: string; namespace: string; content: string }> = [];
+    try {
+      coreBlocks = db
+        .prepare(
+          `SELECT scope, namespace, content FROM core_memory
+            WHERE TRIM(content) != '' AND (namespace = ? OR namespace = '')
+            ORDER BY (namespace = ?) DESC`,
+        )
+        .all(namespace, namespace) as Array<{ scope: string; namespace: string; content: string }>;
+    } catch {
+      // core_memory table predates v8 / not present — skip.
+    }
+
     // Output context for Claude
     const parts: string[] = [`Memory server: ${totalCount} memories`];
     if (branchContext) parts.push(branchContext);
@@ -170,8 +188,14 @@ async function main(): Promise<void> {
     if (expiredCount > 0) parts.push(`${expiredCount} expired`);
     if (staleFiles > 0) parts.push(`${staleFiles} watched files need re-ingestion`);
 
-    // Write to stdout (becomes Claude context)
-    process.stdout.write(parts.join('. ') + '.\n');
+    // Write to stdout (becomes Claude context). The summary is a single line;
+    // each pinned core-memory block follows on its own lines, newlines intact.
+    let out = parts.join('. ') + '.\n';
+    for (const block of coreBlocks) {
+      const label = block.namespace ? `core memory (${block.scope}/${block.namespace})` : `core memory (${block.scope})`;
+      out += `\n--- ${label} ---\n${block.content}\n`;
+    }
+    process.stdout.write(out);
   } finally {
     db.close();
   }
