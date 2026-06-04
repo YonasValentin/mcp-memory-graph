@@ -123,13 +123,14 @@ Every memory supports rich metadata for cross-department use:
 
 The memory server includes a browser-based dashboard for viewing and managing memories outside of Claude. It runs on the same Express server as the MCP HTTP transport — no separate process needed.
 
-**5 pages:**
+**6 pages:**
 
 - **Dashboard** — memory counts, content size, breakdowns by scope/department/type, and the 10 most recently updated memories
 - **Search** — hybrid vector+keyword search with confidence and match-type badges. Fuse.js provides instant fuzzy suggestions as you type (indexes titles and tags client-side)
 - **Browse** — sortable, paginated table of all memories with scope filtering and quality score indicators
 - **Memory detail** — full content view, metadata panel, version history, related memories (vector similarity), and inline edit/delete
 - **Knowledge graph** — D3 force-directed visualization of memory relationships. Nodes are sized by importance and colored by scope. Zoom, pan, drag, hover tooltips, double-click to navigate
+- **Tools** — a console for the full tool surface: lists every tool the server advertises (grouped read/write/destructive/integration), renders a form per tool from its schema, and runs it over the authenticated MCP endpoint (destructive tools confirm first)
 
 **Tech stack:** React 19, Vite, Tailwind CSS v4, shadcn/ui (21 components), Fuse.js, D3, Recharts
 
@@ -286,6 +287,85 @@ What memory tools do you have available?
 ```
 
 Claude should list all 49 tools (43 `memory_*` + 3 `vault_*` + 3 `core_memory_*`).
+
+---
+
+## Self-hosting & sharing a memory base
+
+The server runs three ways, from a single-user cache to a knowledge base shared
+across many machines. All three are **local-first** — nothing leaves the
+machine(s) you choose to run it on, and there's no cloud account or per-token cost.
+
+### 1. Local (single user) — the default
+
+`npx mcp-memory-local init` (above) registers a local stdio server plus
+capture/recall hooks. Memory lives in one SQLite file on your machine; nothing
+else to run. This is the right choice for solo use.
+
+### 2. Shared server (multiple machines / a group)
+
+Run **one** server that many clients connect to over HTTP — everyone shares the
+same memory base, live.
+
+**Start the server** (pick one):
+
+```bash
+# From source — build the server (and the dashboard, if you want it) first
+npm run build:all
+MCP_AUTH_TOKEN=$(openssl rand -hex 32) MCP_BIND=0.0.0.0 npm run serve
+# → MCP at /mcp, REST at /api, dashboard at / — on :3100
+
+# Or with Docker (frontend included; publishes host port 3200 by default)
+MCP_AUTH_TOKEN=$(openssl rand -hex 32) docker compose up -d
+```
+
+Set `MCP_AUTH_TOKEN` whenever the server is reachable beyond loopback — it's a
+shared bearer token (one secret for all clients). The server **refuses to start
+unauthenticated on a non-loopback bind** unless you set `MCP_AUTH_OPTIONAL=1`.
+Terminate TLS at a reverse proxy / tunnel for anything off-host.
+
+**Connect a client** — one command per machine:
+
+```bash
+npx mcp-memory-local init --remote https://memory.example.com --token-env MEMORY_MCP_TOKEN
+export MEMORY_MCP_TOKEN=<the server token>     # in your shell or .env
+```
+
+This writes a project `.mcp.json` pointing at the shared server over HTTP. The
+token is stored as an **env-var reference** (`"Authorization": "Bearer ${MEMORY_MCP_TOKEN}"`),
+so the committed `.mcp.json` never contains the secret — each user supplies the
+token from their own environment.
+
+| Flag | Effect |
+|------|--------|
+| `--token-env <NAME>` | Reference this env var for the token (default `MEMORY_MCP_TOKEN`) |
+| `--token <value>` | Inline a literal token instead (avoid committing it) |
+| `--no-auth` | Omit the auth header (loopback / trusted network only) |
+
+> In remote mode the local capture/recall hooks are **not** installed — memory
+> lives on the server, not in a local file the hooks would read. The agent uses
+> `memory_search` / `memory_store` directly (CLAUDE.md guidance is still written).
+
+### 3. Git vault (async, version-controlled sharing)
+
+Prefer your knowledge base in git — reviewed via pull requests, no server to run?
+Export memories to plain Markdown and share the folder as a git repo:
+
+```bash
+npx mcp-memory-local vault-init                    # make the vault a git repo (union merge driver + rebuild hook)
+git add -A && git commit -m "memory snapshot" && git push
+# collaborators: git pull && npx mcp-memory-local rebuild
+```
+
+See **Team & solo sharing (Bruno-style git)** above for the model and trade-offs.
+
+### Security notes
+
+- `MCP_AUTH_TOKEN` is a single **shared** secret, not per-user accounts — fine for
+  a trusted group; rotate it by restarting the server with a new value.
+- **Never commit a token.** The `--remote` default keeps it in an env var by design.
+- Bind to `127.0.0.1` (the default) unless you front the server with a proxy/WAF
+  that terminates TLS, then set `MCP_BIND=0.0.0.0`.
 
 ---
 
