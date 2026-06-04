@@ -2,9 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
 import type { Memory, MemoryRow } from '../types.js';
-import { getConfig } from '../config/loader.js';
+import { getConfig, getVaultEgress } from '../config/loader.js';
 import { rowToMemory } from '../db/repository.js';
-import { memoryToMarkdown, safeVaultFilename, safeSubdir, confineToVault } from './writer.js';
+import { memoryToMarkdown, safeVaultFilename, safeSubdir, confineToVault, isEgressBlocked } from './writer.js';
 import { logger } from '../lib/logger.js';
 
 /**
@@ -97,6 +97,16 @@ export function mirrorMemoryWrite(db: Database.Database, memoryId: string): void
     if (!row || row.parent_id !== null) return;
     const memory = rowToMemory(row);
     const validTo = row.valid_to ?? null;
+
+    // M2.5: egress filter. A memory above the configured sensitivity cap (or
+    // matching a deny_glob) must NEVER be mirrored into the git-shared vault —
+    // not as a live file, not as a tombstone (both carry the content/title).
+    // Purge any stale copies so a memory that BECOMES restricted is removed.
+    if (isEgressBlocked(memory, livePath(memory), getVaultEgress())) {
+      removeConfined(vaultRoot, livePath(memory));
+      removeConfined(vaultRoot, deletedPath(memory));
+      return;
+    }
 
     if (validTo !== null) {
       writeConfined(

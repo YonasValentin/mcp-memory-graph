@@ -9,7 +9,7 @@ import { detectConflicts, recordConflicts, type ConflictResult } from '../graph/
 import { detectContradictions, type NliClassifier } from '../graph/contradiction.js';
 import { buildSimilarityEdges } from '../graph/similarity-edges.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
-import { redactContent, redactModeFromEnv } from '../lib/redact-content.js';
+import { redactRecord, redactModeFromEnv } from '../lib/redact-content.js';
 import { decideWriteOperation, type WriteOp } from '../graph/write-gate.js';
 import { logger } from '../lib/logger.js';
 import { mirrorMemoryWrite } from '../vault/write-through.js';
@@ -57,10 +57,12 @@ export async function handleStore(
   // every downstream use (embed, conflict scan, NLI, row, entity extraction)
   // operates on the scrubbed text.
   {
-    const { content: safe, redactions, kinds } = redactContent(input.content, redactModeFromEnv());
-    if (redactions > 0) {
-      input.content = safe;
-      input.metadata = { ...(input.metadata ?? {}), redactions, redaction_kinds: kinds };
+    const r = redactRecord({ content: input.content, title: input.title, tags: input.tags }, redactModeFromEnv());
+    if (r.redactions > 0) {
+      input.content = r.content;
+      input.title = r.title ?? input.title;
+      input.tags = r.tags ?? input.tags;
+      input.metadata = { ...(input.metadata ?? {}), redactions: r.redactions, redaction_kinds: r.kinds };
     }
   }
 

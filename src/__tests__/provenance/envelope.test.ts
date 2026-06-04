@@ -105,7 +105,7 @@ describe('signEnvelope / verifyEnvelope', () => {
     expect(env.pubkey).toContain('BEGIN PUBLIC KEY');
     expect(env.signature.length).toBeGreaterThan(0);
 
-    const row = { content_hash: env.content_hash, signature: env.signature, pubkey: env.pubkey, ...META };
+    const row = { content_hash: env.content_hash, signature: env.signature, pubkey: env.pubkey, ...META, signed_at: env.signed_at };
     const res = verifyEnvelope(content, row);
     expect(res).toEqual({ ok: true });
   });
@@ -121,7 +121,7 @@ describe('signEnvelope / verifyEnvelope', () => {
   it('content edited after signing → content_mismatch', () => {
     const content = 'original content';
     const env = signEnvelope(content, META, SIGNED_AT);
-    const row = { content_hash: env.content_hash, signature: env.signature, pubkey: env.pubkey, ...META };
+    const row = { content_hash: env.content_hash, signature: env.signature, pubkey: env.pubkey, ...META, signed_at: env.signed_at };
 
     const res = verifyEnvelope('tampered content', row);
     expect(res.ok).toBe(false);
@@ -138,7 +138,7 @@ describe('signEnvelope / verifyEnvelope', () => {
     buf[0] ^= 0xff;
     const tamperedSig = buf.toString('base64');
 
-    const row = { content_hash: env.content_hash, signature: tamperedSig, pubkey: env.pubkey, ...META };
+    const row = { content_hash: env.content_hash, signature: tamperedSig, pubkey: env.pubkey, ...META, signed_at: env.signed_at };
     const res = verifyEnvelope(content, row);
     expect(res.ok).toBe(false);
     expect(res.reason).toBe('bad_signature');
@@ -154,6 +154,7 @@ describe('signEnvelope / verifyEnvelope', () => {
       signature: env.signature,
       pubkey: env.pubkey,
       ...META,
+      signed_at: env.signed_at,
       provenance: 'reflection',
     };
     const res = verifyEnvelope(content, row);

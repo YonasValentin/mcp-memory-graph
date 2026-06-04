@@ -39,6 +39,9 @@ export interface EnvelopeMeta {
   namespace?: string | null;
   valid_from?: string | null;
   created_at?: string | null;
+  /** When the envelope was signed. Covered by the signature (else it would be a
+   *  forgeable "freshness" attribute on a signed row). */
+  signed_at?: string | null;
 }
 
 /** The full set of fields covered by the signature (content_hash + meta). */
@@ -60,7 +63,7 @@ export interface VerifiableRow extends EnvelopeMeta {
 }
 
 export type VerifyOutcome = { ok: true } | { ok: false; reason: VerifyReason };
-export type VerifyReason = 'unsigned' | 'content_mismatch' | 'bad_signature';
+export type VerifyReason = 'unsigned' | 'content_mismatch' | 'bad_signature' | 'untrusted_key';
 
 /** Resolve the directory holding the keypair (override via MCP_MEMORY_KEY_DIR). */
 function keyDir(): string {
@@ -134,7 +137,24 @@ function signedFields(content_hash: string, meta: EnvelopeMeta): SignedFields {
     namespace: meta.namespace ?? undefined,
     valid_from: meta.valid_from ?? undefined,
     created_at: meta.created_at ?? undefined,
+    signed_at: meta.signed_at ?? undefined,
   };
+}
+
+/**
+ * Compare two SPKI public keys for EQUALITY of the key material, robust to PEM
+ * whitespace/line-ending differences from a DB round-trip — by normalizing both
+ * to DER bytes. Returns false on any parse error (an unparseable key is never
+ * "trusted").
+ */
+function samePublicKey(a: string, b: string): boolean {
+  try {
+    const da = createPublicKey(a).export({ type: 'spki', format: 'der' });
+    const db = createPublicKey(b).export({ type: 'spki', format: 'der' });
+    return Buffer.isBuffer(da) && Buffer.isBuffer(db) && da.equals(db);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -149,7 +169,9 @@ export function signEnvelope(
 ): SignedEnvelope {
   const { privateKeyPem, publicKeyPem } = getSigningKey();
   const content_hash = contentHash(content);
-  const message = Buffer.from(canonicalize(signedFields(content_hash, meta)), 'utf8');
+  // signed_at is folded into the SIGNED message (not just the returned object)
+  // so it cannot be altered post-hoc on a "verified" row.
+  const message = Buffer.from(canonicalize(signedFields(content_hash, { ...meta, signed_at })), 'utf8');
   const signature = edSign(null, message, createPrivateKey(privateKeyPem)).toString('base64');
   return { content_hash, signature, pubkey: publicKeyPem, signed_at };
 }
@@ -158,11 +180,25 @@ export function signEnvelope(
  * Verify a memory against its stored envelope. Distinguishes:
  *   - 'unsigned'         — no signature/pubkey on the row
  *   - 'content_mismatch' — sha256(content) ≠ stored content_hash (content edited)
+ *   - 'untrusted_key'    — the row's pubkey is NOT this machine's signing key
+ *                          (a re-sign-with-attacker-key forge): the envelope is
+ *                          only self-consistent, not authentic
  *   - 'bad_signature'    — hash matches but the ed25519 signature does not verify
- *                          (forged signature, forged metadata, or wrong key)
- *   - { ok: true }       — hash matches and signature verifies
+ *   - { ok: true }       — hash matches, key is the trust root, signature verifies
+ *
+ * TRUST ROOT: the signature is verified against `trustedPubkeyPem` (default: this
+ * machine's signing key) and the row's embedded pubkey MUST equal it. Verifying
+ * against the row's own pubkey alone is a self-consistency check, not an
+ * authenticity check — anyone with table-write access (the export/sync/git-vault
+ * threat model M2 targets) could rewrite content + re-sign with their own key.
+ * (Multi-machine team vaults are a future extension: pass an allowlist member
+ * here once a real trust store exists; today getSigningKey() is the only key.)
  */
-export function verifyEnvelope(content: string, row: VerifiableRow): VerifyOutcome {
+export function verifyEnvelope(
+  content: string,
+  row: VerifiableRow,
+  trustedPubkeyPem?: string,
+): VerifyOutcome {
   if (!row.signature || !row.pubkey) {
     return { ok: false, reason: 'unsigned' };
   }
@@ -170,6 +206,11 @@ export function verifyEnvelope(content: string, row: VerifiableRow): VerifyOutco
   const recomputed = contentHash(content);
   if (recomputed !== row.content_hash) {
     return { ok: false, reason: 'content_mismatch' };
+  }
+
+  const trusted = trustedPubkeyPem ?? getSigningKey().publicKeyPem;
+  if (!samePublicKey(row.pubkey, trusted)) {
+    return { ok: false, reason: 'untrusted_key' };
   }
 
   const message = Buffer.from(canonicalize(signedFields(recomputed, row)), 'utf8');

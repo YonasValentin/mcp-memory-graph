@@ -5,6 +5,7 @@ import picomatch from 'picomatch';
 import { stringify as stringifyYaml } from 'yaml';
 import type { AccessLevel, Memory, MemoryRow } from '../types.js';
 import { rowToMemory } from '../db/repository.js';
+import { getVaultEgress } from '../config/loader.js';
 
 /**
  * Pillar 6 (T16): bidirectional vault write-back. The reverse of `syncVault`:
@@ -217,11 +218,12 @@ export function exportMemoriesToVault(
     // whose existing parent is a symlink escaping the vault (TOCTOU), so a
     // pre-planted `<vault>/<namespace> -> /outside` symlink is skipped, never
     // written through.
-    const absTarget = confineToVault(vaultRoot, relPath);
-    if (absTarget === null) continue;
-
-    fs.mkdirSync(path.dirname(absTarget), { recursive: true });
-    fs.writeFileSync(absTarget, memoryToMarkdown(memory), 'utf-8');
+    // M2.5: egress filter — a full re-export must NOT reintroduce a memory that
+    // exceeds the configured sensitivity cap (or matches a deny_glob). When
+    // blocked, applyEgressFilter writes nothing AND purges any stale file.
+    if (!applyEgressFilter(vaultRoot, relPath, memoryToMarkdown(memory), memory, getVaultEgress())) {
+      continue;
+    }
     files.push(relPath);
   }
 
@@ -277,9 +279,17 @@ export interface EgressPolicy {
   deny_globs?: string[];
 }
 
-/** True when `level` is STRICTLY more sensitive than `cap` (equal is allowed). */
+/**
+ * True when `level` is STRICTLY more sensitive than `cap` (equal is allowed).
+ * Fail-CLOSED on an unknown/non-canonical access_level: an unrecognized level is
+ * treated as maximally sensitive so a typo'd or future label is kept OUT of the
+ * git-shared vault rather than silently leaking (the alternative — unknown→0 via
+ * `undefined > n` being false — is fail-open).
+ */
 export function accessLevelExceedsCap(level: AccessLevel, cap: AccessLevel): boolean {
-  return ACCESS_LEVEL_RANK[level] > ACCESS_LEVEL_RANK[cap];
+  const levelRank = ACCESS_LEVEL_RANK[level] ?? Number.MAX_SAFE_INTEGER;
+  const capRank = ACCESS_LEVEL_RANK[cap] ?? 0;
+  return levelRank > capRank;
 }
 
 /**

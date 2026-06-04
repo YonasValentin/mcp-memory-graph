@@ -44,6 +44,13 @@ export function redactModeFromEnv(): RedactMode {
   return v === 'block' || v === 'scrub' || v === 'off' ? v : 'off';
 }
 
+/**
+ * Zero-width / default-ignorable code points an attacker can splice into a
+ * credential to break the contiguous match: ZWSP, ZWNJ, ZWJ, word-joiner,
+ * BOM/ZWNBSP, soft hyphen. Stripped from the SCAN copy only (see redactContent).
+ */
+const ZERO_WIDTH_RE = /[\u200B\u200C\u200D\u2060\uFEFF\u00AD]/g;
+
 export interface RedactionPattern {
   /** Stable machine kind, surfaced in placeholders and block errors. */
   kind: string;
@@ -65,56 +72,57 @@ export interface RedactResult {
  * (PEM blocks, JWTs) run before broader assignment patterns so a secret is
  * attributed to its most precise kind and consumed exactly once.
  *
- * Each regex is anchored so it cannot match ordinary words:
- *   - provider keys require their literal sigil prefix + a long opaque tail;
- *   - AWS keys require the full 20-char `AKIA…` shape;
- *   - `Bearer` requires a following long token (not the English word alone);
- *   - JWT requires three base64url segments;
- *   - PEM requires the BEGIN/END PRIVATE KEY envelope (body consumed lazily);
- *   - assignment keys require `=` plus an 8+ char non-space value.
+ * Each regex matches on its distinctive SIGIL + a long opaque tail, NOT a leading
+ * word boundary: a leading \b let a secret GLUED to a preceding word char
+ * (`MYKEYsk-live-…`) slip past undetected. Length bounds — not anchoring — give
+ * prose resistance. Every body quantifier is LENGTH-BOUNDED so no input can drive
+ * O(n²) backtracking (a lazy unbounded `[\s\S]*?` with a maybe-absent end anchor
+ * is the classic ReDoS — bounded here to a generous-but-finite window).
  */
 export const REDACTION_PATTERNS: readonly RedactionPattern[] = [
-  // PEM private-key block — consume the whole envelope incl. body. Lazy body
-  // with an explicit END anchor keeps matching linear (no nested quantifier).
+  // PEM private-key block — consume the whole envelope incl. body. The body is
+  // BOUNDED (<=8KB; a real private key is well under that) so a stream of `BEGIN`
+  // markers with no `END` cannot make the lazy body scan to EOF from each start
+  // (that was O(n²) — an event-loop DoS on one memory_store).
   {
     kind: 'private_key',
     regex:
-      /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----/g,
+      /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]{0,8192}?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----/g,
   },
   // JWT: three base64url segments. Middle/last segments are 10+ chars to avoid
   // matching ordinary dotted identifiers; header starts with the `eyJ` sigil.
   {
     kind: 'jwt',
-    regex: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
+    regex: /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
   },
   // OpenAI / Anthropic keys: `sk-` (optionally `sk-ant-…`) + long opaque tail.
   {
     kind: 'openai_key',
-    regex: /\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}\b/g,
+    regex: /sk-(?:ant-)?[A-Za-z0-9_-]{20,}/g,
   },
   // GitHub tokens: ghp_/gho_/ghu_/ghs_/ghr_ + 30+ base62 chars.
   {
     kind: 'github_token',
-    regex: /\bgh[pousr]_[A-Za-z0-9]{30,}\b/g,
+    regex: /gh[pousr]_[A-Za-z0-9]{30,}/g,
   },
   // AWS access key id: exactly AKIA + 16 uppercase/digit chars.
   {
     kind: 'aws_access_key',
-    regex: /\bAKIA[0-9A-Z]{16}\b/g,
+    regex: /AKIA[0-9A-Z]{16}/g,
   },
   // Bearer token: the literal scheme + a long opaque token (not the English
   // word "bearer" on its own). Case-sensitive on the scheme to match real
   // Authorization headers and avoid prose like "the bearer of news".
   {
     kind: 'bearer_token',
-    regex: /\bBearer\s+[A-Za-z0-9._-]{20,}/g,
+    regex: /Bearer\s+[A-Za-z0-9._-]{20,}/g,
   },
   // Secret assignments: password / api_key / *_secret followed by `=` and an
   // 8+ char value with no whitespace. Anchored on the key so "the password is"
   // (no `=`) and short throwaway values are not flagged.
   {
     kind: 'secret_assignment',
-    regex: /\b(?:password|api_?key|[a-z0-9]*_secret)\s*=\s*["']?[^\s"']{8,}["']?/gi,
+    regex: /(?:password|api_?key|[a-z0-9]*_secret)\s*=\s*["']?[^\s"']{8,}["']?/gi,
   },
 ];
 
@@ -133,6 +141,13 @@ export function redactContent(text: string, mode: RedactMode): RedactResult {
     return { content: text, redactions: 0, kinds: [] };
   }
 
+  // Defeat zero-width smuggling: a single U+200B/ZWJ/etc. inside a token splits
+  // the contiguous credential run so the patterns miss it. Scan a copy with the
+  // zero-width / default-ignorable code points removed. We only RETURN this
+  // stripped copy if a secret is actually found (below) — clean text keeps its
+  // original bytes, so legitimate ZWJ emoji / Persian text is never mangled.
+  const scan = text.replace(ZERO_WIDTH_RE, '');
+
   interface Span {
     start: number;
     end: number;
@@ -144,7 +159,7 @@ export function redactContent(text: string, mode: RedactMode): RedactResult {
     // Fresh lastIndex per use; patterns are module-level so reset defensively.
     regex.lastIndex = 0;
     let m: RegExpExecArray | null;
-    while ((m = regex.exec(text)) !== null) {
+    while ((m = regex.exec(scan)) !== null) {
       // Zero-width match guard — advance to avoid an infinite loop.
       if (m[0].length === 0) {
         regex.lastIndex += 1;
@@ -176,27 +191,84 @@ export function redactContent(text: string, mode: RedactMode): RedactResult {
 
   const kinds = kept.map((s) => s.kind);
 
-  if (mode === 'block') {
-    if (kept.length > 0) {
-      const distinct = [...new Set(kinds)].sort();
-      throw new Error(
-        `redaction blocked: content contains ${kept.length} secret(s) of kind(s): ${distinct.join(', ')}`,
-      );
-    }
+  // No secret found → return the ORIGINAL text untouched (preserves any
+  // legitimate zero-width chars; nothing was smuggled).
+  if (kept.length === 0) {
     return { content: text, redactions: 0, kinds: [] };
   }
 
-  // scrub: ONE left-to-right pass (kept is sorted ascending by start). Build the
-  // pieces into an array and join once — O(n + m). The previous per-match
-  // slice-and-concat rebuilt the whole string on every match → O(n*m), an
-  // algorithmic-complexity DoS on large input with many matches.
+  if (mode === 'block') {
+    const distinct = [...new Set(kinds)].sort();
+    throw new Error(
+      `redaction blocked: content contains ${kept.length} secret(s) of kind(s): ${distinct.join(', ')}`,
+    );
+  }
+
+  // scrub: ONE left-to-right pass over the zero-width-stripped `scan` (kept is
+  // sorted ascending by start). Build the pieces into an array and join once —
+  // O(n + m). The previous per-match slice-and-concat rebuilt the whole string
+  // on every match → O(n*m), an algorithmic-complexity DoS on large input.
   const out: string[] = [];
   let cursor = 0;
   for (const s of kept) {
-    out.push(text.slice(cursor, s.start), `[REDACTED:${s.kind}]`);
+    out.push(scan.slice(cursor, s.start), `[REDACTED:${s.kind}]`);
     cursor = s.end;
   }
-  out.push(text.slice(cursor));
+  out.push(scan.slice(cursor));
 
   return { content: out.join(''), redactions: kept.length, kinds };
+}
+
+/** A memory's user-supplied text fields that must pass the inbound gate. */
+export interface RedactableFields {
+  content: string;
+  title?: string | null;
+  tags?: string[];
+}
+
+export interface RedactRecordResult extends RedactableFields {
+  redactions: number;
+  kinds: string[];
+}
+
+/**
+ * Apply the gate across ALL user-supplied text on a write — not just `content`.
+ * A secret in `title` leaks via the FTS index AND the vault FILENAME; a secret
+ * in a `tag` leaks via the FTS index. In 'block' mode the first field with a
+ * secret throws (rejecting the write). Returns the redacted fields + a combined
+ * count/kinds. ('off' is a passthrough.)
+ *
+ * NOTE: structured `metadata` values are not scrubbed here (a follow-up) — the
+ * indexed/filename vectors (content/title/tags) are the high-risk ones.
+ */
+export function redactRecord(fields: RedactableFields, mode: RedactMode): RedactRecordResult {
+  if (mode === 'off') {
+    return { ...fields, redactions: 0, kinds: [] };
+  }
+  const kinds: string[] = [];
+  let redactions = 0;
+
+  const c = redactContent(fields.content, mode);
+  redactions += c.redactions;
+  kinds.push(...c.kinds);
+
+  let title = fields.title;
+  if (title != null && title.length > 0) {
+    const t = redactContent(title, mode);
+    title = t.content;
+    redactions += t.redactions;
+    kinds.push(...t.kinds);
+  }
+
+  let tags = fields.tags;
+  if (tags && tags.length > 0) {
+    tags = tags.map((tag) => {
+      const r = redactContent(tag, mode);
+      redactions += r.redactions;
+      kinds.push(...r.kinds);
+      return r.content;
+    });
+  }
+
+  return { content: c.content, title, tags, redactions, kinds };
 }

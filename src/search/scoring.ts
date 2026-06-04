@@ -140,7 +140,11 @@ export function computeGroundedness(
   const base = 0.45 * stored + 0.3 * tier + 0.25 * recency;
 
   // Reinforcement: a small, bounded, monotone boost that saturates by ~20 hits.
-  const accessCount = Math.max(0, row.access_count ?? 0);
+  // A non-finite access_count (NaN/Infinity from corrupt data) must degrade to a
+  // ZERO boost, not poison the whole score — otherwise base + NaN → NaN →
+  // clamp01 → 0 would collapse a max-trust memory to groundedness 0.
+  const ac = row.access_count;
+  const accessCount = typeof ac === 'number' && Number.isFinite(ac) ? Math.max(0, ac) : 0;
   const reinforcement = 0.1 * (Math.log1p(accessCount) / Math.log1p(20));
 
   const groundedness = clamp01(base + reinforcement);

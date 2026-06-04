@@ -6,7 +6,7 @@ import { getConfig } from '../config/loader.js';
 import { getReadOnlyDb } from '../lib/direct-access.js';
 import { buildMergeDriverCommand } from './share.js';
 import { vaultGitignore, vaultGitattributes, rebuildHook } from '../vault/git-init.js';
-import { writeGraphSidecar } from '../vault/sidecar.js';
+import { writeGraphSidecar, writeManifestSidecar } from '../vault/sidecar.js';
 
 /* c8 ignore start — git + filesystem wiring; the pure content + sidecar core are tested. */
 
@@ -65,9 +65,11 @@ export async function runVaultInit(argv: string[]): Promise<void> {
   }
 
   try {
-    writeGraphSidecar(getReadOnlyDb(), vaultRoot);
+    const initDb = getReadOnlyDb();
+    writeGraphSidecar(initDb, vaultRoot);
+    writeManifestSidecar(initDb, vaultRoot, new Date().toISOString());
   } catch {
-    /* no DB yet — the sidecar will be written on first `memory sync`. */
+    /* no DB yet — the sidecars will be written on first `memory sync`. */
   }
 
   console.error('Vault is git-ready. Commit your memories:');

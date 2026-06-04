@@ -2,7 +2,7 @@ import path from 'node:path';
 import { getConfig } from '../config/loader.js';
 import { getReadOnlyDb } from '../lib/direct-access.js';
 import { exportMemoriesToVault } from '../vault/writer.js';
-import { writeGraphSidecar } from '../vault/sidecar.js';
+import { writeGraphSidecar, writeManifestSidecar } from '../vault/sidecar.js';
 
 /* c8 ignore start — thin CLI/IO over the tested exportMemoriesToVault + writeGraphSidecar cores. */
 
@@ -37,7 +37,10 @@ export async function runSync(argv: string[]): Promise<void> {
   const db = getReadOnlyDb();
   const result = exportMemoriesToVault(db, { vaultPath });
   const sidecar = writeGraphSidecar(db, vaultPath);
+  // M2.6: persist the integrity manifest so `memory rebuild` can detect drift.
+  const manifest = writeManifestSidecar(db, vaultPath, new Date().toISOString());
   console.error(`Synced ${result.files_written} memories to ${result.vault_path}`);
   if (sidecar) console.error(`Wrote graph sidecar → ${path.relative(result.vault_path, sidecar)}`);
+  if (manifest) console.error(`Wrote integrity manifest → ${path.relative(result.vault_path, manifest)}`);
 }
 /* c8 ignore stop */

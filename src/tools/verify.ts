@@ -50,10 +50,11 @@ interface VerifyRow {
   namespace: string | null;
   valid_from: string | null;
   created_at: string;
+  signed_at: string | null;
 }
 
 const SELECT_COLS =
-  'id, content, content_hash, signature, pubkey, agent_id, provenance, scope, namespace, valid_from, created_at';
+  'id, content, content_hash, signature, pubkey, agent_id, provenance, scope, namespace, valid_from, created_at, signed_at';
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1000;
@@ -99,6 +100,7 @@ export function handleVerify(
       namespace: row.namespace,
       valid_from: row.valid_from,
       created_at: row.created_at,
+      signed_at: row.signed_at,
     });
 
     let status: VerifyEntry['status'];

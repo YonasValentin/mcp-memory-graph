@@ -4,6 +4,7 @@ import type Database from 'better-sqlite3';
 import { exportGraph, type GraphArtifact } from '../graph/graph-export.js';
 import { createMemoryLink } from '../graph/memory-links.js';
 import { confineToVault } from './writer.js';
+import { buildIntegrityManifest } from '../tools/manifest.js';
 
 /**
  * The graph sidecar (`.memory/graph.json`) holds the resolved memory↔memory
@@ -25,6 +26,34 @@ export function writeGraphSidecar(db: Database.Database, vaultRoot: string): str
   const artifact = exportGraph(db);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, JSON.stringify(artifact, null, 2), 'utf-8');
+  return abs;
+}
+
+/** Vault-relative path of the integrity-manifest sidecar (M2.6). Must match
+ *  MANIFEST_SIDECAR in vault/rebuild.ts so the drift guard finds it. */
+export const MANIFEST_SIDECAR_REL = path.join('.memory', 'manifest.json');
+
+/**
+ * Write the signed-ish integrity manifest to `<vault>/.memory/manifest.json`.
+ * This is what arms `assertVaultIntegrity` (vault/rebuild.ts): without a
+ * persisted manifest the drift guard is dormant. Belongs on the FULL-EXPORT /
+ * "prepare to commit" path (sync, vault-init, export-vault) — NOT per-write,
+ * since it fingerprints the whole corpus. `generatedAt` is passed in (the caller
+ * owns the clock) so this stays deterministic + testable.
+ */
+export function writeManifestSidecar(
+  db: Database.Database,
+  vaultRoot: string,
+  generatedAt: string,
+): string | null {
+  fs.mkdirSync(vaultRoot, { recursive: true });
+  const root = fs.realpathSync(vaultRoot);
+  const abs = confineToVault(root, MANIFEST_SIDECAR_REL);
+  /* c8 ignore next */
+  if (!abs) return null;
+  const manifest = buildIntegrityManifest(db, generatedAt);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, JSON.stringify(manifest, null, 2), 'utf-8');
   return abs;
 }
 

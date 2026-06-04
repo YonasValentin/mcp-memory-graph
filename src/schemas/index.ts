@@ -90,7 +90,7 @@ const metadataField = () =>
 // ---------------------------------------------------------------------------
 
 export const MemoryStoreSchema = z.object({
-  content: z.string().min(1).describe('The text content to store as a memory'),
+  content: z.string().min(1).max(1_000_000).describe('The text content to store as a memory'),
   title: z.string().optional().describe('Short title for the memory'),
   scope: scopeFieldWithDefault(),
   namespace: namespaceField(),
@@ -301,6 +301,7 @@ export const MemoryUpdateSchema = z.object({
   id: z.string().describe('ID of the memory to update'),
   content: z
     .string()
+    .max(1_000_000)
     .optional()
     .describe('New content (will re-generate embedding)'),
   title: z.string().optional().describe('New title'),
@@ -409,6 +410,7 @@ export const MemoryIngestSchema = z.object({
   content: z
     .string()
     .min(1)
+    .max(1_000_000)
     .describe('Full document content to ingest'),
   title: z.string().optional().describe('Document title'),
   source: sourceField(),
