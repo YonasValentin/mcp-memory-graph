@@ -152,7 +152,7 @@ npm run serve                     # http://localhost:3100 serves both API and UI
 
 The Docker image includes the built frontend. After `docker compose up`, the dashboard is available at `http://<host>:3100` alongside the MCP endpoint. Team members can browse the shared memory store from any browser — no Claude Code required.
 
-**REST API (9 endpoints):**
+**REST API (16 endpoints):**
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -165,8 +165,17 @@ The Docker image includes the built frontend. After `docker compose up`, the das
 | `PATCH` | `/api/memories/:id` | Update content or metadata |
 | `DELETE` | `/api/memories/:id` | Delete a memory |
 | `GET` | `/api/graph` | Nodes + edges for graph visualization |
+| `GET` | `/api/manifest` | Integrity manifest (merkle root + per-memory hashes) |
+| `GET` | `/api/insights` | Trends / themes summary |
+| `GET` | `/api/health` | Knowledge-gap report (recurring zero-result searches) |
+| `GET` | `/api/webhooks` | List webhook targets (gated by `MCP_WEBHOOKS`) |
+| `POST` | `/api/webhooks` | Register an SSRF-validated outbound target |
+| `DELETE` | `/api/webhooks/:id` | Remove a webhook target |
+| `POST` | `/api/webhooks/dispatch` | Drain the durable, HMAC-signed delivery queue |
 
-The REST endpoints call the same handler functions as the MCP tools. No business logic is duplicated.
+The first nine are what the dashboard consumes; the rest expose insights, the
+integrity manifest, and the (opt-in) webhook bus. All REST endpoints call the
+same handler functions as the MCP tools — no business logic is duplicated.
 
 ---
 
@@ -280,6 +289,25 @@ To reverse everything:
 ```bash
 npx mcp-memory-graph uninstall
 ```
+
+### Automated / agent setup (non-interactive)
+
+Every step above is scriptable — an AI agent, provisioning script, or CI job can
+do the whole setup with no prompts. `init` takes `--yes` to accept all defaults,
+so there is **no interactive-only path**:
+
+```bash
+git clone https://github.com/YonasValentin/mcp-memory-graph.git
+cd mcp-memory-graph
+npm install && npm run build
+npx mcp-memory-graph init --scope project --yes   # local: hooks + .mcp.json, unattended
+# …or point at a shared self-hosted server instead:
+# npx mcp-memory-graph init --remote https://memory.example.com --token-env MEMORY_MCP_TOKEN
+```
+
+`--yes`, `--scope project`, and `--remote` all run fully unattended. The only
+external prerequisite (for the optional Stop hook) is the `claude` CLI on `$PATH`,
+authenticated; skip it with `review_on_stop: false` in the config.
 
 ### Verify Installation
 
@@ -912,7 +940,7 @@ Query: "contract renewal notice"
 
 ### Database Schema
 
-The SQLite database (schema version 3, with automatic migration from v1/v2) contains:
+The SQLite database (schema version 11, with automatic forward migration from any earlier version) contains:
 
 - **`memories`** — Core table with all memory data, TEXT primary key (UUIDs), supports parent-child relationships for document chunks. Includes `access_count`, `last_accessed_at`, `importance_score`, and `confidence_score` columns
 - **`memories_fts`** — FTS5 virtual table for full-text keyword search with BM25 ranking. External content mode, synced with memories table

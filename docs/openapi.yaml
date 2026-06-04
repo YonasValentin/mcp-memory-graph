@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
-  title: MCP Memory Server REST API
+  title: MCP Memory Graph REST API
   version: 1.0.0
   description: |
-    REST surface for the MCP Memory Server dashboard. The MCP JSON-RPC
+    REST surface for the MCP Memory Graph dashboard. The MCP JSON-RPC
     surface (`/mcp`) is documented separately by the MCP TypeScript SDK and
     is not described here.
 
