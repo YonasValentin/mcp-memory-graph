@@ -363,6 +363,9 @@ export interface VaultSyncMeta {
   mtime_ms: number;
   memory_id: string;
   synced_at: string;
+  /** M6.1 sha256 of the raw file bytes — the authoritative change signal (mtime
+   * is only a cheap pre-filter; a git checkout rewrites mtime but not content). */
+  content_hash?: string | null;
 }
 
 export interface VaultSyncResult {
@@ -405,6 +408,8 @@ export interface VaultFileEntry {
   absolutePath: string;
   relativePath: string;
   mtimeMs: number;
+  /** M6.1 sha256 of the raw file bytes; computed lazily for new/changed files. */
+  contentHash?: string;
 }
 
 // ── Self-Improvement Types ──────────────────────────────────────────────

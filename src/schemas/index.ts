@@ -1319,6 +1319,22 @@ export const MemoryExpertiseSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// M6.3 MemoryExportDatasetSchema — LoRA / distillation flywheel
+// ---------------------------------------------------------------------------
+
+export const MemoryExportDatasetSchema = z.object({
+  scope: scopeField(false),
+  namespace: namespaceField(),
+  format: z
+    .enum(['pairs', 'chatml', 'alpaca'])
+    .default('pairs')
+    .describe('Output shape: {prompt,completion} | ChatML messages | Alpaca instruction/output.'),
+  min_importance: z.number().min(0).max(1).optional().describe('Quality floor on importance_score.'),
+  min_confidence: z.number().min(0).max(1).optional().describe('Quality floor on confidence_score.'),
+  limit: z.number().int().min(1).max(10000).default(1000).describe('Max training pairs to emit.'),
+});
+
+// ---------------------------------------------------------------------------
 // REST API query/body schemas — derived from the MCP schemas above.
 // Express query strings arrive as `string | string[] | undefined`, so each
 // field uses zod preprocess to coerce numbers/arrays out of strings before

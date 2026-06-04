@@ -15,6 +15,7 @@ import { logger } from '../lib/logger.js';
 import { mirrorMemoryWrite } from '../vault/write-through.js';
 import { notify, rowToEventPayload, propagateSafe } from '../events/hooks.js';
 import { clearRevalidation } from '../graph/propagate.js';
+import { getComputeGovernor } from '../lib/compute-governor.js';
 
 /**
  * Containment-aware merge for the UPDATE path. Mirrors consolidate's mergeContent
@@ -124,7 +125,12 @@ export async function handleStore(
   // `contradicted` — the bi-temporal retire of the old fact is done by
   // invalidateMemory below, not by recordConflicts' superseded-stamp path.
   const nliContradictions: ConflictResult[] = [];
-  if (nli) {
+  // M6.2 compute governor: NLI runs an entailment model over each near neighbor —
+  // the heaviest per-store op. Over budget (throttle/block), skip it; the overlap
+  // heuristic still runs (documented quality downgrade, never an error). Default
+  // 'off' always allows, so this is a no-op unless the governor is enabled.
+  const nliAllowed = nli ? getComputeGovernor().preflight('nli').allow : false;
+  if (nli && nliAllowed) {
     // Wider net than the dedup heuristic: a real reversal ("we moved OFF X to Y")
     // deliberately uses new vocabulary and embeds FURTHER from the old fact, so a
     // tight shortlist never reaches NLI. distanceThreshold is a MAX distance, so

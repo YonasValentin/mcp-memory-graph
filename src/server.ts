@@ -64,6 +64,7 @@ import {
   MemoryRevalidateSchema,
   MemorySessionStateSchema,
   MemoryExpertiseSchema,
+  MemoryExportDatasetSchema,
 } from './schemas/index.js';
 import { handleStore } from './tools/store.js';
 import { CrossEncoderNli, type NliClassifier } from './graph/contradiction.js';
@@ -114,6 +115,7 @@ import { handleHealth } from './tools/health.js';
 import { handleRevalidate } from './tools/revalidate.js';
 import { handleSessionState } from './tools/session-state.js';
 import { handleExpertise } from './tools/expertise.js';
+import { handleExportDataset } from './tools/export-dataset.js';
 
 import { metrics } from './api/metrics.js';
 import { logger } from './lib/logger.js';
@@ -255,6 +257,7 @@ export function createServer(): McpServer {
     'memory_communities', 'memory_template', 'memory_attribution',
     'memory_questions', 'memory_history', 'memory_unlinked_mentions',
     'memory_version_diff', 'memory_insights', 'memory_health',
+    'memory_export_dataset',
   ]);
   const DESTRUCTIVE_TOOLS = new Set<string>([
     'memory_forget', 'memory_delete', 'memory_import', 'memory_version_restore',
@@ -835,6 +838,17 @@ export function createServer(): McpServer {
     instrument('memory_expertise', async (input) => {
       const parsed = MemoryExpertiseSchema.parse(input);
       return handleExpertise(getDb(), await getEmbedder(), withForcedNs(parsed));
+    }),
+  );
+
+  // ── 45. memory_export_dataset (M6.3) ──────────────────────────────────────
+  reg(
+    'memory_export_dataset',
+    'Export high-signal rows (auto-extracted learnings + agent reflections) as instruction→output training pairs (pairs/chatml/alpaca) for a project LoRA/distillation flywheel. Read-only, quality-filtered by importance/confidence. Training stays out of the repo — this only emits the JSONL.',
+    MemoryExportDatasetSchema.shape,
+    instrument('memory_export_dataset', async (input) => {
+      const parsed = MemoryExportDatasetSchema.parse(input);
+      return handleExportDataset(getDb(), withForcedNs(parsed));
     }),
   );
 

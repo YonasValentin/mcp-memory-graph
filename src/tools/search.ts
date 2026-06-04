@@ -12,6 +12,7 @@ import type {
 import { hybridSearch, toSummary, toIdOnly } from '../search/hybrid.js';
 import { CrossEncoderReranker, type Reranker } from '../search/reranker.js';
 import { recordAccess } from '../db/repository.js';
+import { getComputeGovernor } from '../lib/compute-governor.js';
 
 // Module-level singleton so the cross-encoder model loads at most once across
 // requests. Lazily constructed only when reranking is requested — never touched
@@ -75,9 +76,16 @@ export async function handleSearch(
     rerank_top_n: input.rerank_top_n,
   };
 
-  const { results, total, truncated } = input.rerank
+  // M6.2 compute governor: reranking runs a cross-encoder over the candidate
+  // set — the heaviest per-search op. When over budget (throttle/block mode) the
+  // governor withholds it and we drop to the FREE vector+FTS RRF path. Default
+  // 'off' mode always allows, so this is a no-op unless the governor is enabled.
+  const rerankPreflight = input.rerank ? getComputeGovernor().preflight('rerank') : null;
+  const doRerank = input.rerank === true && (rerankPreflight?.allow ?? true);
+
+  const { results, total, truncated } = doRerank
     ? await hybridSearch(db, embedder, options, getReranker())
-    : await hybridSearch(db, embedder, options);
+    : await hybridSearch(db, embedder, { ...options, rerank: false });
 
   if (results.length > 0) {
     recordAccess(

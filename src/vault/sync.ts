@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
+import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import type {
   EmbeddingProvider,
   VaultSyncMeta,
@@ -54,11 +55,26 @@ export async function syncVault(
   for (const entry of scanned) {
     const existing = syncMeta.get(entry.relativePath);
     if (!existing) {
+      entry.contentHash = hashFile(entry.absolutePath);
       newFiles.push(entry);
-    } else if (options.force || existing.mtime_ms !== entry.mtimeMs) {
+    } else if (options.force) {
+      entry.contentHash = hashFile(entry.absolutePath);
       changedFiles.push(entry);
-    } else {
+    } else if (existing.mtime_ms === entry.mtimeMs) {
       unchangedCount++;
+    } else {
+      // M6.1: mtime differs — but a git checkout / clone rewrites mtime WITHOUT
+      // changing content. Confirm by content hash before paying to re-embed. If
+      // the bytes are identical, refresh the stored mtime so the next scan hits
+      // the cheap fast path, and count it unchanged (no re-embed storm).
+      const hash = hashFile(entry.absolutePath);
+      if (existing.content_hash && existing.content_hash === hash) {
+        touchSyncMtime(db, options.vaultPath, entry.relativePath, entry.mtimeMs, hash);
+        unchangedCount++;
+      } else {
+        entry.contentHash = hash;
+        changedFiles.push(entry);
+      }
     }
   }
 
@@ -194,7 +210,7 @@ export async function syncVault(
               deleteMemory(db, row.id);
             }
             insertMemory(db, row, embeddings[i]);
-            upsertSyncMeta(db, options.vaultPath, entry.relativePath, entry.mtimeMs, row.id);
+            upsertSyncMeta(db, options.vaultPath, entry.relativePath, entry.mtimeMs, row.id, entry.contentHash);
             totalMemories++;
             if (isNew) {
               filesAdded++;
@@ -236,6 +252,7 @@ export async function syncVault(
           entry.relativePath,
           entry.mtimeMs,
           memoriesCreated.parentId,
+          entry.contentHash,
         );
 
         totalMemories += memoriesCreated.count;
@@ -277,10 +294,15 @@ export async function syncVault(
   };
 }
 
+/** sha256 of a file's raw bytes — the M6.1 content-change authority. */
+function hashFile(absolutePath: string): string {
+  return createHash('sha256').update(fs.readFileSync(absolutePath)).digest('hex');
+}
+
 function loadSyncMeta(db: Database.Database, vaultPath: string): Map<string, VaultSyncMeta> {
   const rows = db
     .prepare<[string], VaultSyncMeta>(
-      'SELECT vault_path, file_path, mtime_ms, memory_id, synced_at FROM vault_sync_meta WHERE vault_path = ?',
+      'SELECT vault_path, file_path, mtime_ms, memory_id, synced_at, content_hash FROM vault_sync_meta WHERE vault_path = ?',
     )
     .all(vaultPath);
 
@@ -297,11 +319,26 @@ function upsertSyncMeta(
   filePath: string,
   mtimeMs: number,
   memoryId: string,
+  contentHash?: string,
 ): void {
   db.prepare(
-    `INSERT OR REPLACE INTO vault_sync_meta (vault_path, file_path, mtime_ms, memory_id, synced_at)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run(vaultPath, filePath, mtimeMs, memoryId, new Date().toISOString());
+    `INSERT OR REPLACE INTO vault_sync_meta (vault_path, file_path, mtime_ms, memory_id, synced_at, content_hash)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(vaultPath, filePath, mtimeMs, memoryId, new Date().toISOString(), contentHash ?? null);
+}
+
+/** Refresh only the stored mtime (and re-affirm the hash) when a git checkout
+ * rewrote mtime but the content is byte-identical — no re-embed, no version. */
+function touchSyncMtime(
+  db: Database.Database,
+  vaultPath: string,
+  filePath: string,
+  mtimeMs: number,
+  contentHash: string,
+): void {
+  db.prepare(
+    'UPDATE vault_sync_meta SET mtime_ms = ?, content_hash = ? WHERE vault_path = ? AND file_path = ?',
+  ).run(mtimeMs, contentHash, vaultPath, filePath);
 }
 
 function deleteOldMemory(
