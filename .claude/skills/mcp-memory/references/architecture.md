@@ -24,7 +24,7 @@ This is the navigable map. The **exhaustive** reference is `/.planning/CODEBASE-
 
 ```
 src/index.ts        argv router → stdio MCP (default) or subcommand
-src/server.ts       createServer(): registers all 41 tools; formatResult→sanitizeDeep chokepoint;
+src/server.ts       createServer(): registers all 49 tools; formatResult→sanitizeDeep chokepoint;
                     instrument() wrapper; lazy getDb/getEmbedder/getNli; tenancy (withForcedNs/idInForcedNs)
 src/cli/serve.ts    Express 5 app: /mcp /api /publish /health /metrics; all HTTP security
 src/tools/*         thin handleX(db,[embedder],input) handlers — Zod parse in server.ts, delegate down

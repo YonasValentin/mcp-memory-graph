@@ -1,11 +1,11 @@
 ---
 name: mcp-memory
-description: Expert operation AND development of mcp-memory-server — a local-first, bi-temporal, knowledge-graph memory server for Claude Code (41 MCP tools over one SQLite file + local embeddings; $0/token, no cloud, no telemetry). Use when (1) DRIVING the memory tools in any project wired to the server — storing/recalling/searching memories, choosing among the 41 memory_*/vault_*/core_memory_* tools, setting up auto-capture hooks, running a team git-vault sync, GDPR forget, the dream-cycle consolidate, or debugging why a memory is not found (scope/privacy/rerank surprises); or (2) DEVELOPING the server itself inside the mcp-memory-server repo — its architecture, where to change code, the build/test/bench/smoke commands, verified gotchas and tech debt, or the REST/Docker/MS-01 deploy. Triggers include any use of mcp__*memory*__ tools, "remember this"/"recall that", "store a decision", Obsidian vault sync, core memory, knowledge graph of memories, or work inside the mcp-memory-server codebase.
+description: Expert operation AND development of mcp-memory-server — a local-first, bi-temporal, knowledge-graph memory server for Claude Code (49 MCP tools over one SQLite file + local embeddings; $0/token, no cloud, no telemetry). Use when (1) DRIVING the memory tools in any project wired to the server — storing/recalling/searching memories, choosing among the 49 memory_*/vault_*/core_memory_* tools, setting up auto-capture hooks, running a team git-vault sync, GDPR forget, the dream-cycle consolidate, or debugging why a memory is not found (scope/privacy/rerank surprises); or (2) DEVELOPING the server itself inside the mcp-memory-server repo — its architecture, where to change code, the build/test/bench/smoke commands, verified gotchas and tech debt, or the REST/Docker/MS-01 deploy. Triggers include any use of mcp__*memory*__ tools, "remember this"/"recall that", "store a decision", Obsidian vault sync, core memory, knowledge graph of memories, or work inside the mcp-memory-server codebase.
 ---
 
 # mcp-memory
 
-A local-first memory server for coding agents: durable, queryable, cross-session memory with **no cloud dependency**. Embeddings, vector index, full-text index, and a knowledge graph all run in-process against one SQLite file. **41 MCP tools**; 10 also exposed over a bearer-authed REST API + a dashboard. The DB is a rebuildable cache — the source of truth can be a git-shared Obsidian vault of plain `.md` files ("Bruno model").
+A local-first memory server for coding agents: durable, queryable, cross-session memory with **no cloud dependency**. Embeddings, vector index, full-text index, and a knowledge graph all run in-process against one SQLite file. **49 MCP tools**; 10 also exposed over a bearer-authed REST API + a dashboard. The DB is a rebuildable cache — the source of truth can be a git-shared Obsidian vault of plain `.md` files ("Bruno model").
 
 ## First: are you USING or DEVELOPING?
 
@@ -60,13 +60,13 @@ Full per-tool when-to-use + params: **`references/tool-catalog.md`**.
 
 | File | Read when |
 |---|---|
-| `references/tool-catalog.md` | Choosing among the 41 tools; per-tool when-to-use + key params (param *schemas* are authoritative at call time) |
+| `references/tool-catalog.md` | Choosing among the 49 tools; per-tool when-to-use + key params (param *schemas* are authoritative at call time) |
 | `references/workflows.md` | Scope/privacy model, solo capture↔recall, team git-vault, hooks setup, maintenance, ingest, attribution |
 | `references/gotchas.md` | Before debugging "missing memory", surprising ordering, vault loss, or any write/edit surprise |
 | `references/architecture.md` | Developing — the six models, layers/key files, data model (schema v9), store/search lifecycles |
 | `references/developing.md` | Developing — build/test/bench/sim commands, roadmap shipped-vs-remaining, current open items, competitive positioning, doc drift |
 | `references/rest-and-ops.md` | Serving over HTTP — REST contract, auth/rate-limit, Docker/MS-01 deploy, backup/restore |
 
-The exhaustive in-repo reference is `/.planning/CODEBASE-MAP.md` (642 lines). Keep this skill's facts in sync with the server when behavior changes — the count is **41 tools** (README's "37"/"17" are stale).
+The exhaustive in-repo reference is `/.planning/CODEBASE-MAP.md` (642 lines). Keep this skill's facts in sync with the server when behavior changes — the count is **49 tools** (README's "37"/"17" are stale).
 
 > **Security:** never echo, log, or commit a bearer token or homelab credential. REST/ops examples use the `$MCP_AUTH_TOKEN` placeholder — keep it that way.

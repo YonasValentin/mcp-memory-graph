@@ -77,6 +77,27 @@ read once at process start unless noted.
 | `MCP_REDACT_MODE` | `off` | Inbound secret-redaction gate applied before content is embedded/persisted (and before it can reach a git-shared vault). `scrub` replaces detected secrets (API keys, tokens, JWTs, PEM private keys, `password=`/`api_key=` assignments) with typed `[REDACTED:kind]` placeholders and records a `metadata.redactions` count; `block` rejects the write with an error naming the kinds; `off` is a passthrough. Wired into `memory_store` and `memory_ingest`. |
 | `MCP_SIGN_MEMORIES` | _unset_ (off) | Set to `1`/`true` to attach a signed provenance envelope to every new memory: an ed25519 signature over `content_hash + agent_id + scope + namespace + created_at`. `memory_verify` checks it. Off = memories are stored unsigned (today's behaviour); `memory_verify` reports them as `unsigned`. |
 | `MCP_MEMORY_KEY_DIR` | `~/.mcp-memory` | Directory holding the ed25519 signing keypair (`keys/ed25519.key` 0600, `keys/ed25519.pub`). Generated on first signed write. Override for tests or to relocate the key. |
+| `MCP_TRUSTED_PUBKEYS` | _unset_ | `:`- or `,`-separated list of FILE PATHS to teammate SPKI PEM public keys. `memory_verify` accepts a memory signed by this machine's own key OR any of these — a teammate's valid signature on a synced vault reads `verified` instead of `untrusted`. Unreadable paths are skipped. |
+
+## Active infrastructure (M3)
+
+| Variable | Default | Effect |
+|---|---|---|
+| `MCP_WEBHOOKS` | _unset_ (off) | Set to `1`/`true` to enable the outbound event bus — the first network egress in this otherwise local-first server. Mutations then enqueue HMAC-signed deliveries to registered `memory_webhook` targets (all SSRF-validated: public http(s) only). Off = no targets fire, zero hot-path cost. |
+
+## Compute governor (M6.2)
+
+| Variable | Default | Effect |
+|---|---|---|
+| `MCP_COMPUTE_GOVERNOR_MODE` | `off` | Graceful-degradation governor over the heavy per-request ML ops. `off` = always allow (no-op). `warn` = allow but flag over-budget. `throttle` = once over budget, skip reranking (search → free vector+FTS RRF) and the NLI gate (store → overlap heuristic only) — a quality downgrade, never an error. `block` = like throttle but also sets `denied` so a caller may refuse. |
+| `MCP_COMPUTE_GOVERNOR_CAPACITY` | `600` | Burst budget in token units (embed=1, rerank=3, nli=4). |
+| `MCP_COMPUTE_GOVERNOR_REFILL_PER_SEC` | `60` | Sustained refill rate (token units/sec); window = capacity / refill. |
+
+## Pluggable embeddings (M6.4)
+
+| Variable | Default | Effect |
+|---|---|---|
+| `MCP_MEMORY_DIMENSIONS` | `384` | (See Embedding.) `memories_vec` is single-fixed-dim; a second model must reconcile to this dimension (Matryoshka `truncateTo`) or use a per-model vec table. The pluggable `EmbeddingRegistry` forces the LOCAL provider for `confidential`/`restricted` access regardless of preference. |
 
 ## Attribution
 

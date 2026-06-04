@@ -1,4 +1,4 @@
-# Tool Catalog — all 41 MCP tools
+# Tool Catalog — all 49 MCP tools
 
 Authoritative count: **41** (`grep -c 'server.tool(' src/server.ts`). README's "37"/"17" are stale.
 **Param schemas are authoritative at call time** — the live MCP tool definitions (and `src/schemas/index.ts`) are the source of truth for exact params. This catalog gives the *decision-relevant* params + when-to-use, not the full Zod. Params marked `*` are required.

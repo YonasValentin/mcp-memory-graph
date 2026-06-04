@@ -17,7 +17,7 @@ For changing the server itself. Pair with `architecture.md` (map) and `/.plannin
 ```bash
 npm run build      # tsc
 npm test           # vitest — 1000 tests (mock embedder, :memory: SQLite, deterministic)
-npm run smoke      # REAL MCP stdio JSON-RPC round-trip (41 tools, real models)
+npm run smoke      # REAL MCP stdio JSON-RPC round-trip (49 tools, real models)
 npm run bench      # REAL retrieval quality + latency (gold set, real embedder + reranker)
 
 # Real-runtime simulations (real model + real SQLite + real git):
@@ -50,10 +50,12 @@ The R0–R8 "revolutionary roadmap" is **partially shipped** — not a clean BUI
 | R2 | Self-weaving graph + Personalized PageRank | ✅ Shipped (IDF-weighted edges, wikilinks→typed edges, PageRank fused into hybrid) |
 | R3 | Self-correcting NLI write-gate | ✅ Shipped (runs on **every** store on the near-dup shortlist; real DeBERTa verified; contradiction → bi-temporal invalidate) |
 | R4 | Local cross-encoder reranker | ✅ Shipped (ms-marco-MiniLM-L-6-v2; **default ON at MCP** over top-50) |
-| R5 | Two-way Obsidian + typed Canvas | ◑ **One-way shipped** (`vault_sync` in, `export_vault`/`canvas` out). **Remaining:** chokidar live watcher + directional typed edges (`depends-on`/`supersedes`). |
-| R6 | Pinned core-memory tier | ◑ **Tools shipped** (`core_memory_*`, `memory_tiers`). **Remaining:** auto-loading the pinned tier into context at SessionStart. |
+| R5 | Two-way Obsidian + typed Canvas | ◑ **content_hash change-gate shipped** (M6.1 — git-checkout no longer re-embeds the vault) + change-propagation over REAL `derived_from` edges (M3.3, NOT the `depends_on`/`supersedes` edges prod never writes). **Remaining:** live fs watcher (deferred — no chokidar dep). |
+| R6 | Pinned core-memory tier | ✅ **Shipped** (`core_memory_*`, `memory_tiers`) + **auto-load at SessionStart** (M5.3 — real `(scope,namespace)`, newlines preserved). |
 | R7 | GDPR-grade compliance layer | ◑ **Forget shipped** (`memory_forget` soft/hard + export-on-hard). **Remaining:** consent tags, retention windows, verifiable RTBF, exportable access trail. |
-| R8 | Pluggable embeddings + adaptive router | ◯ **Unbuilt** (model swappable via `MCP_MEMORY_MODEL`, but no Matryoshka/bge-m3/Ollama router or per-query route selection). |
+| R8 | Pluggable embeddings + adaptive router | ◑ **Shipped (opt-in layer, M6.4):** `EmbeddingRegistry` + privacy-gated `selectEmbedder` (confidential/restricted → forced local) + Matryoshka `truncateTo` (preserves the single-fixed-dim `memories_vec` invariant) + `OllamaEmbeddingProvider`; v11 `embedding_model`/`embedding_dim` columns record per-row model. **Remaining:** auto-wire `selectEmbedder` into the singleton hot path (per-call access-level threading). |
+
+**M0–M6 milestones (post-engine, on local `main`):** M0 (registerTool migration + annotations + `instructions`, README/docs truth), M1.2 (ingest_source_tracking wired), **M2 (trust/provenance moat — signed envelope + `memory_verify`, redaction gate, groundedness, vault egress + integrity manifest; twice battle-hardened)**, **M3 (event bus + SSRF guard + change-propagation + `memory_insights`/`memory_health`/`memory_revalidate`/`memory_webhook`)**, **M4 (anchor entities work_item/pull_request/commit + turn-signal gate)**, **M5 (`memory_session_state`, `memory_expertise`, core-memory auto-load)**, **M6 (vault content-hash gate, `compute-governor`, `memory_export_dataset`, pluggable-embeddings layer)**. Schema is **v11** (webhook_targets/deliveries + memories.revalidation_status/embedding_model/embedding_dim). M2-LOW closed: redaction whitespace-split bypass + multi-machine trust store (`MCP_TRUSTED_PUBKEYS`). Each milestone TDD'd + integration-battled (M2 found 20, M3 found 14 — all fixed/regression-locked).
 
 ## 4. Current open items (honest)
 
