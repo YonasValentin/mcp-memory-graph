@@ -15,6 +15,7 @@ import { handleGet } from '../../dist/tools/get.js';
 import { handleExportVault } from '../../dist/tools/export-vault.js';
 import { rebuildFromVault } from '../../dist/vault/rebuild.js';
 import { writeGraphSidecar } from '../../dist/vault/sidecar.js';
+import { vaultGitignore, vaultGitattributes } from '../../dist/vault/git-init.js';
 import { mergeGraphs, mergeGraphFiles, exportGraph } from '../../dist/graph/graph-export.js';
 
 const ART = resolve('.battle/artifacts/team');
@@ -34,11 +35,14 @@ function gitInitVault(dir) {
   git(dir, 'init -b main');
   git(dir, 'config user.email dev@helios.test');
   git(dir, 'config user.name Dev');
-  // What `memory vault-init` writes: bind the sidecar to the union merge driver
-  // via .gitattributes (committed → inherited by clones) AND register the driver
-  // in local git config. Without the .gitattributes line git falls back to a
-  // plain text merge and the deterministic graph artifact conflicts.
-  writeFileSync(`${dir}/.gitattributes`, '.memory/graph.json merge=memory-union\n');
+  // What `memory vault-init` writes — use the REAL scaffolding generators so the
+  // sim can't drift from production. .gitattributes binds the GRAPH sidecar to the
+  // union merge driver (committed → inherited by clones); .gitignore excludes the
+  // rebuildable SQLite cache AND the derived per-writer integrity manifest (whose
+  // single-file merkle root can never auto-merge — committing it conflicts on every
+  // concurrent team push). The driver is registered in local git config too.
+  writeFileSync(`${dir}/.gitattributes`, vaultGitattributes());
+  writeFileSync(`${dir}/.gitignore`, vaultGitignore());
   git(dir, `config merge.memory-union.name "mcp graph union"`);
   execSync(`git config merge.memory-union.driver 'node "${DIST_ENTRY}" merge-graphs %A %B %A'`, { cwd: dir });
 }
@@ -126,7 +130,13 @@ try {
   git(vaultA, 'merge -q --no-edit devb/main');
 } catch (e) {
   mergeOk = false;
-  mergeErr = (e.stderr?.toString() || e.stdout?.toString() || e.message).slice(0, 400);
+  // Capture BOTH streams: git writes CONFLICT lines to stdout while a custom merge
+  // driver (memory-union) writes its success line to stderr — capturing only one
+  // would let the driver's chatter shadow the real conflict (which is exactly how
+  // the manifest-conflict regression hid: stderr said "Merged …" while stdout said
+  // "CONFLICT (content): … .memory/manifest.json").
+  const out = `${e.stdout?.toString() ?? ''}\n${e.stderr?.toString() ?? ''}`.trim();
+  mergeErr = (out || e.message).slice(0, 600);
 }
 // did the sidecar end up with conflict markers (driver failed) or valid JSON?
 const sidecarPath = resolve(vaultA, '.memory/graph.json');
@@ -135,7 +145,12 @@ conflictMarkers = /^<<<<<<<|^=======|^>>>>>>>/m.test(sidecarRaw);
 let sidecarValidJson = false;
 try { JSON.parse(sidecarRaw); sidecarValidJson = true; } catch {}
 
-// rebuild merged vault into a fresh db, verify BOTH new memories survived
+// rebuild merged vault into a fresh db, verify BOTH new memories survived.
+// Mirror the production post-merge hook: a git merge legitimately changed the .md
+// set, so the stale local integrity manifest must be dropped before rebuild (else
+// assertVaultIntegrity refuses, mistaking the merge for tampering). It regenerates
+// on the next sync/export.
+rmSync(resolve(vaultA, '.memory/manifest.json'), { force: true });
 const dbMPath = resolve(ART, 'merged.db');
 const dbM = freshDb(dbMPath);
 const rebuildM = await rebuildFromVault(dbM, embedder, vaultA);
@@ -164,3 +179,26 @@ result.sidecarUnion = {
 
 console.log(JSON.stringify(result, null, 2));
 [dbA, dbB].forEach((d) => d.close());
+
+// ── GATE: turn the report into a real pass/fail so a regression can't slip past
+// with a clean exit code (the manifest-conflict bug did exactly that). Each check
+// is a load-bearing team-collaboration invariant.
+const checks = {
+  devB_recall_parity: result.devB.recall_parity === true,
+  devB_lossless_roundtrip: result.devB.lossless_roundtrip === true,
+  devB_id_preserved: result.devB.id_preserved === true,
+  merge_clean: result.merge.ok === true,
+  no_conflict_markers: result.merge.sidecar_conflict_markers === false,
+  sidecar_valid_json: result.merge.sidecar_valid_json === true,
+  A_edit_survived: result.merge.A_edit_survived === true,
+  B_edit_survived: result.merge.B_edit_survived === true,
+  union_order_independent: result.sidecarUnion.order_independent === true,
+};
+const failed = Object.entries(checks).filter(([, ok]) => !ok).map(([k]) => k);
+if (failed.length) {
+  console.error(`\nSIM-TEAM FAIL — ${failed.length} invariant(s) broken: ${failed.join(', ')}`);
+  if (result.merge.error) console.error(`merge error:\n${result.merge.error}`);
+  process.exitCode = 1;
+} else {
+  console.error('\nSIM-TEAM OK — all team-collaboration invariants held.');
+}

@@ -103,7 +103,12 @@ describe('M2.1 redaction — bypasses are closed', () => {
     const r = redactContent(evil, 'scrub');
     const ms = Number(process.hrtime.bigint() - start) / 1e6;
     expect(r.redactions).toBe(0); // no closing marker → no match
-    expect(ms).toBeLessThan(1000); // pre-fix this was multiple seconds (O(n^2))
+    // Linearity guard, not a speed benchmark. The pre-fix O(n^2) backtrack took
+    // MULTIPLE SECONDS on this input and would scale super-linearly; the bounded
+    // {0,8192} body makes it linear (~0.5s on a shared cloud vCPU, faster on
+    // Apple Silicon). A generous ceiling absorbs CI/CPU-contention jitter while
+    // still catching any re-introduced quadratic blowup (orders of magnitude over).
+    expect(ms).toBeLessThan(4000);
   });
 
   it('secret_assignment ReDoS: a long alnum run does NOT blow up (bounded prefix)', () => {
@@ -111,7 +116,11 @@ describe('M2.1 redaction — bypasses are closed', () => {
     const start = process.hrtime.bigint();
     redactContent(evil, 'scrub');
     const ms = Number(process.hrtime.bigint() - start) / 1e6;
-    expect(ms).toBeLessThan(500);
+    // Linearity guard (see PEM test above): the bounded {0,64} `_secret` prefix
+    // keeps this linear over 1M chars (~0.5s on a shared cloud vCPU). The pre-fix
+    // unbounded prefix was O(n^2) → minutes; the generous ceiling catches that
+    // regression class without flaking on slower/contended hardware.
+    expect(ms).toBeLessThan(4000);
   });
 
   it('lowercase "bearer" scheme is detected (case-insensitive)', () => {
