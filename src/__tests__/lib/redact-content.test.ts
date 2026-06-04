@@ -16,6 +16,43 @@
 import { describe, it, expect } from 'vitest';
 import { redactContent, REDACTION_PATTERNS } from '../../lib/redact-content.js';
 
+describe('redactContent — whitespace-split defense (M2-LOW)', () => {
+  it('catches an AWS key wrapped by a space or newline (terminal/email wrap)', () => {
+    for (const split of [' ', '\n', '\r\n', '\t']) {
+      const r = redactContent(`creds: AKIAIOSFODNN${split}7EXAMPLE done`, 'scrub');
+      expect(r.redactions, JSON.stringify(split)).toBe(1);
+      expect(r.kinds).toEqual(['aws_access_key']);
+      expect(r.content).not.toContain('AKIA');
+      expect(r.content).not.toContain('7EXAMPLE');
+    }
+  });
+
+  it('catches a github token split across a newline', () => {
+    const tok = 'ghp_' + 'a'.repeat(15) + '\n' + 'b'.repeat(15);
+    const r = redactContent(`token=${tok}`, 'scrub');
+    expect(r.redactions).toBe(1);
+    expect(r.kinds).toEqual(['github_token']);
+  });
+
+  it('blocks a split secret in block mode', () => {
+    expect(() => redactContent('AKIAIOSFODNN\n7EXAMPLE', 'block')).toThrow(/aws_access_key/);
+  });
+
+  it('does NOT false-positive on all-caps prose with spaces (AKIA-like)', () => {
+    // "AKIA" is a rare sigil, but ensure ordinary uppercase headings never match.
+    const r = redactContent('THE NORTH AMERICA REGION TODO LIST FOR Q3 PLANNING', 'scrub');
+    expect(r.redactions).toBe(0);
+  });
+
+  it('does NOT bridge whitespace for prose-adjacent sigils (sk-/bearer excluded)', () => {
+    // "ask- " + a long word must not glue into an sk- key; "bearer of" must not match.
+    const r1 = redactContent('please ask- someverylongwordwithtwentychars here', 'scrub');
+    expect(r1.kinds).not.toContain('openai_key');
+    const r2 = redactContent('the bearer of twentycharslongnews tonight', 'scrub');
+    expect(r2.kinds).not.toContain('bearer_token');
+  });
+});
+
 describe('redactContent — pattern detection (scrub mode)', () => {
   it('redacts an OpenAI sk- key', () => {
     const r = redactContent('key is sk-abcdEFGH1234abcdEFGH5678abcdEFGH1234abcdT3BlbkFJ here', 'scrub');

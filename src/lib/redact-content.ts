@@ -51,6 +51,19 @@ export function redactModeFromEnv(): RedactMode {
  */
 const ZERO_WIDTH_RE = /[\u200B\u200C\u200D\u2060\uFEFF\u00AD]/g;
 
+/**
+ * Redaction kinds whose SIGIL is rare enough (never an English word) that
+ * matching across collapsed whitespace cannot false-positive on prose, so they
+ * participate in the whitespace-split defense. sk-/bearer/secret-assignment are
+ * intentionally absent (prose-adjacent sigils \u2192 false positives if bridged).
+ */
+const WS_SPLIT_KINDS: ReadonlySet<string> = new Set([
+  'aws_access_key',
+  'github_token',
+  'jwt',
+  'private_key',
+]);
+
 export interface RedactionPattern {
   /** Stable machine kind, surfaced in placeholders and block errors. */
   kind: string;
@@ -169,6 +182,47 @@ export function redactContent(text: string, mode: RedactMode): RedactResult {
         continue;
       }
       spans.push({ start: m.index, end: m.index + m[0].length, kind });
+    }
+  }
+
+  // M2-LOW — whitespace-split defense. A credential wrapped across lines or
+  // spaces (terminal paste, email/column wrap: `AKIAIOSFODNN\n7EXAMPLE`) splits
+  // the contiguous run so the patterns above miss it. Scan a whitespace-REMOVED
+  // copy too, but ONLY for the rare-SIGIL patterns whose prefix is never an
+  // English word (AKIA / gh[pousr]_ / eyJ): bridging whitespace there cannot
+  // match prose. sk-/bearer/secret-assignment are deliberately EXCLUDED — their
+  // sigils are prose-adjacent (`ask-`, "bearer of", "password is") so collapsing
+  // whitespace around them would false-positive on ordinary all-caps/identifier
+  // text. Each extra match is mapped back to its ORIGINAL span (internal
+  // whitespace included) so scrub removes the whole split secret as one unit.
+  const wsCollapsed: string[] = [];
+  const idxMap: number[] = []; // wsCollapsed[i] came from scan[idxMap[i]]
+  for (let i = 0; i < scan.length; i++) {
+    const ch = scan[i];
+    if (ch !== ' ' && ch !== '\t' && ch !== '\n' && ch !== '\r' && ch !== '\f' && ch !== '\v') {
+      wsCollapsed.push(ch);
+      idxMap.push(i);
+    }
+  }
+  const collapsed = wsCollapsed.join('');
+  if (collapsed.length !== scan.length) {
+    for (const { kind, regex } of REDACTION_PATTERNS) {
+      if (!WS_SPLIT_KINDS.has(kind)) continue;
+      regex.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = regex.exec(collapsed)) !== null) {
+        if (m[0].length === 0) {
+          regex.lastIndex += 1;
+          continue;
+        }
+        const origStart = idxMap[m.index];
+        const origEnd = idxMap[m.index + m[0].length - 1] + 1;
+        // Only add it if the original span actually spans whitespace (otherwise
+        // it duplicates a contiguous match already found above).
+        if (origEnd - origStart > m[0].length) {
+          spans.push({ start: origStart, end: origEnd, kind });
+        }
+      }
     }
   }
 

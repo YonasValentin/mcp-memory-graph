@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import { liveConditions, scopeConditions } from '../db/predicates.js';
-import { verifyEnvelope } from '../provenance/envelope.js';
+import { verifyEnvelopeAny, trustedPubkeys } from '../provenance/envelope.js';
 
 /**
  * M2.2 — memory_verify (read-only).
@@ -65,8 +65,12 @@ const MAX_LIMIT = 1000;
 
 export function handleVerify(
   db: Database.Database,
-  input: { id?: string; scope?: string; namespace?: string; limit?: number },
+  input: { id?: string; scope?: string; namespace?: string; limit?: number; trusted_pubkeys?: string[] },
 ): VerifyResult {
+  // Trust allowlist (M2-LOW): own key + MCP_TRUSTED_PUBKEYS files + any PEM keys
+  // passed inline on this call. A teammate's valid signature on a synced vault
+  // then reads 'verified' instead of 'untrusted'.
+  const allowlist = [...trustedPubkeys(), ...(input.trusted_pubkeys ?? [])];
   let rows: VerifyRow[];
 
   if (input.id !== undefined) {
@@ -89,7 +93,7 @@ export function handleVerify(
   const summary: VerifySummary = { verified: 0, unsigned: 0, tampered: 0, untrusted: 0 };
 
   for (const row of rows) {
-    const outcome = verifyEnvelope(row.content, {
+    const outcome = verifyEnvelopeAny(row.content, {
       content_hash: row.content_hash,
       signature: row.signature,
       pubkey: row.pubkey,
@@ -105,7 +109,7 @@ export function handleVerify(
       valid_from: row.valid_from,
       created_at: row.created_at,
       signed_at: row.signed_at,
-    });
+    }, allowlist);
 
     let status: VerifyEntry['status'];
     if (outcome.ok) {

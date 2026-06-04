@@ -229,3 +229,52 @@ export function verifyEnvelope(
 
   return verified ? { ok: true } : { ok: false, reason: 'bad_signature' };
 }
+
+/**
+ * Multi-machine trust store (M2-LOW). The set of public keys this deployment
+ * accepts as authentic signers: ALWAYS this machine's own signing key, plus any
+ * teammate keys listed in `MCP_TRUSTED_PUBKEYS` — a `:`- or `,`-separated list
+ * of FILE PATHS to SPKI PEM public-key files (paths, not inline PEM, so the env
+ * var stays single-line). Unreadable paths are skipped (a missing teammate key
+ * must not break verification of your own rows). This is what lets a team
+ * git-vault verify each member's signed memories instead of flagging them all
+ * 'untrusted'.
+ */
+export function trustedPubkeys(): string[] {
+  const keys: string[] = [getSigningKey().publicKeyPem];
+  const raw = process.env.MCP_TRUSTED_PUBKEYS;
+  if (raw) {
+    for (const p of raw.split(/[:,]/).map((s) => s.trim()).filter(Boolean)) {
+      try {
+        keys.push(readFileSync(p, 'utf8'));
+      } catch {
+        /* unreadable trusted-key path — skip, never fail verification over it */
+      }
+    }
+  }
+  return keys;
+}
+
+/**
+ * Verify a row against an ALLOWLIST of trusted public keys (default:
+ * {@link trustedPubkeys}). Returns ok if the row's signature verifies under ANY
+ * trusted key. The failure reason is the most informative across the allowlist:
+ * a key-independent `content_mismatch` (the content was edited) short-circuits;
+ * otherwise a `bad_signature` (a trusted key matched the row's pubkey but the
+ * signature failed) outranks `untrusted_key` (no trusted key matched at all).
+ */
+export function verifyEnvelopeAny(
+  content: string,
+  row: VerifiableRow,
+  allowlist: string[] = trustedPubkeys(),
+): VerifyOutcome {
+  if (!row.signature || !row.pubkey) return { ok: false, reason: 'unsigned' };
+  let reason: VerifyReason = 'untrusted_key';
+  for (const key of allowlist) {
+    const o = verifyEnvelope(content, row, key);
+    if (o.ok) return o;
+    if (o.reason === 'content_mismatch') return o; // key-independent, decisive
+    if (o.reason === 'bad_signature') reason = 'bad_signature';
+  }
+  return { ok: false, reason };
+}

@@ -575,6 +575,14 @@ export const MemoryVerifySchema = z.object({
     .max(1000)
     .optional()
     .describe('Max memories to verify in batch mode (default 100)'),
+  trusted_pubkeys: z
+    .array(z.string())
+    .optional()
+    .describe(
+      'Additional trusted signer public keys (SPKI PEM) for multi-machine/team ' +
+      'vaults — a memory signed by any of these (or by MCP_TRUSTED_PUBKEYS, or this ' +
+      "machine's own key) verifies instead of reading 'untrusted'.",
+    ),
 });
 
 // ---------------------------------------------------------------------------
