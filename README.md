@@ -241,8 +241,9 @@ When a search returns zero results, the query is logged. During the dream cycle'
 
 ### Prerequisites
 
-- **Node.js 20+** (required)
-- **Claude Code** installed and authenticated ([docs](https://docs.anthropic.com/en/docs/claude-code)). The Stop hook spawns `claude -p` in headless mode, so the binary must be on `$PATH` (or pointed at via `$CLAUDE_BIN`) and authenticated without prompting.
+- **Node.js 20+** (required, for any client).
+- **An MCP client.** This guide targets **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** (primary) and **[OpenAI Codex CLI](https://developers.openai.com/codex/)**. The automatic capture/recall **hooks are Claude-Code-only** — Codex has no hook system, so there it's driven via the tools + `AGENTS.md`.
+- **For the Claude Code Stop hook only:** the `claude` binary must be on `$PATH` (or `$CLAUDE_BIN`) and authenticated without prompting (it spawns `claude -p` headless). Optional — disable with `review_on_stop: false`.
 
 ### Build from Source
 
@@ -252,6 +253,8 @@ cd mcp-memory-graph
 npm install
 npm run build
 ```
+
+## Setup — Claude Code
 
 ### Add to Claude Code
 
@@ -309,7 +312,7 @@ npx mcp-memory-graph init --scope project --yes   # local: hooks + .mcp.json, un
 external prerequisite (for the optional Stop hook) is the `claude` CLI on `$PATH`,
 authenticated; skip it with `review_on_stop: false` in the config.
 
-### Verify Installation
+### Verify (Claude Code)
 
 In a Claude Code session, ask:
 ```
@@ -317,6 +320,68 @@ What memory tools do you have available?
 ```
 
 Claude should list all 49 tools (43 `memory_*` + 3 `vault_*` + 3 `core_memory_*`).
+
+---
+
+## Setup — Codex (OpenAI Codex CLI)
+
+Codex speaks MCP too, but configures it in `config.toml` and has **no hook
+system** — so the automatic capture/recall hooks above don't apply. With Codex you
+register the server (all 49 tools) and steer the agent to use them via `AGENTS.md`.
+
+### Local (stdio)
+
+Add to `~/.codex/config.toml` (global) or `.codex/config.toml` (project — trusted
+projects only):
+
+```toml
+[mcp_servers.memory-graph]
+command = "node"
+args = ["/abs/path/to/mcp-memory-graph/dist/index.js"]
+tool_timeout_sec = 180   # first call downloads the ~30 MB model once; the 60s default can be tight
+
+[mcp_servers.memory-graph.env]
+MCP_MEMORY_DB_PATH = "/abs/path/to/.mcp-memory/memory.db"
+```
+
+…or via the CLI:
+
+```bash
+codex mcp add memory-graph -- node /abs/path/to/mcp-memory-graph/dist/index.js
+```
+
+### Shared server (HTTP)
+
+Point Codex at a running server (see [Self-hosting](#self-hosting--sharing-a-memory-base)).
+Codex supports streamable-HTTP MCP servers with a bearer token from an env var:
+
+```toml
+[mcp_servers.memory-graph]
+url = "https://memory.example.com/mcp"
+bearer_token_env_var = "MEMORY_MCP_TOKEN"
+```
+
+### Tell the agent to use it (`AGENTS.md`)
+
+Codex has no hooks, so put the usage guidance in your project `AGENTS.md` (Codex's
+equivalent of `CLAUDE.md`):
+
+```markdown
+## Memory (memory-graph MCP)
+- Before answering questions about architecture, decisions, patterns, conventions,
+  or past fixes, call `memory_search` on the `memory-graph` server first.
+- Store new decisions / patterns / bug fixes with `memory_store`.
+```
+
+### Verify (Codex)
+
+```bash
+codex mcp list          # "memory-graph" should be listed
+```
+
+Then in a Codex session ask "what memory tools do you have?" — it should list the
+`memory_*` / `vault_*` / `core_memory_*` tools. (The first call downloads the
+~30 MB model once; if it exceeds the tool timeout, raise `tool_timeout_sec`.)
 
 ---
 
@@ -361,10 +426,12 @@ npx mcp-memory-graph init --remote https://memory.example.com --token-env MEMORY
 export MEMORY_MCP_TOKEN=<the server token>     # in your shell or .env
 ```
 
-This writes a project `.mcp.json` pointing at the shared server over HTTP. The
-token is stored as an **env-var reference** (`"Authorization": "Bearer ${MEMORY_MCP_TOKEN}"`),
-so the committed `.mcp.json` never contains the secret — each user supplies the
-token from their own environment.
+This writes (for **Claude Code**) a project `.mcp.json` pointing at the shared
+server over HTTP. The token is stored as an **env-var reference**
+(`"Authorization": "Bearer ${MEMORY_MCP_TOKEN}"`), so the committed `.mcp.json`
+never contains the secret — each user supplies the token from their own
+environment. (**Codex:** add the same server to `config.toml` with `url` +
+`bearer_token_env_var` — see [Setup — Codex](#setup--codex-openai-codex-cli).)
 
 | Flag | Effect |
 |------|--------|
