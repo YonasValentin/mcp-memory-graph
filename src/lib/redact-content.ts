@@ -64,6 +64,12 @@ const WS_SPLIT_KINDS: ReadonlySet<string> = new Set([
   'private_key',
 ]);
 
+/** Cheap linear pre-checks that gate the whitespace-split scan (perf). Only when
+ * the text has BOTH whitespace AND a rare ws-split sigil is the O(n) index-map
+ * worth building. The sigil set mirrors WS_SPLIT_KINDS' prefixes. */
+const WS_SPLIT_WHITESPACE_RE = /[ \t\n\r\f\v]/;
+const WS_SPLIT_SIGIL_RE = /AKIA|gh[pousr]_|eyJ|-----BEGIN/;
+
 export interface RedactionPattern {
   /** Stable machine kind, surfaced in placeholders and block errors. */
   kind: string;
@@ -189,23 +195,28 @@ export function redactContent(text: string, mode: RedactMode): RedactResult {
   // spaces (terminal paste, email/column wrap: `AKIAIOSFODNN\n7EXAMPLE`) splits
   // the contiguous run so the patterns above miss it. Scan a whitespace-REMOVED
   // copy too, but ONLY for the rare-SIGIL patterns whose prefix is never an
-  // English word (AKIA / gh[pousr]_ / eyJ): bridging whitespace there cannot
-  // match prose. sk-/bearer/secret-assignment are deliberately EXCLUDED — their
-  // sigils are prose-adjacent (`ask-`, "bearer of", "password is") so collapsing
-  // whitespace around them would false-positive on ordinary all-caps/identifier
-  // text. Each extra match is mapped back to its ORIGINAL span (internal
-  // whitespace included) so scrub removes the whole split secret as one unit.
-  const wsCollapsed: string[] = [];
-  const idxMap: number[] = []; // wsCollapsed[i] came from scan[idxMap[i]]
-  for (let i = 0; i < scan.length; i++) {
-    const ch = scan[i];
-    if (ch !== ' ' && ch !== '\t' && ch !== '\n' && ch !== '\r' && ch !== '\f' && ch !== '\v') {
-      wsCollapsed.push(ch);
-      idxMap.push(i);
+  // English word (AKIA / gh[pousr]_ / eyJ / PEM): bridging whitespace there
+  // cannot match prose. sk-/bearer/secret-assignment are deliberately EXCLUDED —
+  // their sigils are prose-adjacent (`ask-`, "bearer of", "password is") so
+  // collapsing whitespace around them would false-positive on ordinary all-caps/
+  // identifier text. Each extra match is mapped back to its ORIGINAL span
+  // (internal whitespace included) so scrub removes the whole split secret.
+  //
+  // PERF: skip the whole O(n) index-map build unless the text BOTH contains
+  // whitespace AND carries a ws-split sigil. Both pre-checks are linear, no
+  // backtracking, so a 1MB no-whitespace alnum run (the ReDoS probe) short-
+  // circuits without paying for the per-char map or the extra regex pass.
+  if (WS_SPLIT_WHITESPACE_RE.test(scan) && WS_SPLIT_SIGIL_RE.test(scan)) {
+    const wsCollapsed: string[] = [];
+    const idxMap: number[] = []; // wsCollapsed[i] came from scan[idxMap[i]]
+    for (let i = 0; i < scan.length; i++) {
+      const ch = scan[i];
+      if (ch !== ' ' && ch !== '\t' && ch !== '\n' && ch !== '\r' && ch !== '\f' && ch !== '\v') {
+        wsCollapsed.push(ch);
+        idxMap.push(i);
+      }
     }
-  }
-  const collapsed = wsCollapsed.join('');
-  if (collapsed.length !== scan.length) {
+    const collapsed = wsCollapsed.join('');
     for (const { kind, regex } of REDACTION_PATTERNS) {
       if (!WS_SPLIT_KINDS.has(kind)) continue;
       regex.lastIndex = 0;
