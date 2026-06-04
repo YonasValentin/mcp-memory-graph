@@ -210,6 +210,16 @@ export const MemorySearchSchema = z.object({
     .max(1)
     .optional()
     .describe('Minimum confidence score threshold (0-1)'),
+  min_groundedness: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe(
+      'Minimum TRUST threshold (0-1), distinct from min_confidence (relevance). ' +
+      'Drops results whose groundedness — stored confidence_score + provenance ' +
+      'tier + recency — is below this. Use to demand well-sourced memories.',
+    ),
   as_of: z
     .string()
     .datetime({ message: 'as_of must be a full ISO-8601 timestamp, e.g. 2026-03-01T00:00:00Z' })
@@ -543,6 +553,26 @@ export const MemoryStatsSchema = z.object({
   scope: scopeField(false),
   namespace: namespaceField(),
   department: departmentField(),
+});
+
+// ---------------------------------------------------------------------------
+// 10a. MemoryVerifySchema (M2.2 — signed provenance verification)
+// ---------------------------------------------------------------------------
+
+export const MemoryVerifySchema = z.object({
+  id: z
+    .string()
+    .optional()
+    .describe('Verify a single memory by id. Omit to verify a batch by scope/namespace.'),
+  scope: scopeField(false),
+  namespace: namespaceField(),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(1000)
+    .optional()
+    .describe('Max memories to verify in batch mode (default 100)'),
 });
 
 // ---------------------------------------------------------------------------

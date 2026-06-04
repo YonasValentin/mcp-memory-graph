@@ -44,10 +44,19 @@ export async function handleImport(
   db: Database.Database,
   embedder: EmbeddingProvider,
   input: { data: unknown[]; overwrite: boolean },
-): Promise<{ imported: number; skipped: number; errors: number }> {
+  // M2.7 — namespace forcing. Unlike the other write tools, memory_import is NOT
+  // covered by server.ts's top-level withForcedNs wrap: each item carries its own
+  // namespace under data[], so a top-level wrap is a no-op and a namespace-pinned
+  // deployment (MCP_API_NAMESPACE) could otherwise import foreign-namespace items.
+  // Decision = REMAP: when a forced namespace is configured, every imported item
+  // is relabeled to it before insert/overwrite. Undefined → no scoping (local
+  // single-user default), preserving the per-item namespace (current behaviour).
+  forcedNamespace?: string,
+): Promise<{ imported: number; skipped: number; errors: number; remapped: number }> {
   let imported = 0;
   let skipped = 0;
   let errors = 0;
+  let remapped = 0;
 
   const validItems: ImportItem[] = [];
   for (const item of input.data) {
@@ -59,7 +68,19 @@ export async function handleImport(
   }
 
   if (validItems.length === 0) {
-    return { imported, skipped, errors };
+    return { imported, skipped, errors, remapped };
+  }
+
+  // REMAP: relabel every valid item to the forced namespace before embedding/
+  // insert. We count each item whose effective namespace is being driven by the
+  // forced policy (i.e. all of them when forcing is on, including items that
+  // already happened to match — the relabel is the security guarantee, not a
+  // diff). Mutating the parsed item is safe: it is a fresh per-call object.
+  if (forcedNamespace !== undefined) {
+    for (const item of validItems) {
+      item.namespace = forcedNamespace;
+      remapped++;
+    }
   }
 
   const contents = validItems.map(item => item.content);
@@ -67,7 +88,7 @@ export async function handleImport(
   try {
     embeddings = await embedder.embedBatch(contents);
   } catch {
-    return { imported: 0, skipped: 0, errors: input.data.length };
+    return { imported: 0, skipped: 0, errors: input.data.length, remapped: 0 };
   }
 
   const now = new Date().toISOString();
@@ -91,6 +112,16 @@ export async function handleImport(
                 : existing.metadata,
               expires_at: item.expires_at ?? existing.expires_at,
             };
+
+            // REMAP on overwrite: a forced namespace must also rewrite the row's
+            // namespace, else an attacker could pin a foreign-namespace export to
+            // an existing id and drag the row out of the forced tenant. item.namespace
+            // is already set to forcedNamespace above; only push it through the
+            // update when forcing is on so the no-force path stays a content-only
+            // update (no namespace churn).
+            if (forcedNamespace !== undefined) {
+              updates.namespace = forcedNamespace;
+            }
 
             updateMemory(db, existingId!, updates, embeddings[i]);
             imported++;
@@ -149,5 +180,5 @@ export async function handleImport(
   // write-upgrade.
   process.immediate();
 
-  return { imported, skipped, errors };
+  return { imported, skipped, errors, remapped };
 }

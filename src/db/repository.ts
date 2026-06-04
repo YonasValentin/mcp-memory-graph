@@ -1,6 +1,12 @@
 import type Database from 'better-sqlite3';
 import type { Memory, MemoryRow, ListOptions, AccessLogEntry, IngestSourceRecord } from '../types.js';
 import { NOW_ISO_SQL } from './predicates.js';
+import { signEnvelope } from '../provenance/envelope.js';
+
+/** Whether to attach a signed provenance envelope on write (M2.2, opt-in). */
+function signingEnabled(): boolean {
+  return process.env.MCP_SIGN_MEMORIES === '1' || process.env.MCP_SIGN_MEMORIES === 'true';
+}
 
 export function insertMemory(
   db: Database.Database,
@@ -26,6 +32,28 @@ export function insertMemory(
 
     const result = stmt.run({ ...memory, agent_id: memory.agent_id ?? null });
     const rowid = BigInt(result.lastInsertRowid);
+
+    // M2.2 — signed provenance envelope (opt-in via MCP_SIGN_MEMORIES). Sign the
+    // stored content + the fields that are STABLE at insert (agent_id, scope,
+    // namespace, valid_from=created_at, created_at). provenance is excluded — it
+    // is mutated post-insert (reflect) and verify.ts omits it too, so the two
+    // stay symmetric. signed_at is the row's own created_at for determinism.
+    if (signingEnabled()) {
+      const env = signEnvelope(
+        memory.content,
+        {
+          agent_id: memory.agent_id ?? null,
+          scope: memory.scope,
+          namespace: memory.namespace ?? null,
+          valid_from: memory.created_at,
+          created_at: memory.created_at,
+        },
+        memory.created_at,
+      );
+      db.prepare(
+        'UPDATE memories SET content_hash = ?, signature = ?, pubkey = ?, signed_at = ? WHERE id = ?',
+      ).run(env.content_hash, env.signature, env.pubkey, env.signed_at, memory.id);
+    }
 
     db.prepare(
       'INSERT INTO memories_vec(rowid, embedding, scope, namespace) VALUES (?, ?, ?, ?)',

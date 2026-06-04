@@ -10,6 +10,7 @@ import {
 import { handleUpdate } from './update.js';
 import { chunkContent } from '../chunking/chunker.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
+import { redactContent, redactModeFromEnv } from '../lib/redact-content.js';
 
 interface IngestInput {
   content: string;
@@ -33,6 +34,18 @@ export async function handleIngest(
   input: IngestInput,
 ): Promise<IngestResult> {
   const now = new Date().toISOString();
+
+  // M2.1 — inbound redaction gate (opt-in via MCP_REDACT_MODE). Redact the whole
+  // document BEFORE chunking/hashing so secrets never reach a chunk, the vector
+  // index, or the dedup hash. 'block' throws → ingest rejected; 'scrub' replaces.
+  {
+    const { content: safe, redactions, kinds } = redactContent(input.content, redactModeFromEnv());
+    if (redactions > 0) {
+      input.content = safe;
+      input.metadata = { ...(input.metadata ?? {}), redactions, redaction_kinds: kinds };
+    }
+  }
+
   const tagsJson = input.tags ? JSON.stringify(input.tags) : null;
   const metadataJson = input.metadata ? JSON.stringify(input.metadata) : null;
   const scope = input.scope ?? 'global';

@@ -117,18 +117,34 @@ export async function handleCondense(
  *
  * `restored` is true if EITHER applied. A live, never-condensed memory has
  * nothing to do → `restored:false`.
+ *
+ * REFUSAL (M2.8): the NLI write-gate retires a CONTRADICTED fact the same way a
+ * soft FORGET does — invalidateMemory stamps `valid_to` (and leaves
+ * `superseded_at` NULL) — so un-tombstoning it blindly would reinstate a stale
+ * fact next to its correction. Restore therefore distinguishes the two by the
+ * gate's exact footprint: an UNRESOLVED `memory_conflicts` row of type
+ * 'contradicted' pointing at this memory. A soft FORGET records no such row, so
+ * it still restores. When a contradiction is detected the call refuses up front
+ * (`restored:false`, `reason:'contradiction-retired'`) — nothing is mutated, so
+ * a condensed-and-contradicted fact is not silently un-condensed either.
  */
 export async function handleRestore(
   db: Database.Database,
   embedder: EmbeddingProvider,
   input: { id: string },
-): Promise<{ restored: boolean; message: string; reinstated?: boolean; uncondensed?: boolean }> {
+): Promise<{
+  restored: boolean;
+  message: string;
+  reason?: 'contradiction-retired';
+  reinstated?: boolean;
+  uncondensed?: boolean;
+}> {
   // Tombstone columns aren't on the partial MemoryRow type — read them with an
   // explicit typed query (matches the repository's bitemporal-column pattern).
   // An absent row means the memory doesn't exist.
   const tomb = db
-    .prepare<[string], { valid_to: string | null; tx_expired: string | null }>(
-      'SELECT valid_to, tx_expired FROM memories WHERE id = ?',
+    .prepare<[string], { valid_to: string | null; tx_expired: string | null; superseded_at: string | null }>(
+      'SELECT valid_to, tx_expired, superseded_at FROM memories WHERE id = ?',
     )
     .get(input.id);
   if (!tomb) {
@@ -136,6 +152,30 @@ export async function handleRestore(
   }
   // Snapshot the tombstone state before any mutation below.
   const wasTombstoned = tomb.valid_to !== null || tomb.tx_expired !== null;
+
+  // M2.8 refusal: a fact retired by the NLI write-gate as a CONTRADICTION is
+  // tombstoned (valid_to set) with superseded_at still NULL, and the gate
+  // records a `memory_conflicts` row of type 'contradicted'. Reinstating it
+  // would put a stale fact back next to its correction, so refuse up front —
+  // BEFORE any un-condense / un-tombstone mutation. We only refuse a tombstoned
+  // row (a live row has nothing to reinstate) and ignore RESOLVED conflict rows
+  // (historical audit, not an active retirement).
+  if (wasTombstoned && tomb.superseded_at === null) {
+    const contradiction = db
+      .prepare<[string], { count: number }>(
+        `SELECT COUNT(*) AS count FROM memory_conflicts
+         WHERE old_memory_id = ? AND conflict_type = 'contradicted' AND resolved_at IS NULL`,
+      )
+      .get(input.id);
+    if (contradiction && contradiction.count > 0) {
+      return {
+        restored: false,
+        reason: 'contradiction-retired',
+        message:
+          'Refused: this fact was retired by an NLI-detected contradiction (a correcting fact supersedes it). Reinstating it would place a stale fact next to its correction. Restore the correcting fact instead, or store the intended fact fresh.',
+      };
+    }
+  }
 
   // 1. Un-condense: restore original full content if this memory was condensed.
   const original = db

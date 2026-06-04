@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { EmbeddingProvider, SearchResult, MemoryRow } from '../types.js';
 import { getMemoryById, getMemoryRowid, rowToMemory, recordAccess } from '../db/repository.js';
-import { cosineSimFromL2, confidenceLabel } from '../search/scoring.js';
+import { cosineSimFromL2, confidenceLabel, computeGroundedness } from '../search/scoring.js';
 
 interface VecMatch {
   rowid: number;
@@ -75,11 +75,25 @@ export async function handleRelated(
 
     const ageDays = Math.max(0, Math.floor((Date.now() - new Date(row.updated_at).getTime()) / 86_400_000));
 
+    const { groundedness, groundedness_level } = computeGroundedness(
+      {
+        confidence_score: row.confidence_score,
+        provenance: row.provenance,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        valid_to: row.valid_to,
+        access_count: row.access_count,
+      },
+      new Date().toISOString(),
+    );
+
     results.push({
       memory: rowToMemory(row),
       score: similarity,
       confidence,
       confidence_level: confidenceLevel,
+      groundedness,
+      groundedness_level,
       match_type: 'vector',
       age_days: ageDays,
       freshness_warning: ageDays > 90

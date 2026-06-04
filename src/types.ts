@@ -150,6 +150,9 @@ export interface SearchOptions {
   date_from?: string;
   date_to?: string;
   min_confidence?: number;
+  /** Trust floor (M2.4): drop results whose groundedness < this. Distinct from
+   *  min_confidence (relevance). */
+  min_groundedness?: number;
   /** ISO-8601 instant: return what was valid at this point in time instead of currently-valid. */
   as_of?: string;
   /**
@@ -182,6 +185,10 @@ export interface SearchResult {
   score: number;
   confidence: number;
   confidence_level: ConfidenceLevel;
+  /** Trust signal (M2.4) — distinct from `confidence` (pure relevance). Folds
+   *  the stored confidence_score, provenance tier, and recency into [0,1]. */
+  groundedness: number;
+  groundedness_level: ConfidenceLevel;
   match_type: 'vector' | 'keyword' | 'hybrid';
   age_days: number;
   freshness_warning: string | null;

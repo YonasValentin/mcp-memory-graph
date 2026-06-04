@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { EmbeddingProvider, SearchOptions, SearchResult, SearchResultSummary, SearchResultIdOnly, MemoryRow } from '../types.js';
 import { applyTemporalDecay } from './temporal.js';
-import { computeConfidence, confidenceLabel } from './scoring.js';
+import { computeConfidence, confidenceLabel, computeGroundedness } from './scoring.js';
 import { NOW_ISO_SQL } from '../db/predicates.js';
 import { rowToMemory } from '../db/repository.js';
 import { extractEntitiesRegex } from '../graph/entity-extractor.js';
@@ -341,21 +341,40 @@ export async function hybridSearch(
 
     const ageDays = memoryAgeDays(row.updated_at);
 
+    // Groundedness (M2.4): a TRUST signal distinct from relevance `confidence`.
+    // Folds the stored confidence_score + provenance tier + recency.
+    const { groundedness, groundedness_level } = computeGroundedness(
+      {
+        confidence_score: row.confidence_score,
+        provenance: row.provenance,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        valid_to: (row as unknown as { valid_to?: string | null }).valid_to,
+        access_count: row.access_count,
+      },
+      new Date().toISOString(),
+    );
+
     return {
       memory: rowToMemory(row),
       score: item.score,
       confidence,
       confidence_level: confidenceLabel(confidence),
+      groundedness,
+      groundedness_level,
       match_type: matchType,
       age_days: ageDays,
       freshness_warning: freshnessWarning(ageDays),
     };
   });
 
-  // --- Filter by min_confidence ---
-  const filtered = options.min_confidence
+  // --- Filter by min_confidence (relevance) and min_groundedness (trust) ---
+  let filtered = options.min_confidence
     ? results.filter(r => r.confidence >= options.min_confidence!)
     : results;
+  if (options.min_groundedness !== undefined) {
+    filtered = filtered.filter(r => r.groundedness >= options.min_groundedness!);
+  }
 
   // --- Paginate ---
   // offset defaults to 0: an omitted offset (e.g. an internal caller that only

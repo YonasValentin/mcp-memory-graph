@@ -10,6 +10,11 @@ import { storeExtractedEntities } from '../graph/entity-store.js';
 import { buildSimilarityEdges } from '../graph/similarity-edges.js';
 import { parseMemoryFile, type ParsedMemoryFile } from './memory-file.js';
 import { loadGraphSidecar, restoreLinksFromSidecar } from './sidecar.js';
+import {
+  memoryContentHash,
+  merkleRootFromHashes,
+  type IntegrityManifest,
+} from '../tools/manifest.js';
 import { logger } from '../lib/logger.js';
 
 /**
@@ -36,12 +41,118 @@ export interface RebuildResult {
   linksRestored: number;
 }
 
+/** Vault-relative path of the integrity-manifest sidecar (M2.6). */
+const MANIFEST_SIDECAR = path.join('.memory', 'manifest.json');
+
+/** Drift counts between the trusted manifest and the on-disk vault. */
+export interface IntegrityDiff {
+  /** Files present in the vault but unaccounted for by the manifest count. */
+  added: number;
+  /** Files removed since the manifest was generated. */
+  removed: number;
+  /** In-place content edits (count matches, but the merkle root differs). */
+  changed: number;
+  /** Files that fail to parse / lack an id frontmatter (not live memories). */
+  corrupt: number;
+}
+
+/**
+ * Raised when a `.memory/manifest.json` sidecar is present but its merkle root
+ * does not match the freshly-computed root of the on-disk vault. The rebuild
+ * REFUSES rather than silently trusting a tampered git vault. Carries the
+ * expected/actual roots and a best-effort added/changed/removed/corrupt diff.
+ */
+export class VaultIntegrityError extends Error {
+  readonly expectedRoot: string;
+  readonly actualRoot: string;
+  readonly diff: IntegrityDiff;
+
+  constructor(expectedRoot: string, actualRoot: string, diff: IntegrityDiff) {
+    super(
+      `Vault integrity check failed: manifest merkle root ${expectedRoot} ` +
+        `does not match the on-disk vault (${actualRoot}). ` +
+        `added=${diff.added} changed=${diff.changed} removed=${diff.removed} corrupt=${diff.corrupt}. ` +
+        `Refusing to rebuild from a tampered vault.`,
+    );
+    this.name = 'VaultIntegrityError';
+    this.expectedRoot = expectedRoot;
+    this.actualRoot = actualRoot;
+    this.diff = diff;
+  }
+}
+
+/**
+ * Load the trusted integrity manifest from `.memory/manifest.json`, or `null`
+ * when no sidecar exists (unsigned vault → no guard, current behaviour). A
+ * present-but-unparseable sidecar is treated as absent (logged) rather than
+ * blocking — the guard only fires on a definite merkle MISMATCH.
+ */
+function loadManifestSidecar(vaultRoot: string): IntegrityManifest | null {
+  const abs = path.join(vaultRoot, MANIFEST_SIDECAR);
+  if (!fs.existsSync(abs)) return null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(abs, 'utf-8')) as IntegrityManifest;
+    if (typeof parsed.memories_merkle_root !== 'string') return null;
+    return parsed;
+  } catch (err) /* c8 ignore start */ {
+    logger.warn({ event: 'manifest_sidecar_unreadable', vault: vaultRoot, err: errMsg(err) });
+    return null;
+  }
+  /* c8 ignore stop */
+}
+
+/**
+ * Verify the on-disk vault against the trusted manifest BEFORE any rebuild work.
+ * No sidecar → no-op (returns). On a merkle mismatch → throws VaultIntegrityError
+ * with a best-effort drift breakdown derived from the file counts (precise for
+ * added/removed/corrupt; `changed` is the residual when counts align).
+ */
+function assertVaultIntegrity(vaultRoot: string, files: string[]): void {
+  const manifest = loadManifestSidecar(vaultRoot);
+  if (!manifest) return;
+
+  const liveHashes: string[] = [];
+  let corrupt = 0;
+  for (const abs of files) {
+    const parsed = parseMemoryFile(fs.readFileSync(abs, 'utf-8'));
+    if (!parsed.id) {
+      corrupt += 1;
+      continue;
+    }
+    liveHashes.push(memoryContentHash(parsed.content));
+  }
+
+  const actualRoot = merkleRootFromHashes(liveHashes);
+  if (actualRoot === manifest.memories_merkle_root) return;
+
+  const actual = liveHashes.length;
+  const expected = manifest.total;
+  const added = Math.max(0, actual - expected);
+  const removed = Math.max(0, expected - actual);
+  // When counts align but the root still differs, the drift is in-place edits;
+  // report at least one changed entry (counts alone can't localize beyond this).
+  const changed = added === 0 && removed === 0 ? Math.max(1, Math.abs(actual - expected) || 1) : 0;
+
+  throw new VaultIntegrityError(manifest.memories_merkle_root, actualRoot, {
+    added,
+    removed,
+    changed,
+    corrupt,
+  });
+}
+
 export async function rebuildFromVault(
   db: Database.Database,
   embedder: EmbeddingProvider,
   vaultRoot: string,
 ): Promise<RebuildResult> {
   const files = scanLiveMarkdown(vaultRoot);
+
+  // M2.6 — integrity guard: if a signed manifest sidecar is present, refuse to
+  // rebuild from a vault whose merkle root no longer matches (tamper-evident).
+  // No sidecar → no-op, preserving the unsigned-vault rebuild behaviour.
+  assertVaultIntegrity(vaultRoot, files);
+
   const indexed: Array<{ id: string; embedding: Float32Array }> = [];
 
   for (const abs of files) {

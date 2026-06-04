@@ -1,8 +1,9 @@
 import type Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
+import picomatch from 'picomatch';
 import { stringify as stringifyYaml } from 'yaml';
-import type { Memory, MemoryRow } from '../types.js';
+import type { AccessLevel, Memory, MemoryRow } from '../types.js';
 import { rowToMemory } from '../db/repository.js';
 
 /**
@@ -245,4 +246,98 @@ export function safeSubdir(namespace: string): string {
     .replace(/-+/g, '-')
     .replace(/^-+|-+$/g, '');
   return seg;
+}
+
+// ── M2.5: Vault egress filter ────────────────────────────────────────────────
+
+/**
+ * Sensitivity ordering for access levels. A higher rank is MORE sensitive, so a
+ * configured `max_access_level` cap admits everything at or below it and blocks
+ * anything strictly above. Mirrors the order of ACCESS_LEVELS in constants/enums
+ * (public < internal < confidential < restricted) but is declared here so the
+ * egress policy is self-contained and dependency-free at the comparison point.
+ */
+export const ACCESS_LEVEL_RANK: Readonly<Record<AccessLevel, number>> = {
+  public: 0,
+  internal: 1,
+  confidential: 2,
+  restricted: 3,
+};
+
+/**
+ * Egress policy for the git-shared vault. All fields optional; an empty/undefined
+ * policy means NO filtering (the historical write-through behaviour). This shape
+ * is the runtime mirror of `config.vault.egress` (see config/loader.ts) and is
+ * passed in so the predicates below stay pure (no config-singleton coupling).
+ */
+export interface EgressPolicy {
+  /** Inclusive cap — a memory above this sensitivity is never mirrored. */
+  max_access_level?: AccessLevel;
+  /** Vault-relative globs (picomatch) whose matches are never mirrored. */
+  deny_globs?: string[];
+}
+
+/** True when `level` is STRICTLY more sensitive than `cap` (equal is allowed). */
+export function accessLevelExceedsCap(level: AccessLevel, cap: AccessLevel): boolean {
+  return ACCESS_LEVEL_RANK[level] > ACCESS_LEVEL_RANK[cap];
+}
+
+/**
+ * Decide whether a memory must be KEPT OUT of the git-shared vault. A memory is
+ * blocked when its access_level exceeds the configured cap OR its vault-relative
+ * target path matches any deny_glob. With no policy (or empty fields), nothing is
+ * blocked — preserving current behaviour. `relPath` is matched with POSIX
+ * separators so globs are portable across platforms.
+ */
+export function isEgressBlocked(
+  memory: Pick<Memory, 'access_level'>,
+  relPath: string,
+  policy: EgressPolicy | undefined,
+): boolean {
+  if (!policy) return false;
+
+  if (policy.max_access_level && accessLevelExceedsCap(memory.access_level, policy.max_access_level)) {
+    return true;
+  }
+
+  if (policy.deny_globs && policy.deny_globs.length > 0) {
+    const posixRel = relPath.split(path.sep).join('/');
+    if (picomatch.isMatch(posixRel, policy.deny_globs)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Egress-aware write: when the memory passes the policy, write `contents` to the
+ * confined target and return true. When it is BLOCKED, write nothing AND purge
+ * any stale file already at that path (so a memory that becomes restricted — or
+ * a path that a new deny_glob starts matching — is removed from the vault rather
+ * than left behind) and return false. The write/purge are confined under the
+ * vault root via confineToVault, so an untrusted relPath can never escape.
+ */
+export function applyEgressFilter(
+  vaultRoot: string,
+  relPath: string,
+  contents: string,
+  memory: Pick<Memory, 'access_level'>,
+  policy: EgressPolicy | undefined,
+): boolean {
+  const abs = confineToVault(vaultRoot, relPath);
+  if (abs === null) return false;
+
+  if (isEgressBlocked(memory, relPath, policy)) {
+    try {
+      fs.unlinkSync(abs);
+    } catch {
+      /* already absent — nothing to purge */
+    }
+    return false;
+  }
+
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, contents, 'utf-8');
+  return true;
 }

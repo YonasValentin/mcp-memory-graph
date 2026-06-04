@@ -13,6 +13,7 @@ import {
   scopeToNamespace,
   scopeFilterToNamespace,
   idIsInForcedNamespace,
+  forcedNamespace,
 } from './lib/tenancy.js';
 import {
   MemoryStoreSchema,
@@ -25,6 +26,7 @@ import {
   MemoryRelatedSchema,
   MemoryVersionsSchema,
   MemoryStatsSchema,
+  MemoryVerifySchema,
   MemoryTiersSchema,
   MemoryExportSchema,
   MemoryImportSchema,
@@ -71,6 +73,7 @@ import { handleStats } from './tools/stats.js';
 import { handleMemoryTiers } from './tools/tiers.js';
 import { handleExport } from './tools/export.js';
 import { handleImport } from './tools/import.js';
+import { handleVerify } from './tools/verify.js';
 import { handleVaultSync } from './tools/vault-sync.js';
 import { handleVaultStatus } from './tools/vault-status.js';
 import { handleVaultSearch } from './tools/vault-search.js';
@@ -234,7 +237,7 @@ export function createServer(): McpServer {
   // asserted by the smoke harness (scripts/smoke-mcp.mjs).
   const READ_ONLY_TOOLS = new Set<string>([
     'memory_search', 'memory_get', 'memory_list', 'memory_related',
-    'memory_versions', 'memory_stats', 'memory_tiers', 'memory_export',
+    'memory_versions', 'memory_stats', 'memory_verify', 'memory_tiers', 'memory_export',
     'vault_status', 'vault_search', 'memory_manifest', 'memory_graph',
     'memory_query', 'memory_query_structured', 'core_memory_get',
     'memory_communities', 'memory_template', 'memory_attribution',
@@ -393,6 +396,17 @@ export function createServer(): McpServer {
     }),
   );
 
+  // ── 10a. memory_verify ────────────────────────────────────────────────────
+  reg(
+    'memory_verify',
+    'Verify the signed provenance envelope of memories: recomputes each content_hash and ed25519-checks the signature against the stored pubkey. Verify one by id, or a batch by scope/namespace. Returns per-memory status (ok / unsigned / content_mismatch / bad_signature) + a summary {verified, unsigned, tampered}. Read-only. Signing is enabled by MCP_SIGN_MEMORIES; unsigned memories report "unsigned" (not a failure).',
+    MemoryVerifySchema.shape,
+    instrument('memory_verify', async (input) => {
+      const parsed = MemoryVerifySchema.parse(input);
+      return handleVerify(getDb(), withForcedNs(parsed));
+    }),
+  );
+
   // ── 10b. memory_tiers ─────────────────────────────────────────────────────
   reg(
     'memory_tiers',
@@ -422,7 +436,11 @@ export function createServer(): McpServer {
     MemoryImportSchema.shape,
     instrument('memory_import', async (input) => {
       const parsed = MemoryImportSchema.parse(input);
-      return handleImport(getDb(), await getEmbedder(), parsed);
+      // F1b follow-up (M2.7): import carries per-item namespace under data[], so
+      // withForcedNs is a no-op. On a namespace-forced deployment we REMAP every
+      // imported item to the forced namespace (4th arg) — closes the tenancy
+      // write-leak the other write tools already close.
+      return handleImport(getDb(), await getEmbedder(), parsed, forcedNamespace());
     }),
   );
 

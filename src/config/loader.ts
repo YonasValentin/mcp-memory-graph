@@ -3,7 +3,30 @@ import path from 'node:path';
 import os from 'node:os';
 import { z } from 'zod';
 import type { ServerConfig, MemoryScope } from '../types.js';
-import { SCOPES, LEARNING_CATEGORIES } from '../constants/enums.js';
+import { SCOPES, LEARNING_CATEGORIES, ACCESS_LEVELS } from '../constants/enums.js';
+
+// ── M2.5 egress policy ──────────────────────────────────────────────────────
+
+/**
+ * Zod schema for the optional `vault.egress` section. All fields are optional;
+ * an absent section (the default) means NO filtering — current write-through
+ * behaviour. `max_access_level` caps which sensitivity is allowed into the
+ * git-shared vault; `deny_globs` are vault-relative picomatch patterns whose
+ * matches are never mirrored. Owned here because `types.ts` (a shared file) is
+ * not editable from this slice.
+ */
+const EgressSchema = z
+  .object({
+    max_access_level: z.enum(ACCESS_LEVELS).optional(),
+    deny_globs: z.array(z.string()).optional(),
+  })
+  .optional();
+
+/** Resolved egress policy shape (mirror of EgressPolicy in vault/writer.ts). */
+export interface EgressConfig {
+  max_access_level?: (typeof ACCESS_LEVELS)[number];
+  deny_globs?: string[];
+}
 
 // ── Zod Schema ──────────────────────────────────────────────────────────
 
@@ -65,6 +88,9 @@ const ServerConfigSchema = z.object({
       // When a vault path is set, mirror every top-level memory write to a
       // per-memory .md file (Bruno model: files are the source of truth).
       write_through: z.boolean().default(true),
+      // M2.5 — optional egress filter: keep over-sensitive (or deny-globbed)
+      // memories OUT of the git-shared vault. Absent = no filtering.
+      egress: EgressSchema,
     })
     .default({}),
   capture: z
@@ -112,6 +138,28 @@ export function getConfig(): ServerConfig {
 
   cachedConfig = ServerConfigSchema.parse(raw) as ServerConfig;
   return cachedConfig;
+}
+
+/**
+ * Resolve the active vault egress policy, or `undefined` when none is configured
+ * (the default — no filtering). Reads through the validated config schema so the
+ * returned value is the parsed `vault.egress` section. `ServerConfig` (a shared
+ * type) does not declare `egress`, so this accessor re-validates the cached
+ * config's vault section to surface a typed `EgressConfig` without editing
+ * types.ts. Returns `undefined` if the section is absent or empty.
+ */
+export function getVaultEgress(): EgressConfig | undefined {
+  // `vault.egress` is dropped by the `as ServerConfig` cast in getConfig, so
+  // re-derive it straight from the validated schema over the cached vault object.
+  const cfg = getConfig() as ServerConfig & {
+    vault: { egress?: EgressConfig };
+  };
+  const egress = cfg.vault.egress;
+  if (!egress) return undefined;
+  const hasCap = egress.max_access_level !== undefined;
+  const hasGlobs = Array.isArray(egress.deny_globs) && egress.deny_globs.length > 0;
+  if (!hasCap && !hasGlobs) return undefined;
+  return egress;
 }
 
 /**

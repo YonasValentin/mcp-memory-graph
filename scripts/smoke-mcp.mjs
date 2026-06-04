@@ -21,10 +21,13 @@ function ok(label, cond, extra = '') {
   console.log(`${cond ? 'PASS' : 'FAIL'}  ${label}${extra ? '  :: ' + extra : ''}`);
 }
 
+const tmpKeyDir = path.join(os.tmpdir(), `mcp-smoke-keys-${process.pid}`);
 const transport = new StdioClientTransport({
   command: 'node',
   args: [path.join(ROOT, 'dist/index.js')],
-  env: { ...process.env, MCP_MEMORY_DB_PATH: tmpDb, MCP_LOG_LEVEL: 'error' },
+  // Exercise the M2 signed-provenance path on real models (off by default in
+  // prod): every store signs, and memory_verify must report it verified.
+  env: { ...process.env, MCP_MEMORY_DB_PATH: tmpDb, MCP_LOG_LEVEL: 'error', MCP_SIGN_MEMORIES: '1', MCP_MEMORY_KEY_DIR: tmpKeyDir },
   stderr: 'inherit',
 });
 const client = new Client({ name: 'smoke', version: '1.0.0' }, { capabilities: {} });
@@ -39,7 +42,7 @@ try {
   ok('server advertises instructions', instructions.length > 0 && /memory_search|memory_store/.test(instructions), instructions.slice(0, 60));
 
   const tools = await client.listTools();
-  ok('lists >= 41 tools', tools.tools.length >= 41, `got ${tools.tools.length}`);
+  ok('lists >= 42 tools', tools.tools.length >= 42, `got ${tools.tools.length}`);
   // Every tool must advertise annotations (closed-world local store). Sample
   // the read/destructive classification so a mis-tagged tool trips the gate.
   const byName = Object.fromEntries(tools.tools.map((t) => [t.name, t.annotations]));
@@ -68,6 +71,14 @@ try {
 
   ok('memory_get by id', id1 ? /pooling|postgres/i.test(text(await client.callTool({ name: 'memory_get', arguments: { id: id1 } }))) : false);
 
+  // M2.2 — the signed-provenance moat, end to end on real models: with
+  // MCP_SIGN_MEMORIES=1 the store above signed an ed25519 envelope; memory_verify
+  // must recompute the content hash + verify the signature → "verified".
+  if (id1) {
+    const vr = json(await client.callTool({ name: 'memory_verify', arguments: { id: id1 } }));
+    ok('memory_verify: signed memory verifies', vr?.summary?.verified === 1 && vr?.summary?.tampered === 0, JSON.stringify(vr?.summary));
+  }
+
   if (id1) {
     const ee = await client.callTool({ name: 'memory_extract_entities', arguments: {
       memory_id: id1,
@@ -89,6 +100,7 @@ try {
   ok('no exception', false, String(e?.stack || e));
 } finally {
   for (const f of [tmpDb, tmpDb + '-wal', tmpDb + '-shm']) { try { fs.unlinkSync(f); } catch { /* ignore */ } }
+  try { fs.rmSync(tmpKeyDir, { recursive: true, force: true }); } catch { /* ignore */ }
 }
 
 console.log(failures === 0 ? '\nSMOKE OK' : `\nSMOKE FAILED (${failures})`);

@@ -9,6 +9,7 @@ import { detectConflicts, recordConflicts, type ConflictResult } from '../graph/
 import { detectContradictions, type NliClassifier } from '../graph/contradiction.js';
 import { buildSimilarityEdges } from '../graph/similarity-edges.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
+import { redactContent, redactModeFromEnv } from '../lib/redact-content.js';
 import { decideWriteOperation, type WriteOp } from '../graph/write-gate.js';
 import { logger } from '../lib/logger.js';
 import { mirrorMemoryWrite } from '../vault/write-through.js';
@@ -47,6 +48,22 @@ export async function handleStore(
   nli?: NliClassifier,
 ): Promise<StoreResult> {
   const now = new Date().toISOString();
+
+  // M2.1 — inbound secret/poison redaction gate (opt-in via MCP_REDACT_MODE,
+  // default 'off' = passthrough). Runs BEFORE embedding + persistence so a leaked
+  // credential never enters the vector index, the FTS index, or the (possibly
+  // git-shared) store. 'block' THROWS → the write is rejected; 'scrub' replaces
+  // each secret + records a metadata marker. Mutating input.content here means
+  // every downstream use (embed, conflict scan, NLI, row, entity extraction)
+  // operates on the scrubbed text.
+  {
+    const { content: safe, redactions, kinds } = redactContent(input.content, redactModeFromEnv());
+    if (redactions > 0) {
+      input.content = safe;
+      input.metadata = { ...(input.metadata ?? {}), redactions, redaction_kinds: kinds };
+    }
+  }
+
   // Contextual indexing: embed the content with a deterministic context prefix
   // (title / document_type / namespace) so the vector captures context the bare
   // chunk loses. No-ops to bare content when there is no meaningful context.

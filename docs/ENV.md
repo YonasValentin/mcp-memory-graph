@@ -70,6 +70,14 @@ read once at process start unless noted.
 | `MCP_MEMORY_RERANKER_MODEL` | `Xenova/ms-marco-MiniLM-L-6-v2` | Cross-encoder model used when search is called with `rerank: true`. Loaded lazily on first use. |
 | `HF_HOME` | _unset_ | Cache directory for the Hugging Face model (set in Docker to `/cache`). |
 
+## Trust & provenance (M2)
+
+| Variable | Default | Effect |
+|---|---|---|
+| `MCP_REDACT_MODE` | `off` | Inbound secret-redaction gate applied before content is embedded/persisted (and before it can reach a git-shared vault). `scrub` replaces detected secrets (API keys, tokens, JWTs, PEM private keys, `password=`/`api_key=` assignments) with typed `[REDACTED:kind]` placeholders and records a `metadata.redactions` count; `block` rejects the write with an error naming the kinds; `off` is a passthrough. Wired into `memory_store` and `memory_ingest`. |
+| `MCP_SIGN_MEMORIES` | _unset_ (off) | Set to `1`/`true` to attach a signed provenance envelope to every new memory: an ed25519 signature over `content_hash + agent_id + scope + namespace + created_at`. `memory_verify` checks it. Off = memories are stored unsigned (today's behaviour); `memory_verify` reports them as `unsigned`. |
+| `MCP_MEMORY_KEY_DIR` | `~/.mcp-memory` | Directory holding the ed25519 signing keypair (`keys/ed25519.key` 0600, `keys/ed25519.pub`). Generated on first signed write. Override for tests or to relocate the key. |
+
 ## Attribution
 
 | Variable | Default | Effect |

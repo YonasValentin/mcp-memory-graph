@@ -16,7 +16,7 @@ AI assistants lose context between sessions. Your decisions, patterns, and insti
 
 ### Core Capabilities
 
-- **41 MCP tools** — core CRUD + retrieval, a confidence-tagged knowledge graph, a self-correcting write gate, Agent-OS memory tiers, Obsidian-grade vault round-tripping, and GDPR-grade forget/history (full list below)
+- **42 MCP tools** — core CRUD + retrieval, a confidence-tagged knowledge graph, a self-correcting write gate, signed provenance + verification, Agent-OS memory tiers, Obsidian-grade vault round-tripping, and GDPR-grade forget/history (full list below)
 - **Hybrid search** — Combines vector similarity (semantic meaning) with keyword matching (exact terms) using Reciprocal Rank Fusion (RRF) for best-of-both-worlds retrieval. Opt-in `rerank: true` adds a cross-encoder rerank pass; `use_graph: true` blends in HippoRAG Personalized-PageRank multi-hop scores; `as_of: <timestamp>` runs the search against the graph as it stood at a past point in time
 - **Local embeddings** — Transformers.js with all-MiniLM-L6-v2 (384 dimensions) runs entirely in Node.js. No Python, no cloud API, no GPU required
 - **SQLite storage** — Single-file database using better-sqlite3 with two extensions:
@@ -285,7 +285,7 @@ In a Claude Code session, ask:
 What memory tools do you have available?
 ```
 
-Claude should list all 41 tools (35 `memory_*` + 3 `vault_*` + 3 `core_memory_*`).
+Claude should list all 42 tools (36 `memory_*` + 3 `vault_*` + 3 `core_memory_*`).
 
 ---
 
@@ -707,7 +707,7 @@ Extract learnings from this session transcript with namespace=my-project
 Extract only error_fix and decision learnings from this transcript
 ```
 
-### 18–41. Graph, Agent-OS, vault round-trip, and governance tools
+### 18–42. Graph, Agent-OS, vault round-trip, and governance tools
 
 The remaining tools are summarized below (parameters are validated by Zod schemas in `src/schemas/`; each registration's full description lives in `src/server.ts`):
 
@@ -737,6 +737,7 @@ The remaining tools are summarized below (parameters are validated by Zod schema
 | 39 | `memory_query_structured` | Exact metadata filter query over top-level memories (no semantic ranking) |
 | 40 | `memory_version_diff` | Line-level diff between two stored versions of a memory |
 | 41 | `memory_version_restore` | Roll a memory back to a previous version (snapshots the current one first) |
+| 42 | `memory_verify` | Verify the signed provenance envelope of memories (ed25519 over content_hash + origin): per-memory `ok`/`unsigned`/`content_mismatch`/`bad_signature` + a `{verified, unsigned, tampered}` summary. Opt-in signing via `MCP_SIGN_MEMORIES` |
 
 ---
 
