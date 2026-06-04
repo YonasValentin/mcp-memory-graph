@@ -163,7 +163,7 @@ async function postOnce(
 
   const headers: Record<string, string> = {
     'content-type': 'application/json',
-    'user-agent': 'mcp-memory-local-webhook/1',
+    'user-agent': 'mcp-memory-graph-webhook/1',
     'x-memory-event': delivery.event_type,
     'x-memory-delivery': delivery.id,
   };

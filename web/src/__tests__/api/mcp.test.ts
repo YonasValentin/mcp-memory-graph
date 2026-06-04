@@ -49,7 +49,7 @@ function mockFlow(toolsOrResult: {
     const reqBody = JSON.parse(String(init.body))
     const method = reqBody.method as string
     if (method === "initialize") {
-      return res(sse({ jsonrpc: "2.0", id: reqBody.id, result: { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "mcp-memory-server", version: "2.0.0" } } }), { sessionId: SID })
+      return res(sse({ jsonrpc: "2.0", id: reqBody.id, result: { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "mcp-memory-graph", version: "2.0.0" } } }), { sessionId: SID })
     }
     if (method === "notifications/initialized") {
       return res("", { status: 202 })

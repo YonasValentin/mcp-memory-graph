@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the MCP Memory Server are documented here.
+All notable changes to the MCP Memory Graph are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 

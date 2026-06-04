@@ -1,6 +1,6 @@
 # Operational runbook
 
-How to operate the MCP Memory Server in production. The reference deployment
+How to operate the MCP Memory Graph in production. The reference deployment
 is a single Docker container on MS-01 fronted by Cloudflare Access at
 `mcp.yonasvalentin.dk`, with the SQLite database mounted on a host volume.
 
@@ -21,7 +21,7 @@ is a single Docker container on MS-01 fronted by Cloudflare Access at
 
 ```bash
 ssh ms01
-cd /opt/stacks/mcp-memory-server
+cd /opt/stacks/mcp-memory-graph
 
 docker compose up -d
 docker compose down
@@ -172,7 +172,7 @@ revert and open a CRITICAL bug.
 
 ```bash
 ssh ms01
-cd /opt/stacks/mcp-memory-server
+cd /opt/stacks/mcp-memory-graph
 git log --oneline -5         # find the previous good SHA
 git checkout <sha>
 docker compose up -d --build
@@ -206,7 +206,7 @@ Codes:
 
 ## Where things live on MS-01
 
-- Compose file: `/opt/stacks/mcp-memory-server/docker-compose.yml`
+- Compose file: `/opt/stacks/mcp-memory-graph/docker-compose.yml`
 - DB volume: `mcp-data` (named volume; data at `/var/lib/docker/volumes/mcp-data/_data`)
 - Cache volume: `mcp-cache` (HF model cache)
 - Cloudflare tunnel config: `/etc/cloudflared/config.yml`
@@ -214,7 +214,7 @@ Codes:
 ## Bearer Token Rotation
 
 1. Generate a new token: `openssl rand -hex 32`
-2. Update `MCP_AUTH_TOKEN` in `/opt/stacks/mcp-memory-server/.env` on MS-01
+2. Update `MCP_AUTH_TOKEN` in `/opt/stacks/mcp-memory-graph/.env` on MS-01
 3. `docker compose up -d --force-recreate memory-server`
 4. Verify: `curl -fs -H "Authorization: Bearer $NEW" http://127.0.0.1:3200/health`
 5. Update the token in Claude Code MCP config (`~/.claude/settings.json`) and propagate to team members

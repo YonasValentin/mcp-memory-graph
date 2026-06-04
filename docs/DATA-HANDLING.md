@@ -1,6 +1,6 @@
 # Data Handling
 
-Operator-facing reference for what the MCP Memory Server stores, how long it keeps it, and how data subject requests are served.
+Operator-facing reference for what the MCP Memory Graph stores, how long it keeps it, and how data subject requests are served.
 
 ## Scope
 

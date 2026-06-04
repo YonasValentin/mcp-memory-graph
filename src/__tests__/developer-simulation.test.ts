@@ -1,7 +1,7 @@
 /**
  * Developer Simulation: 2 Weeks at EDC
  *
- * Simulates a senior developer's daily usage of the MCP Memory Server
+ * Simulates a senior developer's daily usage of the MCP Memory Graph
  * across 3 projects, multiple departments, and realistic workflows.
  * Tests accumulate state — each phase builds on previous phases.
  */

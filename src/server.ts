@@ -193,7 +193,7 @@ export function createServer(): McpServer {
   // notifications/message, so advertising it would overstate what it supports.
   // `instructions` advertises when-to-use guidance to every MCP client.
   const server = new McpServer(
-    { name: 'mcp-memory-server', version: SERVER_VERSION },
+    { name: 'mcp-memory-graph', version: SERVER_VERSION },
     { instructions: SERVER_INSTRUCTIONS },
   );
 

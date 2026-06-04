@@ -160,7 +160,7 @@ function removeClaudeMd(): void {
     return;
   }
 
-  // Remove the MCP Memory Server section
+  // Remove the MCP Memory Graph section
   const lines = content.split('\n');
   const startIdx = lines.findIndex((l) => l.includes(CLAUDE_MD_MARKER));
   if (startIdx === -1) return;
@@ -206,7 +206,7 @@ function removeLaunchdPlist(): void {
 }
 
 export async function runUninstall(): Promise<void> {
-  console.log(`\n${CYAN}MCP Memory Server — Uninstall${RESET}\n`);
+  console.log(`\n${CYAN}MCP Memory Graph — Uninstall${RESET}\n`);
 
   info('Step 1/5: Cleaning up legacy hook files...');
   cleanupLegacyHookFiles();

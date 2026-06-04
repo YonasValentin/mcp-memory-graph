@@ -99,7 +99,7 @@ export MCP_BODY_LIMIT=512kb
 ```mermaid
 graph LR
   U[Operator / Team Member] -->|TLS| P[Reverse Proxy]
-  P -->|Bearer Auth| S[MCP Memory Server]
+  P -->|Bearer Auth| S[MCP Memory Graph]
   S --> D[(SQLite + sqlite-vec)]
   S --> E[Local Embedder]
   C[Claude Code] -->|stdio or HTTPS+Bearer| S

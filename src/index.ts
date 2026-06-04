@@ -80,7 +80,7 @@ async function main(): Promise<void> {
       const server = createServer();
       const transport = new StdioServerTransport();
       await server.connect(transport);
-      console.error('MCP Memory Server running on stdio');
+      console.error('MCP Memory Graph running on stdio');
 
       // Clean up database when transport closes
       transport.onclose = () => {

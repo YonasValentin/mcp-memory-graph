@@ -1,6 +1,8 @@
-# MCP Memory Server
+# MCP Memory Graph
 
 Self-improving, local-first vector memory server for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). Store, search, and manage knowledge across any domain — engineering, legal, accounting, HR, sales — with hybrid semantic + keyword search, access tracking, quality scoring, automatic learning extraction, and a "dream cycle" consolidation system, all running entirely on your machine.
+
+> **License:** source-available, **free for noncommercial use** ([PolyForm Noncommercial 1.0.0](./LICENSE)) — personal, hobby, study, research, and charitable / educational / government use. **Commercial use requires a paid license** ([COMMERCIAL.md](./COMMERCIAL.md)).
 
 ## Why This Exists
 
@@ -236,8 +238,8 @@ When a search returns zero results, the query is logged. During the dream cycle'
 ### Build from Source
 
 ```bash
-git clone https://github.com/YonasValentin/mcp-memory-server.git
-cd mcp-memory-server
+git clone https://github.com/YonasValentin/mcp-memory-graph.git
+cd mcp-memory-graph
 npm install
 npm run build
 ```
@@ -245,7 +247,7 @@ npm run build
 ### Add to Claude Code
 
 ```bash
-claude mcp add memory-server node /path/to/mcp-memory-server/dist/index.js
+claude mcp add memory-server node /path/to/mcp-memory-graph/dist/index.js
 ```
 
 The first time a memory tool is used, the embedding model (~30MB) downloads automatically from HuggingFace and is cached locally at `~/.cache/huggingface/`. Subsequent starts are instant.
@@ -256,10 +258,10 @@ After building, run the init command to register hooks, config, and nightly cons
 
 ```bash
 # Global (user scope) — hooks apply to all projects
-npx mcp-memory-local init
+npx mcp-memory-graph init
 
 # Per-project — hooks and MCP registration scoped to this project only
-npx mcp-memory-local init --scope project
+npx mcp-memory-graph init --scope project
 ```
 
 **User scope** (default) writes hooks to `~/.claude/settings.json`. Hooks fire in every Claude Code session regardless of project.
@@ -276,7 +278,7 @@ Init performs these steps:
 To reverse everything:
 
 ```bash
-npx mcp-memory-local uninstall
+npx mcp-memory-graph uninstall
 ```
 
 ### Verify Installation
@@ -298,7 +300,7 @@ machine(s) you choose to run it on, and there's no cloud account or per-token co
 
 ### 1. Local (single user) — the default
 
-`npx mcp-memory-local init` (above) registers a local stdio server plus
+`npx mcp-memory-graph init` (above) registers a local stdio server plus
 capture/recall hooks. Memory lives in one SQLite file on your machine; nothing
 else to run. This is the right choice for solo use.
 
@@ -327,7 +329,7 @@ Terminate TLS at a reverse proxy / tunnel for anything off-host.
 **Connect a client** — one command per machine:
 
 ```bash
-npx mcp-memory-local init --remote https://memory.example.com --token-env MEMORY_MCP_TOKEN
+npx mcp-memory-graph init --remote https://memory.example.com --token-env MEMORY_MCP_TOKEN
 export MEMORY_MCP_TOKEN=<the server token>     # in your shell or .env
 ```
 
@@ -352,9 +354,9 @@ Prefer your knowledge base in git — reviewed via pull requests, no server to r
 Export memories to plain Markdown and share the folder as a git repo:
 
 ```bash
-npx mcp-memory-local vault-init                    # make the vault a git repo (union merge driver + rebuild hook)
+npx mcp-memory-graph vault-init                    # make the vault a git repo (union merge driver + rebuild hook)
 git add -A && git commit -m "memory snapshot" && git push
-# collaborators: git pull && npx mcp-memory-local rebuild
+# collaborators: git pull && npx mcp-memory-graph rebuild
 ```
 
 See **Team & solo sharing (Bruno-style git)** above for the model and trade-offs.
@@ -399,7 +401,7 @@ claude mcp add memory-server \
 
 ### Configuration File
 
-The config file at `~/.mcp-memory/config.json` controls self-improvement behavior, hook settings, and per-project overrides. Created automatically by `npx mcp-memory-local init`, or create it manually:
+The config file at `~/.mcp-memory/config.json` controls self-improvement behavior, hook settings, and per-project overrides. Created automatically by `npx mcp-memory-graph init`, or create it manually:
 
 ```json
 {
@@ -456,15 +458,15 @@ The config file at `~/.mcp-memory/config.json` controls self-improvement behavio
 
 | Command | Description |
 |---------|-------------|
-| `npx mcp-memory-local` | Start MCP server on stdio (default) |
-| `npx mcp-memory-local serve` | Start HTTP server with MCP transport + REST API + web dashboard |
-| `npx mcp-memory-local init` | Interactive setup wizard: hooks, config, and nightly schedule (user scope). Add `--yes`/`-y` to accept all defaults non-interactively |
-| `npx mcp-memory-local init --scope project` | Setup for current project only (creates `.mcp.json` + `.claude/settings.json`) |
-| `npx mcp-memory-local uninstall` | Reverse init: remove hooks and schedule |
-| `npx mcp-memory-local consolidate` | Run the dream cycle manually |
-| `npx mcp-memory-local export-graph [--out <path>] [--scope <s>] [--namespace <n>]` | Write a committable, deterministic `memory-graph.json` for git sharing |
-| `npx mcp-memory-local git-setup` | Install the `.gitattributes` entry + `memory-union` git merge driver for conflict-free graph sharing |
-| `npx mcp-memory-local merge-graphs <ours> <theirs> <out>` | Git union merge driver for `memory-graph.json` (invoked by git, not by hand) |
+| `npx mcp-memory-graph` | Start MCP server on stdio (default) |
+| `npx mcp-memory-graph serve` | Start HTTP server with MCP transport + REST API + web dashboard |
+| `npx mcp-memory-graph init` | Interactive setup wizard: hooks, config, and nightly schedule (user scope). Add `--yes`/`-y` to accept all defaults non-interactively |
+| `npx mcp-memory-graph init --scope project` | Setup for current project only (creates `.mcp.json` + `.claude/settings.json`) |
+| `npx mcp-memory-graph uninstall` | Reverse init: remove hooks and schedule |
+| `npx mcp-memory-graph consolidate` | Run the dream cycle manually |
+| `npx mcp-memory-graph export-graph [--out <path>] [--scope <s>] [--namespace <n>]` | Write a committable, deterministic `memory-graph.json` for git sharing |
+| `npx mcp-memory-graph git-setup` | Install the `.gitattributes` entry + `memory-union` git merge driver for conflict-free graph sharing |
+| `npx mcp-memory-graph merge-graphs <ours> <theirs> <out>` | Git union merge driver for `memory-graph.json` (invoked by git, not by hand) |
 
 ---
 
@@ -838,7 +840,7 @@ The remaining tools are summarized below (parameters are validated by Zod schema
 ### System Overview
 
 ```
-Claude Code ──stdio──> MCP Memory Server
+Claude Code ──stdio──> MCP Memory Graph
                             │
                     ┌───────┴───────┐
                     │               │
@@ -965,9 +967,9 @@ src/
 │   ├── consolidate.ts    # memory_consolidate handler
 │   └── extract-learnings.ts # memory_extract_learnings handler
 ├── cli/
-│   ├── init.ts           # npx mcp-memory-local init
-│   ├── uninstall.ts      # npx mcp-memory-local uninstall
-│   ├── consolidate.ts    # npx mcp-memory-local consolidate
+│   ├── init.ts           # npx mcp-memory-graph init
+│   ├── uninstall.ts      # npx mcp-memory-graph uninstall
+│   ├── consolidate.ts    # npx mcp-memory-graph consolidate
 │   └── cleanup-extracted.ts  # Utility to purge auto-extracted noise
 ├── hooks/
 │   ├── memory-session-start.ts
@@ -1087,8 +1089,8 @@ Only files that changed since last sync are re-processed. A `vault_sync_meta` ta
 
 - **No network calls** after initial model download (cached locally)
 - **No telemetry**, no analytics, no tracking
-- **Hooks are opt-in** — Claude Code hooks are only installed when you explicitly run `npx mcp-memory-local init`. Without init, no hooks intercept tool calls
-- **Nightly schedule is opt-in** — The consolidation schedule is only created during init and can be removed with `npx mcp-memory-local uninstall`
+- **Hooks are opt-in** — Claude Code hooks are only installed when you explicitly run `npx mcp-memory-graph init`. Without init, no hooks intercept tool calls
+- **Nightly schedule is opt-in** — The consolidation schedule is only created during init and can be removed with `npx mcp-memory-graph uninstall`
 - **Single SQLite file** — easy to backup, move, or delete
 - **Access level metadata** — tag memories as public/internal/confidential/restricted for organizational awareness
 - Data never leaves your machine
@@ -1114,7 +1116,7 @@ rm ~/.mcp-memory/memory.db
 
 ## Nightly Consolidation
 
-When installed via `npx mcp-memory-local init`, a nightly consolidation job runs all five dream cycle stages plus access log rotation (entries older than 90 days).
+When installed via `npx mcp-memory-graph init`, a nightly consolidation job runs all five dream cycle stages plus access log rotation (entries older than 90 days).
 
 **macOS:** A launchd plist is created at `~/Library/LaunchAgents/com.mcp-memory.consolidate.plist`, scheduled to run at 3:00 AM.
 
@@ -1122,13 +1124,13 @@ When installed via `npx mcp-memory-local init`, a nightly consolidation job runs
 
 ```bash
 # Add to crontab -e
-0 3 * * * /usr/local/bin/npx mcp-memory-local consolidate
+0 3 * * * /usr/local/bin/npx mcp-memory-graph consolidate
 ```
 
 To run the dream cycle manually at any time:
 
 ```bash
-npx mcp-memory-local consolidate
+npx mcp-memory-graph consolidate
 ```
 
 ---

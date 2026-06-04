@@ -290,7 +290,7 @@ function installLaunchdPlist(): void {
   if (platform() !== 'darwin') {
     info('Not on macOS — skipping launchd plist installation');
     dim('To schedule nightly consolidation on Linux, add a cron entry:');
-    dim('  0 3 * * * node /path/to/mcp-memory-server/dist/index.js consolidate');
+    dim('  0 3 * * * node /path/to/mcp-memory-graph/dist/index.js consolidate');
     return;
   }
 
@@ -436,7 +436,7 @@ function createRemoteMcpJson(remote: RemoteSpec): void {
  * the server, not in a local SQLite file the hooks would read.
  */
 function runRemoteInit(remote: RemoteSpec): void {
-  console.log(`\n${CYAN}MCP Memory Server — Init (remote / team)${RESET}\n`);
+  console.log(`\n${CYAN}MCP Memory Graph — Init (remote / team)${RESET}\n`);
 
   info('Step 1/2: Writing .mcp.json (HTTP MCP server registration)...');
   createRemoteMcpJson(remote);
@@ -455,9 +455,9 @@ function runRemoteInit(remote: RemoteSpec): void {
   console.log(`\n${GREEN}Remote init complete!${RESET}\n`);
 }
 
-const CLAUDE_MD_MARKER = '## MCP Memory Server';
+const CLAUDE_MD_MARKER = '## MCP Memory Graph';
 
-const CLAUDE_MD_CONTENT = `## MCP Memory Server
+const CLAUDE_MD_CONTENT = `## MCP Memory Graph
 
 When answering questions about architecture, patterns, conventions, incidents, or how things work:
 - Search memory first using \`memory_search\` (scope: project, namespace based on project)
@@ -511,7 +511,7 @@ export async function runInit(): Promise<void> {
   // `--yes`/`-y` skips prompts and writes an all-default (still valid) config.
   const interactive = !process.argv.includes('--yes') && !process.argv.includes('-y');
 
-  console.log(`\n${CYAN}MCP Memory Server — Init (${scope} scope)${RESET}\n`);
+  console.log(`\n${CYAN}MCP Memory Graph — Init (${scope} scope)${RESET}\n`);
 
   info('Step 1/5: Verifying hook scripts...');
   verifyHookScripts();

@@ -16,7 +16,7 @@ jobs:
     timeout-minutes: 20
 
     env:
-      DEPLOY_ROOT: /opt/stacks/mcp-memory-server
+      DEPLOY_ROOT: /opt/stacks/mcp-memory-graph
       HEALTH_URL: http://localhost:3200/health
 
     steps:

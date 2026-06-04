@@ -1,8 +1,8 @@
 services:
   memory-server:
     build: .
-    image: mcp-memory-server:latest
-    container_name: mcp-memory-server
+    image: mcp-memory-graph:latest
+    container_name: mcp-memory-graph
     restart: unless-stopped
     init: true
     read_only: true

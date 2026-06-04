@@ -5,8 +5,8 @@ Thanks for opening this file — a few minutes here will save us both a code-rev
 ## Setup
 
 ```bash
-git clone https://github.com/YonasValentin/mcp-memory-server.git
-cd mcp-memory-server
+git clone https://github.com/YonasValentin/mcp-memory-graph.git
+cd mcp-memory-graph
 npm ci
 
 # Web dashboard (only if you're touching it):

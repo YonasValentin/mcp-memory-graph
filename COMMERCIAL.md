@@ -1,6 +1,6 @@
 # Commercial Licensing
 
-mcp-memory-server is **free for noncommercial use** under the
+mcp-memory-graph is **free for noncommercial use** under the
 [PolyForm Noncommercial License 1.0.0](./LICENSE). **Commercial use requires a
 paid commercial license** from the copyright holder.
 
