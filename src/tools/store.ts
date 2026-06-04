@@ -57,12 +57,15 @@ export async function handleStore(
   // every downstream use (embed, conflict scan, NLI, row, entity extraction)
   // operates on the scrubbed text.
   {
-    const r = redactRecord({ content: input.content, title: input.title, tags: input.tags }, redactModeFromEnv());
+    const r = redactRecord(
+      { content: input.content, title: input.title, tags: input.tags, metadata: input.metadata },
+      redactModeFromEnv(),
+    );
     if (r.redactions > 0) {
       input.content = r.content;
       input.title = r.title ?? input.title;
       input.tags = r.tags ?? input.tags;
-      input.metadata = { ...(input.metadata ?? {}), redactions: r.redactions, redaction_kinds: r.kinds };
+      input.metadata = { ...(r.metadata ?? {}), redactions: r.redactions, redaction_kinds: r.kinds };
     }
   }
 

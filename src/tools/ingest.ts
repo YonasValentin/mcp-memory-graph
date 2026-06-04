@@ -39,12 +39,15 @@ export async function handleIngest(
   // document BEFORE chunking/hashing so secrets never reach a chunk, the vector
   // index, or the dedup hash. 'block' throws → ingest rejected; 'scrub' replaces.
   {
-    const r = redactRecord({ content: input.content, title: input.title, tags: input.tags }, redactModeFromEnv());
+    const r = redactRecord(
+      { content: input.content, title: input.title, tags: input.tags, metadata: input.metadata },
+      redactModeFromEnv(),
+    );
     if (r.redactions > 0) {
       input.content = r.content;
       input.title = r.title ?? input.title;
       input.tags = r.tags ?? input.tags;
-      input.metadata = { ...(input.metadata ?? {}), redactions: r.redactions, redaction_kinds: r.kinds };
+      input.metadata = { ...(r.metadata ?? {}), redactions: r.redactions, redaction_kinds: r.kinds };
     }
   }
 

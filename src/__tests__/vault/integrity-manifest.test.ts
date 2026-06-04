@@ -27,6 +27,7 @@ import { handleStore } from '../../tools/store.js';
 import {
   buildIntegrityManifest,
   memoryContentHash,
+  merkleRootFromHashes,
   type IntegrityManifest,
 } from '../../tools/manifest.js';
 import { rebuildFromVault, VaultIntegrityError } from '../../vault/rebuild.js';
@@ -84,19 +85,14 @@ describe('integrity manifest (M2.6)', () => {
     db.close();
   });
 
-  it('merkle root is independent of insertion order', async () => {
-    const a = createTestDb();
-    await handleStore(a, embedder, { ...CORPUS[0], scope: 'global' });
-    await handleStore(a, embedder, { ...CORPUS[1], scope: 'global' });
-    const rootA = buildIntegrityManifest(a, 'X').memories_merkle_root;
-    a.close();
-
-    const b = createTestDb();
-    await handleStore(b, embedder, { ...CORPUS[1], scope: 'global' });
-    await handleStore(b, embedder, { ...CORPUS[0], scope: 'global' });
-    const rootB = buildIntegrityManifest(b, 'X').memories_merkle_root;
-    b.close();
-
+  it('merkle root is independent of leaf order (sorted fold)', () => {
+    // The root folds the SAME set of per-memory leaf hashes in sorted order, so
+    // it is order-independent for a fixed corpus. (NB: leaves now bind the memory
+    // id — two separate stores of the same content get different random ids and
+    // therefore different roots, which is intended: the merkle is identity-aware.)
+    const leaves = ['aa11', 'bb22', 'cc33', 'dd44'];
+    const rootA = merkleRootFromHashes(leaves);
+    const rootB = merkleRootFromHashes([...leaves].reverse());
     expect(rootA).toBe(rootB);
   });
 

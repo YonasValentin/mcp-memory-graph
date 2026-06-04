@@ -22,7 +22,7 @@ import { verifyEnvelope } from '../provenance/envelope.js';
 /** A single memory's verification outcome. */
 export interface VerifyEntry {
   id: string;
-  status: 'verified' | 'unsigned' | 'tampered';
+  status: 'verified' | 'unsigned' | 'tampered' | 'untrusted';
 }
 
 /** Aggregate counts across the inspected memories. */
@@ -30,6 +30,10 @@ export interface VerifySummary {
   verified: number;
   unsigned: number;
   tampered: number;
+  /** Signed by a key that is NOT this machine's trust root (e.g. a teammate's
+   *  key on a synced vault). Distinct from 'tampered' — a foreign-but-valid
+   *  signer is not a content forge. */
+  untrusted: number;
 }
 
 export interface VerifyResult {
@@ -82,7 +86,7 @@ export function handleVerify(
   }
 
   const results: VerifyEntry[] = [];
-  const summary: VerifySummary = { verified: 0, unsigned: 0, tampered: 0 };
+  const summary: VerifySummary = { verified: 0, unsigned: 0, tampered: 0, untrusted: 0 };
 
   for (const row of rows) {
     const outcome = verifyEnvelope(row.content, {
@@ -110,8 +114,14 @@ export function handleVerify(
     } else if (outcome.reason === 'unsigned') {
       status = 'unsigned';
       summary.unsigned += 1;
+    } else if (outcome.reason === 'untrusted_key') {
+      // Signed, but by a key that is not this machine's trust root (e.g. a
+      // teammate's key on a synced vault). NOT a content forge — report it as
+      // its own status rather than conflating it with 'tampered'.
+      status = 'untrusted';
+      summary.untrusted += 1;
     } else {
-      // content_mismatch | bad_signature — both mean the attestation no longer holds.
+      // content_mismatch | bad_signature — the attestation no longer holds.
       status = 'tampered';
       summary.tampered += 1;
     }

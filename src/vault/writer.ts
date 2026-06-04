@@ -312,7 +312,10 @@ export function isEgressBlocked(
 
   if (policy.deny_globs && policy.deny_globs.length > 0) {
     const posixRel = relPath.split(path.sep).join('/');
-    if (picomatch.isMatch(posixRel, policy.deny_globs)) {
+    // nocase: a case-variant namespace (e.g. `Secrets/`) must not dodge a
+    // lowercase `secrets/**` deny on a case-insensitive filesystem where both
+    // resolve to the same directory.
+    if (picomatch.isMatch(posixRel, policy.deny_globs, { nocase: true })) {
       return true;
     }
   }

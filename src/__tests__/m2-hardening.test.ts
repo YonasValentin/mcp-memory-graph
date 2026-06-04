@@ -13,13 +13,25 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateKeyPairSync } from 'node:crypto';
 import { signEnvelope, verifyEnvelope } from '../provenance/envelope.js';
-import { redactContent } from '../lib/redact-content.js';
+import { redactContent, redactRecord } from '../lib/redact-content.js';
 import { computeGroundedness } from '../search/scoring.js';
-import { buildIntegrityManifest } from '../tools/manifest.js';
+import { buildIntegrityManifest, memoryLeafHash } from '../tools/manifest.js';
 import { writeManifestSidecar } from '../vault/sidecar.js';
 import { createTestDb } from '../testing/test-db.js';
-import { insertMemory } from '../db/repository.js';
+import { insertMemory, updateMemory } from '../db/repository.js';
+import { handleVerify } from '../tools/verify.js';
 import type { MemoryRow } from '../types.js';
+
+function memRow(id: string, content: string, over: Partial<MemoryRow> = {}): MemoryRow {
+  return {
+    id, scope: 'global', namespace: null, title: null, content,
+    document_type: null, source: null, author: null, department: null, tags: null,
+    access_level: 'public', language: 'en', metadata: null, parent_id: null, chunk_index: null,
+    version: 1, created_at: '2026-06-04T00:00:00.000Z', updated_at: '2026-06-04T00:00:00.000Z',
+    expires_at: null, access_count: 0, last_accessed_at: null, importance_score: 0.5,
+    confidence_score: 0.7, stability: 1.0, ...over,
+  };
+}
 
 const SIGNED_AT = '2026-06-04T00:00:00.000Z';
 const META = { agent_id: 'a1', scope: 'global', namespace: null, valid_from: SIGNED_AT, created_at: SIGNED_AT };
@@ -92,6 +104,80 @@ describe('M2.1 redaction — bypasses are closed', () => {
     const ms = Number(process.hrtime.bigint() - start) / 1e6;
     expect(r.redactions).toBe(0); // no closing marker → no match
     expect(ms).toBeLessThan(1000); // pre-fix this was multiple seconds (O(n^2))
+  });
+
+  it('secret_assignment ReDoS: a long alnum run does NOT blow up (bounded prefix)', () => {
+    const evil = 'a'.repeat(1_000_000); // schema-legal; pre-fix O(n^2) → ~minutes
+    const start = process.hrtime.bigint();
+    redactContent(evil, 'scrub');
+    const ms = Number(process.hrtime.bigint() - start) / 1e6;
+    expect(ms).toBeLessThan(500);
+  });
+
+  it('lowercase "bearer" scheme is detected (case-insensitive)', () => {
+    expect(redactContent(`authorization: bearer ${'x'.repeat(30)}`, 'scrub').redactions).toBeGreaterThanOrEqual(1);
+  });
+
+  it('redactRecord gates secrets in metadata leaves (not just content)', () => {
+    const r = redactRecord(
+      { content: 'clean', metadata: { nested: { token: `ghp_${'a'.repeat(36)}` } } },
+      'scrub',
+    );
+    expect(r.redactions).toBeGreaterThanOrEqual(1);
+    expect(JSON.stringify(r.metadata)).not.toContain('ghp_aaaa');
+    expect(() => redactRecord({ content: 'clean', metadata: { k: `sk-${'a'.repeat(30)}` } }, 'block')).toThrow();
+  });
+});
+
+describe('M2 round-2 — trust-signal correctness (signed-row lifecycle)', () => {
+  let keyDir2: string;
+  beforeAll(() => {
+    keyDir2 = mkdtempSync(path.join(tmpdir(), 'm2h2-keys-'));
+    process.env.MCP_MEMORY_KEY_DIR = keyDir2;
+    process.env.MCP_SIGN_MEMORIES = '1';
+  });
+  afterAll(() => {
+    delete process.env.MCP_SIGN_MEMORIES;
+    process.env.MCP_MEMORY_KEY_DIR = keyDir; // restore outer
+    rmSync(keyDir2, { recursive: true, force: true });
+  });
+
+  it('a legitimate updateMemory re-signs → stays "verified" (not "tampered")', () => {
+    const db = createTestDb();
+    try {
+      insertMemory(db, memRow('u1', 'original signed content'), new Float32Array(384));
+      expect(handleVerify(db, { id: 'u1' }).summary.verified).toBe(1);
+      updateMemory(db, 'u1', { content: 'legitimately edited content' }, new Float32Array(384));
+      const after = handleVerify(db, { id: 'u1' }).summary;
+      expect(after.verified).toBe(1);
+      expect(after.tampered).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('a direct-DB content forge (no re-sign) still reports "tampered"', () => {
+    const db = createTestDb();
+    try {
+      insertMemory(db, memRow('u2', 'signed content'), new Float32Array(384));
+      db.prepare('UPDATE memories SET content = ? WHERE id = ?').run('FORGED', 'u2');
+      expect(handleVerify(db, { id: 'u2' }).summary.tampered).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('M2.6 merkle leaf binding — frontmatter demotion + content-swap change the root', () => {
+  it('access_level demotion changes the leaf hash (not content-only)', () => {
+    const a = memoryLeafHash({ id: 'x', scope: 'global', access_level: 'restricted', content: 'secret' });
+    const b = memoryLeafHash({ id: 'x', scope: 'global', access_level: 'public', content: 'secret' });
+    expect(a).not.toBe(b);
+  });
+  it('content-swap between two ids changes both leaves (id-bound)', () => {
+    const a1 = memoryLeafHash({ id: 'id-1', scope: 'global', access_level: 'public', content: 'A' });
+    const a1swapped = memoryLeafHash({ id: 'id-1', scope: 'global', access_level: 'public', content: 'B' });
+    expect(a1).not.toBe(a1swapped);
   });
 });
 

@@ -202,6 +202,32 @@ export function updateMemory(
       updated.department,
     );
 
+    // M2.2: if this row carried a signed provenance envelope, RE-SIGN it after a
+    // real edit. The signed set (content_hash + scope/namespace/identity) now
+    // diverges from the stored envelope, so without this a LEGITIMATE update
+    // would read as content_mismatch → 'tampered', indistinguishable from a
+    // malicious direct-DB forge. Only re-signs when signing is enabled and the
+    // row was already signed (an unsigned row stays unsigned). signed_at mirrors
+    // created_at for determinism, matching insertMemory.
+    const wasSigned = (existing as { signature?: string | null }).signature != null;
+    if (wasSigned && signingEnabled()) {
+      const env = signEnvelope(
+        updated.content,
+        {
+          agent_id: updated.agent_id ?? null,
+          scope: updated.scope,
+          namespace: updated.namespace ?? null,
+          valid_from: (updated as { valid_from?: string | null }).valid_from ?? updated.created_at,
+          created_at: updated.created_at,
+        },
+        updated.created_at,
+      );
+      db.prepare(
+        'UPDATE memories SET content_hash = ?, signature = ?, pubkey = ?, signed_at = ? WHERE id = ?',
+      ).run(env.content_hash, env.signature, env.pubkey, env.signed_at, id);
+      return db.prepare<[string], MemoryRow>('SELECT * FROM memories WHERE id = ?').get(id)!;
+    }
+
     return updated;
   });
 

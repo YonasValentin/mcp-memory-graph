@@ -99,7 +99,7 @@ describe('handleVerify', () => {
 
     const result = handleVerify(db, { id: stored.memory.id });
 
-    expect(result.summary).toEqual({ verified: 1, unsigned: 0, tampered: 0 });
+    expect(result.summary).toEqual({ verified: 1, unsigned: 0, tampered: 0, untrusted: 0 });
     expect(result.results).toEqual([{ id: stored.memory.id, status: 'verified' }]);
   });
 
@@ -108,7 +108,7 @@ describe('handleVerify', () => {
 
     const result = handleVerify(db, { id: stored.memory.id });
 
-    expect(result.summary).toEqual({ verified: 0, unsigned: 1, tampered: 0 });
+    expect(result.summary).toEqual({ verified: 0, unsigned: 1, tampered: 0, untrusted: 0 });
     expect(result.results[0]).toEqual({ id: stored.memory.id, status: 'unsigned' });
   });
 
@@ -120,7 +120,7 @@ describe('handleVerify', () => {
 
     const result = handleVerify(db, { id: stored.memory.id });
 
-    expect(result.summary).toEqual({ verified: 0, unsigned: 0, tampered: 1 });
+    expect(result.summary).toEqual({ verified: 0, unsigned: 0, tampered: 1, untrusted: 0 });
     expect(result.results[0]).toEqual({ id: stored.memory.id, status: 'tampered' });
   });
 
@@ -139,7 +139,7 @@ describe('handleVerify', () => {
     );
 
     const result = handleVerify(db, { id: stored.memory.id });
-    expect(result.summary).toEqual({ verified: 0, unsigned: 0, tampered: 1 });
+    expect(result.summary).toEqual({ verified: 0, unsigned: 0, tampered: 1, untrusted: 0 });
     expect(result.results[0]).toEqual({ id: stored.memory.id, status: 'tampered' });
   });
 
@@ -154,7 +154,7 @@ describe('handleVerify', () => {
 
     const result = handleVerify(db, {});
 
-    expect(result.summary).toEqual({ verified: 1, unsigned: 1, tampered: 1 });
+    expect(result.summary).toEqual({ verified: 1, unsigned: 1, tampered: 1, untrusted: 0 });
     const byId = new Map(result.results.map((r) => [r.id, r.status]));
     expect(byId.get(ok.memory.id)).toBe('verified');
     expect(byId.get(unsigned.memory.id)).toBe('unsigned');
@@ -164,7 +164,7 @@ describe('handleVerify', () => {
   it('a missing id returns an empty batch with a zeroed summary', () => {
     const result = handleVerify(db, { id: 'does-not-exist' });
     expect(result.results).toEqual([]);
-    expect(result.summary).toEqual({ verified: 0, unsigned: 0, tampered: 0 });
+    expect(result.summary).toEqual({ verified: 0, unsigned: 0, tampered: 0, untrusted: 0 });
   });
 
   it('honors scope filter and limit in batch mode', async () => {

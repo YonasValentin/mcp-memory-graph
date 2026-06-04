@@ -110,19 +110,22 @@ export const REDACTION_PATTERNS: readonly RedactionPattern[] = [
     kind: 'aws_access_key',
     regex: /AKIA[0-9A-Z]{16}/g,
   },
-  // Bearer token: the literal scheme + a long opaque token (not the English
-  // word "bearer" on its own). Case-sensitive on the scheme to match real
-  // Authorization headers and avoid prose like "the bearer of news".
+  // Bearer token: the scheme + a long opaque token. Case-INSENSITIVE on the
+  // scheme (`bearer`/`Bearer`/`BEARER` all appear in the wild); the required
+  // 20+ char opaque tail — not the casing — is what keeps prose like "the
+  // bearer of news" from matching.
   {
     kind: 'bearer_token',
-    regex: /Bearer\s+[A-Za-z0-9._-]{20,}/g,
+    regex: /bearer\s+[A-Za-z0-9._-]{20,}/gi,
   },
   // Secret assignments: password / api_key / *_secret followed by `=` and an
-  // 8+ char value with no whitespace. Anchored on the key so "the password is"
-  // (no `=`) and short throwaway values are not flagged.
+  // 8+ char value with no whitespace. The `*_secret` prefix is LENGTH-BOUNDED
+  // ({0,64}, not `*`) — an unbounded `[a-z0-9]*` prefix is O(n²) on a long
+  // alnum run (each position rescans the run for `_secret`): a single ~100KB
+  // value froze the event loop for ~16s. No real secret-var prefix exceeds 64.
   {
     kind: 'secret_assignment',
-    regex: /(?:password|api_?key|[a-z0-9]*_secret)\s*=\s*["']?[^\s"']{8,}["']?/gi,
+    regex: /(?:password|api_?key|[a-z0-9]{0,64}_secret)\s*=\s*["']?[^\s"']{8,}["']?/gi,
   },
 ];
 
@@ -224,6 +227,7 @@ export interface RedactableFields {
   content: string;
   title?: string | null;
   tags?: string[];
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface RedactRecordResult extends RedactableFields {
@@ -232,14 +236,45 @@ export interface RedactRecordResult extends RedactableFields {
 }
 
 /**
+ * Recursively redact every STRING leaf of an arbitrary JSON value (object,
+ * array, or scalar), accumulating count/kinds. In 'block' mode the underlying
+ * redactContent throws on the first secret. Non-string leaves pass through.
+ * Used to gate `metadata`, which is otherwise a hole: a secret pasted into a
+ * metadata value would skip the gate and still flow out via Memory objects +
+ * the git-shared vault.
+ */
+function redactDeep(
+  value: unknown,
+  mode: RedactMode,
+  acc: { redactions: number; kinds: string[] },
+): unknown {
+  if (typeof value === 'string') {
+    const r = redactContent(value, mode);
+    acc.redactions += r.redactions;
+    acc.kinds.push(...r.kinds);
+    return r.content;
+  }
+  if (Array.isArray(value)) {
+    return value.map((v) => redactDeep(v, mode, acc));
+  }
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = redactDeep(v, mode, acc);
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
  * Apply the gate across ALL user-supplied text on a write — not just `content`.
  * A secret in `title` leaks via the FTS index AND the vault FILENAME; a secret
  * in a `tag` leaks via the FTS index. In 'block' mode the first field with a
  * secret throws (rejecting the write). Returns the redacted fields + a combined
- * count/kinds. ('off' is a passthrough.)
- *
- * NOTE: structured `metadata` values are not scrubbed here (a follow-up) — the
- * indexed/filename vectors (content/title/tags) are the high-risk ones.
+ * count/kinds. ('off' is a passthrough.) `metadata` string leaves are gated
+ * recursively (a secret in a metadata value would otherwise flow out via Memory
+ * objects + the git-shared vault).
  */
 export function redactRecord(fields: RedactableFields, mode: RedactMode): RedactRecordResult {
   if (mode === 'off') {
@@ -270,5 +305,13 @@ export function redactRecord(fields: RedactableFields, mode: RedactMode): Redact
     });
   }
 
-  return { content: c.content, title, tags, redactions, kinds };
+  let metadata = fields.metadata;
+  if (metadata != null) {
+    const acc = { redactions: 0, kinds: [] as string[] };
+    metadata = redactDeep(metadata, mode, acc) as Record<string, unknown>;
+    redactions += acc.redactions;
+    kinds.push(...acc.kinds);
+  }
+
+  return { content: c.content, title, tags, metadata, redactions, kinds };
 }

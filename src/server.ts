@@ -399,7 +399,7 @@ export function createServer(): McpServer {
   // ── 10a. memory_verify ────────────────────────────────────────────────────
   reg(
     'memory_verify',
-    'Verify the signed provenance envelope of memories: recomputes each content_hash and ed25519-checks the signature against the stored pubkey. Verify one by id, or a batch by scope/namespace. Returns per-memory status (ok / unsigned / content_mismatch / bad_signature) + a summary {verified, unsigned, tampered}. Read-only. Signing is enabled by MCP_SIGN_MEMORIES; unsigned memories report "unsigned" (not a failure).',
+    'Verify the signed provenance envelope of memories: recomputes each content_hash and ed25519-checks the signature against THIS machine\'s trusted signing key (not the row\'s self-embedded key). Verify one by id, or a batch by scope/namespace. Returns per-memory status (verified / unsigned / tampered / untrusted) + a summary {verified, unsigned, tampered, untrusted}. "untrusted" = validly signed but by a non-trust-root key (e.g. a teammate on a synced vault) — distinct from "tampered". Read-only. Signing is enabled by MCP_SIGN_MEMORIES.',
     MemoryVerifySchema.shape,
     instrument('memory_verify', async (input) => {
       const parsed = MemoryVerifySchema.parse(input);

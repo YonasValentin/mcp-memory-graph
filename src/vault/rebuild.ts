@@ -11,7 +11,7 @@ import { buildSimilarityEdges } from '../graph/similarity-edges.js';
 import { parseMemoryFile, type ParsedMemoryFile } from './memory-file.js';
 import { loadGraphSidecar, restoreLinksFromSidecar } from './sidecar.js';
 import {
-  memoryContentHash,
+  memoryLeafHash,
   merkleRootFromHashes,
   type IntegrityManifest,
 } from '../tools/manifest.js';
@@ -119,7 +119,17 @@ function assertVaultIntegrity(vaultRoot: string, files: string[]): void {
       corrupt += 1;
       continue;
     }
-    liveHashes.push(memoryContentHash(parsed.content));
+    // Bind id + scope + access_level into the leaf (symmetric with
+    // buildIntegrityManifest) so a content-swap between files or a frontmatter
+    // access_level demotion changes the root, not just a body edit.
+    liveHashes.push(
+      memoryLeafHash({
+        id: parsed.id,
+        scope: parsed.scope,
+        access_level: parsed.access_level,
+        content: parsed.content,
+      }),
+    );
   }
 
   const actualRoot = merkleRootFromHashes(liveHashes);

@@ -100,11 +100,18 @@ export function handleManifest(
 // ── M2.6: Signed integrity manifest ──────────────────────────────────────────
 
 /**
- * Tamper-evident fingerprint of the live, top-level corpus. `memories_merkle_root`
- * is a sha256 over the SORTED per-memory content hashes, so it is independent of
- * row/insertion order and changes iff any memory's content changes (or one is
- * added/removed). `generated_at` is supplied by the caller — the builder never
- * reads the system clock, keeping it deterministic and testable.
+ * Drift/tamper DETECTOR for the live, top-level corpus. `memories_merkle_root`
+ * is a sha256 over the SORTED per-memory leaf hashes (each binds id + scope +
+ * access_level + content — see memoryLeafHash), so it is independent of
+ * row/insertion order and changes iff any memory's identity, sensitivity, or
+ * content changes (or one is added/removed/swapped). `generated_at` is supplied
+ * by the caller — the builder never reads the system clock.
+ *
+ * NOT cryptographically tamper-PROOF on its own: the sidecar lives in the same
+ * (git) tree as the .md files, so an attacker who can rewrite the vault can also
+ * recompute the root. It detects accidental drift + catches tampering UNLESS the
+ * attacker also rewrites the sidecar; the signed provenance envelope
+ * (memory_verify, keyed off-vault) is the cryptographic authenticity layer.
  */
 export interface IntegrityManifest {
   schema_version: number;
@@ -115,19 +122,33 @@ export interface IntegrityManifest {
   generated_at: string;
 }
 
+/** The fields bound into a per-memory integrity leaf. */
+export interface IntegrityLeaf {
+  id: string;
+  scope: string;
+  access_level: string;
+  content: string;
+}
+
 /**
- * sha256(hex) of a single memory's content — the per-memory leaf hash.
- *
- * Content is normalized by stripping trailing whitespace BEFORE hashing, to
- * match the vault round-trip: `memoryToMarkdown`/`parseMemoryFile` collapse a
- * memory's trailing whitespace (`src/vault/memory-file.ts` does `/\s+$/`), so a
- * manifest built from the live DB and one recomputed after a legitimate vault
- * round-trip MUST agree. Hashing raw content would false-positive every
- * round-tripped memory as "tampered". Trailing whitespace is semantically
- * insignificant and cannot survive the round-trip anyway, so this loses no real
- * tamper-detection (the signed provenance envelope, which hashes raw content,
- * is the byte-exact integrity primitive).
+ * Per-memory leaf hash for the integrity merkle. Binds the memory IDENTITY
+ * (id), the SECURITY-relevant frontmatter (scope, access_level), and the
+ * content — NUL-separated so no field-boundary shift can collide two leaves.
+ * Binding id makes the merkle position/ownership-aware (a content-swap between
+ * two vault files changes both leaves); binding access_level/scope makes a
+ * frontmatter-only demotion (e.g. restricted→public) change the root. Content
+ * has trailing whitespace stripped to match the vault round-trip
+ * (`memoryToMarkdown`/`parseMemoryFile`), so a legitimate round-trip still
+ * agrees and is never false-flagged.
  */
+export function memoryLeafHash(leaf: IntegrityLeaf): string {
+  const preimage = [leaf.id, leaf.scope, leaf.access_level, leaf.content.replace(/\s+$/, '')].join('\u0000');
+  return createHash('sha256').update(preimage, 'utf-8').digest('hex');
+}
+
+/** sha256(hex) of a single memory's content (trailing-ws-stripped). Retained for
+ *  callers that need a content-only digest; the integrity merkle uses
+ *  {@link memoryLeafHash}, which also binds id/scope/access_level. */
 export function memoryContentHash(content: string): string {
   return createHash('sha256').update(content.replace(/\s+$/, ''), 'utf-8').digest('hex');
 }
@@ -158,12 +179,12 @@ export function buildIntegrityManifest(
 ): IntegrityManifest {
   const conditions = liveConditions({ topLevelOnly: true });
   const rows = db
-    .prepare<unknown[], { content: string }>(
-      `SELECT content FROM memories WHERE ${conditions.join(' AND ')}`,
+    .prepare<unknown[], { id: string; scope: string; access_level: string; content: string }>(
+      `SELECT id, scope, access_level, content FROM memories WHERE ${conditions.join(' AND ')}`,
     )
     .all();
 
-  const hashes = rows.map((r) => memoryContentHash(r.content));
+  const hashes = rows.map((r) => memoryLeafHash(r));
 
   return {
     schema_version: CURRENT_SCHEMA_VERSION,
