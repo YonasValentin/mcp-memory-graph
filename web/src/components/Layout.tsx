@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from "react-router-dom"
-import { Brain, Search, List, GitGraph, LayoutDashboard } from "lucide-react"
+import { Brain, Search, List, GitGraph, LayoutDashboard, Terminal } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { ThemeToggle } from "@/components/ThemeToggle"
 
@@ -8,6 +8,7 @@ const navItems = [
   { to: "/search", icon: Search, label: "Search" },
   { to: "/browse", icon: List, label: "Browse" },
   { to: "/graph", icon: GitGraph, label: "Graph" },
+  { to: "/tools", icon: Terminal, label: "Tools" },
 ]
 
 export function Layout() {

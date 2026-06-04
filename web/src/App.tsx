@@ -14,6 +14,7 @@ const Search = lazy(() => import("@/pages/Search").then((m) => ({ default: m.Sea
 const Browse = lazy(() => import("@/pages/Browse").then((m) => ({ default: m.Browse })))
 const MemoryDetail = lazy(() => import("@/pages/MemoryDetail").then((m) => ({ default: m.MemoryDetail })))
 const KnowledgeGraph = lazy(() => import("@/pages/KnowledgeGraph").then((m) => ({ default: m.KnowledgeGraph })))
+const Tools = lazy(() => import("@/pages/Tools").then((m) => ({ default: m.Tools })))
 
 function RouteFallback() {
   return (
@@ -37,6 +38,7 @@ export default function App() {
                   <Route path="browse" element={<Browse />} />
                   <Route path="memory/:id" element={<MemoryDetail />} />
                   <Route path="graph" element={<KnowledgeGraph />} />
+                  <Route path="tools" element={<Tools />} />
                 </Route>
               </Routes>
             </Suspense>
