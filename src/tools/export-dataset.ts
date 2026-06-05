@@ -1,7 +1,23 @@
 import type Database from 'better-sqlite3';
 import type { MemoryRow } from '../types.js';
 import { liveConditions, scopeConditions } from '../db/predicates.js';
-import { LEARNING_CATEGORIES } from '../constants/enums.js';
+import { LEARNING_CATEGORIES, ACCESS_LEVELS } from '../constants/enums.js';
+
+/**
+ * Access-level egress ceiling for the training-dataset export (battle-v7 M2).
+ * A dataset leaves the trust boundary (distillation, sharing), so confidential/
+ * restricted rows must never be emitted. ACCESS_LEVELS is sensitivity-ordered
+ * (public < internal < confidential < restricted), so the cap is an index. Default
+ * cap 'internal' (admit public+internal); override via MCP_DATASET_MAX_ACCESS_LEVEL.
+ * Fail-closed: an unrecognized cap falls back to 'internal', and an unknown row
+ * level is never in the allow-list so the `access_level IN (...)` filter excludes it.
+ */
+function datasetAccessAllowlist(): string[] {
+  const raw = process.env.MCP_DATASET_MAX_ACCESS_LEVEL;
+  const rawIdx = raw ? (ACCESS_LEVELS as readonly string[]).indexOf(raw) : -1;
+  const capIdx = rawIdx >= 0 ? rawIdx : (ACCESS_LEVELS as readonly string[]).indexOf('internal');
+  return ACCESS_LEVELS.filter((_, i) => i <= capIdx);
+}
 
 /**
  * `memory_export_dataset` (M6.3) — the project LoRA / distillation flywheel.
@@ -74,15 +90,18 @@ export function handleExportDataset(
   const minConfidence = input.min_confidence ?? 0;
 
   const scope = scopeConditions(input);
+  const accessAllow = datasetAccessAllowlist();
   const conditions = [
     ...liveConditions({ topLevelOnly: true }),
     ...scope.conditions,
     'importance_score >= ?',
     'confidence_score >= ?',
+    // Egress ceiling: never emit a row above the access_level cap (M2).
+    `access_level IN (${accessAllow.map(() => '?').join(',')})`,
     // High-signal rows only: auto-extracted learnings OR agent reflections.
     `(document_type IN (${LEARNING_CATEGORIES.map(() => '?').join(',')}) OR provenance = 'reflection')`,
   ];
-  const params = [...scope.params, minImportance, minConfidence, ...LEARNING_CATEGORIES];
+  const params = [...scope.params, minImportance, minConfidence, ...accessAllow, ...LEARNING_CATEGORIES];
 
   const rows = db
     .prepare<unknown[], MemoryRow>(
