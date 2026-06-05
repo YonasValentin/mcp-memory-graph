@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { EmbeddingProvider, Memory } from '../types.js';
 import { handleUpdate } from './update.js';
+import { getMemoryById, rowToMemory } from '../db/repository.js';
 import { lineDiff, summarizeDiff, type DiffLine } from '../lib/line-diff.js';
 
 /**
@@ -80,6 +81,15 @@ export async function handleVersionRestore(
 ): Promise<VersionRestoreResult> {
   const content = getVersionContent(db, input.id, input.version);
   if (content === null) return { restored: false };
+
+  // Restoring to the already-current content changes nothing — return a true
+  // no-op (no version bump, no phantom snapshot, no synthetic author). The
+  // synthetic changed_by below would otherwise count as a changed field and
+  // defeat updateMemory's no-op guard (battle-v7 L2).
+  const existing = getMemoryById(db, input.id);
+  if (existing && existing.content === content) {
+    return { restored: true, restored_from_version: input.version, memory: rowToMemory(existing) };
+  }
 
   const memory = await handleUpdate(db, embedder, {
     id: input.id,

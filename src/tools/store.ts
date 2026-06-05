@@ -307,11 +307,16 @@ export async function handleStore(
   // INSIDE this transaction so a failed insert rolls the retire back with the
   // insert — the old fact is never left retired with no replacement (G3-F1).
   const persist = db.transaction(() => {
+    // Stamp the retired fact's valid_to to EXACTLY the new fact's valid_from
+    // (row.created_at — insertMemory sets valid_from = created_at) so there is no
+    // instant at which both are valid under an as_of query (battle-v7 L1). This
+    // mirrors the heuristic superseded-band path (recordConflicts), which already
+    // stamps valid_to = the new memory's valid_from.
     for (const id of nliInvalidated) {
-      invalidateMemory(db, id);
+      invalidateMemory(db, id, row.created_at);
     }
     if (deleteTargetId) {
-      invalidateMemory(db, deleteTargetId);
+      invalidateMemory(db, deleteTargetId, row.created_at);
     }
 
     insertMemory(db, row, embedding);
