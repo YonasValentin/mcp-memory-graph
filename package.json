@@ -20,7 +20,7 @@
     "smoke": "node scripts/smoke-mcp.mjs",
     "bench": "node scripts/bench/retrieval.mjs",
     "lint": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build:all"
   },
   "engines": {
     "node": ">=20.0.0"
