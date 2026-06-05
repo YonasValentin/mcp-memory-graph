@@ -12,6 +12,28 @@ export interface ConflictResult {
   description: string;
 }
 
+/**
+ * The tenant partition a conflict/dedup scan is confined to. When supplied, a
+ * candidate whose (scope, namespace) differs is never treated as a
+ * conflict/duplicate/contradiction — so a write into one project's namespace can
+ * never silently retire or dedup against another project's fact on a shared DB
+ * (battle-v7 H1/H2, cross-tenant data loss). Namespaces are compared with
+ * null-normalization (an absent namespace is a partition of its own).
+ */
+export interface MemoryPartition {
+  scope: string;
+  namespace: string | null;
+}
+
+/** True when `row` lives outside `partition` (so it must be skipped). */
+function outsidePartition(
+  row: { scope: string; namespace: string | null },
+  partition?: MemoryPartition,
+): boolean {
+  if (!partition) return false;
+  return row.scope !== partition.scope || (row.namespace ?? null) !== (partition.namespace ?? null);
+}
+
 const STOP_WORDS = new Set([
   'the', 'this', 'that', 'with', 'from', 'have', 'been', 'will', 'would',
   'could', 'should', 'their', 'there', 'about', 'which', 'when', 'what',
@@ -53,14 +75,19 @@ export function detectConflicts(
   newEmbedding: Float32Array,
   newContent: string,
   excludeMemoryId?: string,
+  partition?: MemoryPartition,
 ): ConflictResult[] {
+  // Oversample when partitioned: cross-tenant rows occupy the nearest-neighbor
+  // slots and are then filtered out, so widen k to keep enough same-partition
+  // candidates (mirrors hybridSearch's post-filter-after-oversample pattern).
+  const k = partition ? 64 : 10;
   const candidates = db
     .prepare<[Buffer, number], { rowid: number; distance: number }>(
       `SELECT rowid, distance FROM memories_vec
        WHERE embedding MATCH ? AND k = ?
        ORDER BY distance`,
     )
-    .all(Buffer.from(newEmbedding.buffer), 10);
+    .all(Buffer.from(newEmbedding.buffer), k);
 
   const newWords = extractSignificantWords(newContent);
   const results: ConflictResult[] = [];
@@ -69,8 +96,8 @@ export function detectConflicts(
     if (candidate.distance > 0.4) break;
 
     const row = db
-      .prepare<[number], { id: string; content: string; parent_id: string | null; superseded_at: string | null; valid_to: string | null; tx_expired: string | null }>(
-        'SELECT id, content, parent_id, superseded_at, valid_to, tx_expired FROM memories WHERE rowid = ?',
+      .prepare<[number], { id: string; content: string; parent_id: string | null; superseded_at: string | null; valid_to: string | null; tx_expired: string | null; scope: string; namespace: string | null }>(
+        'SELECT id, content, parent_id, superseded_at, valid_to, tx_expired, scope, namespace FROM memories WHERE rowid = ?',
       )
       .get(Number(candidate.rowid));
 
@@ -81,6 +108,9 @@ export function detectConflicts(
     // so a retired/forgotten row can be a candidate here — never conflict against one.
     if (row.valid_to !== null || row.tx_expired !== null) continue;
     if (excludeMemoryId && row.id === excludeMemoryId) continue;
+    // Cross-tenant isolation: a candidate in a different (scope, namespace) is
+    // never a conflict candidate for this write (battle-v7 H1).
+    if (outsidePartition(row, partition)) continue;
 
     const vectorSim = cosineSimFromL2(candidate.distance);
     const existingWords = extractSignificantWords(row.content);

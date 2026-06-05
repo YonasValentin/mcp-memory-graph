@@ -86,10 +86,18 @@ export async function handleStore(
     }),
   );
 
+  // Cross-tenant isolation (battle-v7 H1/H2): every vector-proximity scan that
+  // can RETIRE or DEDUP an existing fact must be confined to the writing memory's
+  // own (scope, namespace). Without this a write into project B's namespace could
+  // silently drop a near-identical fact in project A's namespace (NOOP) or retire
+  // it as a contradiction — cross-tenant data loss on a shared DB. The partition
+  // matches the row's scope/namespace defaults below (scope ?? 'global').
+  const partition = { scope: input.scope ?? 'global', namespace: input.namespace ?? null };
+
   // Read-only conflict scan BEFORE the insert so the FK target check can't fail.
   let conflicts: ConflictResult[] = [];
   try {
-    conflicts = detectConflicts(db, embedding, input.content);
+    conflicts = detectConflicts(db, embedding, input.content, undefined, partition);
   } catch (err) /* c8 ignore start */ {
     logger.warn({ event: 'conflict_detect_failed', err: err instanceof Error ? err.message : String(err) });
   }
@@ -136,7 +144,7 @@ export async function handleStore(
     // tight shortlist never reaches NLI. distanceThreshold is a MAX distance, so
     // raise it (0.5 → 0.7) + more candidates and let NLI (the actual contradiction
     // gate) decide — non-contradictions are simply not retired.
-    const shortlist = findNearDuplicates(db, embedding, 0.7, 10);
+    const shortlist = findNearDuplicates(db, embedding, 0.7, 10, partition);
     const candidates: { id: string; content: string }[] = [];
     for (const hit of shortlist) {
       // Only consider still-valid, TOP-LEVEL facts as contradiction candidates —

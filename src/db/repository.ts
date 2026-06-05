@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { Memory, MemoryRow, ListOptions, AccessLogEntry, IngestSourceRecord } from '../types.js';
+import type { MemoryPartition } from '../graph/conflict-resolver.js';
 import { NOW_ISO_SQL } from './predicates.js';
 import { signEnvelope } from '../provenance/envelope.js';
 
@@ -632,29 +633,38 @@ export function findNearDuplicates(
   embedding: Float32Array,
   distanceThreshold: number,
   limit: number,
+  partition?: MemoryPartition,
 ): Array<{ rowid: number; id: string; distance: number }> {
   const find = db.transaction(() => {
+    // Oversample when partitioned: cross-tenant rows occupy the nearest slots
+    // and are then filtered out, so widen k to keep `limit` same-partition hits
+    // (mirrors hybridSearch's post-filter-after-oversample pattern). Single-tenant
+    // callers (no partition) keep the exact pre-fix k = limit.
+    const k = partition ? Math.max(limit, 64) : limit;
     const rows = db
       .prepare<[Buffer, number], { rowid: number; distance: number }>(
         'SELECT rowid, distance FROM memories_vec WHERE embedding MATCH ? AND k = ? ORDER BY distance',
       )
-      .all(Buffer.from(embedding.buffer), limit);
+      .all(Buffer.from(embedding.buffer), k);
 
     const results: Array<{ rowid: number; id: string; distance: number }> = [];
     for (const row of rows) {
       if (row.distance > distanceThreshold) break;
+      if (results.length >= limit) break;
       // vec0 rows are only removed on hard delete, not on bi-temporal
       // invalidation (which just stamps valid_to / tx_expired). Exclude
       // invalidated rows here so every consumer (dedup, consolidation,
       // similarity edges) ignores tombstoned/superseded memories uniformly.
       const mem = db
-        .prepare<[number], { id: string; valid_to: string | null; tx_expired: string | null }>(
-          'SELECT id, valid_to, tx_expired FROM memories WHERE rowid = ?',
+        .prepare<[number], { id: string; valid_to: string | null; tx_expired: string | null; scope: string; namespace: string | null }>(
+          'SELECT id, valid_to, tx_expired, scope, namespace FROM memories WHERE rowid = ?',
         )
         .get(Number(row.rowid));
-      if (mem && mem.valid_to === null && mem.tx_expired === null) {
-        results.push({ rowid: Number(row.rowid), id: mem.id, distance: row.distance });
-      }
+      if (!mem || mem.valid_to !== null || mem.tx_expired !== null) continue;
+      // Cross-tenant isolation: a candidate in a different (scope, namespace) is
+      // never a near-duplicate/contradiction candidate for this write (battle-v7 H2).
+      if (partition && (mem.scope !== partition.scope || (mem.namespace ?? null) !== (partition.namespace ?? null))) continue;
+      results.push({ rowid: Number(row.rowid), id: mem.id, distance: row.distance });
     }
     return results;
   });
