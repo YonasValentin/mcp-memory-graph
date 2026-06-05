@@ -201,7 +201,14 @@ export async function handleExtractLearnings(
         namespace: input.namespace,
       }),
     );
-    const duplicates = findNearDuplicates(db, embedding, DEDUP_DISTANCE_THRESHOLD, 3);
+    // battle-v9 CLASS 1: confine the dedup/corroboration probe to the caller's
+    // own (scope, namespace). Unpartitioned, a foreign-tenant near-match could be
+    // returned AND — under auto_store — get its corroboration_count MUTATED below
+    // (a cross-tenant write). Mirrors store.ts's partition.
+    const duplicates = findNearDuplicates(db, embedding, DEDUP_DISTANCE_THRESHOLD, 3, {
+      scope: input.scope ?? 'global',
+      namespace: input.namespace ?? null,
+    });
 
     if (duplicates.length > 0) {
       if (input.auto_store) {

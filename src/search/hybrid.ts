@@ -88,11 +88,32 @@ export async function hybridSearch(
   if (doVector) {
     try {
       const queryEmb = await embedder.embed(options.query);
+      // battle-v9 CLASS 1: push the (scope, namespace) partition AND the
+      // scope!='user' privacy guard INTO the vec0 KNN. Without it the fixed-k
+      // window (k = oversampleLimit) is filled GLOBALLY, so a busy/foreign
+      // namespace — or a flood of scope='user' rows when the caller didn't ask
+      // for user scope — starves a quiet same-tenant row out of the window and
+      // the post-filter (below) never sees it (vector recall silently → 0). vec0
+      // 0.1.10-alpha.4 declares scope/namespace as filterable metadata columns
+      // and supports `=`/`!=` on them (verified), so the same predicate the
+      // post-filter applies is pushed down here, mirroring findNearDuplicates.
+      const vecClauses: string[] = ['embedding MATCH ?', 'k = ?'];
+      const vecParams: unknown[] = [Buffer.from(queryEmb.buffer), oversampleLimit];
+      if (options.scope) {
+        vecClauses.push('scope = ?');
+        vecParams.push(options.scope);
+      } else {
+        vecClauses.push("scope != 'user'");
+      }
+      if (options.namespace) {
+        vecClauses.push('namespace = ?');
+        vecParams.push(options.namespace);
+      }
       const rows = db.prepare(
         `SELECT rowid, distance FROM memories_vec
-         WHERE embedding MATCH ? AND k = ?
+         WHERE ${vecClauses.join(' AND ')}
          ORDER BY distance`
-      ).all(Buffer.from(queryEmb.buffer), oversampleLimit) as { rowid: number; distance: number }[];
+      ).all(...vecParams) as { rowid: number; distance: number }[];
 
       for (const row of rows) {
         vectorResults.set(row.rowid, row.distance);

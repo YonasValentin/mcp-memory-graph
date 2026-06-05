@@ -690,43 +690,59 @@ export function findNearDuplicates(
   limit: number,
   partition?: MemoryPartition,
 ): Array<{ rowid: number; id: string; distance: number }> {
-  const find = db.transaction(() => {
-    // Cross-tenant isolation (battle-v7 H2 / battle-v8 B1): when partitioned, push
-    // the (scope, namespace) predicate INTO the vec0 KNN so the k nearest are the
-    // k nearest SAME-tenant rows. memories_vec declares scope/namespace as
-    // filterable metadata columns and insertMemory stores a null namespace as ''
-    // — so a flood of foreign-tenant rows can NEVER starve a same-tenant candidate
-    // out of the window (the earlier post-filter-after-fixed-k could). k stays the
-    // true `limit`; single-tenant callers (no partition) are unchanged.
-    const rows = partition
-      ? db
-          .prepare<[Buffer, number, string, string], { rowid: number; distance: number }>(
-            'SELECT rowid, distance FROM memories_vec WHERE embedding MATCH ? AND k = ? AND scope = ? AND namespace = ? ORDER BY distance',
-          )
-          .all(Buffer.from(embedding.buffer), limit, partition.scope, partition.namespace ?? '')
-      : db
-          .prepare<[Buffer, number], { rowid: number; distance: number }>(
-            'SELECT rowid, distance FROM memories_vec WHERE embedding MATCH ? AND k = ? ORDER BY distance',
-          )
-          .all(Buffer.from(embedding.buffer), limit);
+  const buf = Buffer.from(embedding.buffer);
+  // Cross-tenant isolation (battle-v7 H2 / battle-v8 B1): when partitioned, push
+  // the (scope, namespace) predicate INTO the vec0 KNN so the k nearest are the
+  // k nearest SAME-tenant rows. memories_vec declares scope/namespace as
+  // filterable metadata columns and insertMemory stores a null namespace as ''
+  // — so a flood of foreign-tenant rows can NEVER starve a same-tenant candidate.
+  const sql = partition
+    ? 'SELECT rowid, distance FROM memories_vec WHERE embedding MATCH ? AND k = ? AND scope = ? AND namespace = ? ORDER BY distance'
+    : 'SELECT rowid, distance FROM memories_vec WHERE embedding MATCH ? AND k = ? ORDER BY distance';
+  const knn = db.prepare<unknown[], { rowid: number; distance: number }>(sql);
+  const memStmt = db.prepare<
+    [number],
+    { id: string; valid_to: string | null; tx_expired: string | null }
+  >('SELECT id, valid_to, tx_expired FROM memories WHERE rowid = ?');
 
-    const results: Array<{ rowid: number; id: string; distance: number }> = [];
-    for (const row of rows) {
-      if (row.distance > distanceThreshold) break;
-      // vec0 rows are only removed on hard delete, not on bi-temporal
-      // invalidation (which just stamps valid_to / tx_expired) — and vec0 can't
-      // filter those columns. Exclude invalidated rows here so every consumer
-      // (dedup, consolidation, similarity edges) ignores tombstoned/superseded
-      // memories uniformly.
-      const mem = db
-        .prepare<[number], { id: string; valid_to: string | null; tx_expired: string | null }>(
-          'SELECT id, valid_to, tx_expired FROM memories WHERE rowid = ?',
-        )
-        .get(Number(row.rowid));
-      if (!mem || mem.valid_to !== null || mem.tx_expired !== null) continue;
-      results.push({ rowid: Number(row.rowid), id: mem.id, distance: row.distance });
+  // battle-v9 item 13 — in-partition retired-row starvation. vec0 rows are
+  // RETAINED on bi-temporal invalidation (as_of needs them) and vec0 can't filter
+  // valid_to/tx_expired, so retired rows occupy the fixed-k window and the live
+  // post-filter below could drop a still-live near-dup that sits just past k.
+  // Widen k geometrically until we have `limit` LIVE rows, or the partition is
+  // exhausted (vec0 returned < k), or all further rows exceed the distance
+  // threshold, or a safety cap. The common case (few/no retired rows) satisfies
+  // `limit` on the first pass — no extra query, no perf change.
+  const GROWTH = 8;
+  const MAX_K = 4096;
+
+  const find = db.transaction(() => {
+    let k = Math.max(1, limit);
+    let results: Array<{ rowid: number; id: string; distance: number }> = [];
+    for (;;) {
+      const rows = (
+        partition ? knn.all(buf, k, partition.scope, partition.namespace ?? '') : knn.all(buf, k)
+      ) as { rowid: number; distance: number }[];
+
+      results = [];
+      let hitThreshold = false;
+      for (const row of rows) {
+        if (row.distance > distanceThreshold) {
+          // Sorted by distance — everything past here is farther, so a wider k
+          // can't surface more in-threshold rows.
+          hitThreshold = true;
+          break;
+        }
+        const mem = memStmt.get(Number(row.rowid));
+        if (!mem || mem.valid_to !== null || mem.tx_expired !== null) continue;
+        results.push({ rowid: Number(row.rowid), id: mem.id, distance: row.distance });
+        if (results.length >= limit) break;
+      }
+
+      if (results.length >= limit || hitThreshold || rows.length < k || k >= MAX_K) break;
+      k = Math.min(k * GROWTH, MAX_K);
     }
-    return results;
+    return results.slice(0, limit);
   });
 
   return find();

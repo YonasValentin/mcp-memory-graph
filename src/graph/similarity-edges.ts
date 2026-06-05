@@ -55,8 +55,25 @@ export function buildSimilarityEdges(
   const maxDistance = options.maxDistance ?? DEFAULT_MAX_DISTANCE;
   const limit = options.limit ?? DEFAULT_LIMIT;
 
+  // battle-v9 CLASS 1: confine the neighbour KNN to the source memory's own
+  // (scope, namespace). Unpartitioned, this ran a GLOBAL KNN and then PERSISTED
+  // similar_to edges to foreign-tenant rows (a read leak that became a durable
+  // cross-tenant graph edge). Derive the partition from memoryId here so a caller
+  // (store.ts, vault/rebuild.ts) can never forget to pass it.
+  const part = db
+    .prepare<[string], { scope: string; namespace: string | null }>(
+      'SELECT scope, namespace FROM memories WHERE id = ?',
+    )
+    .get(memoryId);
+
   // +1 because the memory itself is its own nearest neighbor (distance 0).
-  const neighbors = findNearDuplicates(db, embedding, maxDistance, limit + 1);
+  const neighbors = findNearDuplicates(
+    db,
+    embedding,
+    maxDistance,
+    limit + 1,
+    part ? { scope: part.scope, namespace: part.namespace } : undefined,
+  );
 
   for (const neighbor of neighbors) {
     if (neighbor.id === memoryId) continue;
