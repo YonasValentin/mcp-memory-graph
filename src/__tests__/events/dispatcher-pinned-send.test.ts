@@ -56,4 +56,23 @@ describe('sendPinned — M3: connects to the pinned IP on Node 22+', () => {
     // The Host header must still carry the original hostname (virtual-hosting).
     expect(gotHostHeader).toContain('webhook.example.test');
   });
+
+  // battle-v8 A2: an oversized (>64KB) response must SETTLE, not hang. res.destroy()
+  // at the byte cap emits neither 'end' nor 'error', so the promise used to hang
+  // forever and wedge the autonomous dispatch loop.
+  it('settles on an oversized response body instead of hanging', async () => {
+    server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/octet-stream' });
+      const chunk = Buffer.alloc(64 * 1024, 0x61);
+      res.write(chunk); res.write(chunk); res.write(chunk); // 192KB > cap; never end()
+    });
+    await new Promise<void>((r) => server!.listen(0, '127.0.0.1', r));
+    const port = (server!.address() as AddressInfo).port;
+
+    const res = await Promise.race([
+      sendPinned(new URL(`http://host.test:${port}/x`), {}, 'b', '127.0.0.1', 3000),
+      new Promise<{ status: number }>((_, rej) => setTimeout(() => rej(new Error('HANG')), 1500)),
+    ]);
+    expect(res.status).toBe(200);
+  });
 });

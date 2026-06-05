@@ -94,6 +94,13 @@ export function sendPinned(
   return new Promise((resolve, reject) => {
     const isHttps = url.protocol === 'https:';
     const lib = isHttps ? https : http;
+    // Single-settle guard shared by ALL outcomes (cap / end / error / timeout). A
+    // res.destroy() at the byte cap emits neither 'end' nor 'error', so without a
+    // settle-on-cap the promise hangs forever and wedges the autonomous dispatch
+    // loop (battle-v8 A2). The guard also stops a late end/error from double-settling.
+    let settled = false;
+    const done = (status: number) => { if (!settled) { settled = true; resolve({ status }); } };
+    const fail = (err: Error) => { if (!settled) { settled = true; reject(err); } };
     const req = lib.request(
       {
         protocol: url.protocol,
@@ -110,14 +117,19 @@ export function sendPinned(
         let read = 0;
         res.on('data', (chunk: Buffer) => {
           read += chunk.length;
-          if (read > MAX_RESPONSE_BYTES) res.destroy(); // cap + free the socket
+          if (read > MAX_RESPONSE_BYTES) {
+            // Cap hit: capture the status, free the socket, and settle NOW.
+            const status = res.statusCode ?? 0;
+            res.destroy();
+            done(status);
+          }
         });
-        res.on('end', () => resolve({ status: res.statusCode ?? 0 }));
-        res.on('error', reject);
+        res.on('end', () => done(res.statusCode ?? 0));
+        res.on('error', fail);
       },
     );
     req.setTimeout(timeoutMs, () => req.destroy(new Error(`timeout after ${timeoutMs}ms`)));
-    req.on('error', reject);
+    req.on('error', fail);
     req.write(body);
     req.end();
   });
