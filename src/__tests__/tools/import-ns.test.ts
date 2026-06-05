@@ -34,7 +34,9 @@ describe('memory_import wiring guard (server.ts passes the forced namespace)', (
       'utf8',
     );
     expect(serverSrc).toContain('handleImport(getDb(), await getEmbedder(), parsed, forcedNamespace())');
-    expect(serverSrc).toMatch(/forcedNamespace,?\s*\n\s*}\s*from '\.\/lib\/tenancy\.js'/);
+    // order-independent: forcedNamespace is imported from tenancy.js (a later
+    // battle-v9 fix added vaultPathInForcedNamespace to the same import block).
+    expect(serverSrc).toMatch(/import \{[^}]*\bforcedNamespace\b[^}]*\} from '\.\/lib\/tenancy\.js'/s);
   });
 });
 

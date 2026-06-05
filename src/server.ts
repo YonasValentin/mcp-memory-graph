@@ -14,6 +14,7 @@ import {
   scopeFilterToNamespace,
   idIsInForcedNamespace,
   forcedNamespace,
+  vaultPathInForcedNamespace,
 } from './lib/tenancy.js';
 import {
   MemoryStoreSchema,
@@ -452,7 +453,9 @@ export function createServer(): McpServer {
     MemoryExportSchema.shape,
     instrument('memory_export', async (input) => {
       const parsed = MemoryExportSchema.parse(input);
-      return handleExport(getDb(), parsed);
+      // battle-v9 CLASS 2: export carries a top-level namespace; on a forced
+      // deployment, omitting it must NOT dump the whole cross-tenant corpus.
+      return handleExport(getDb(), withForcedNs(parsed));
     }),
   );
 
@@ -478,6 +481,12 @@ export function createServer(): McpServer {
     VaultSyncSchema.shape,
     instrument('vault_sync', async (input) => {
       const parsed = VaultSyncSchema.parse(input);
+      // battle-v9 CLASS 2: a forced deployment may only sync the vault whose
+      // basename equals the pinned namespace (else a foreign path writes another
+      // tenant's namespace).
+      if (!vaultPathInForcedNamespace(parsed.vault_path)) {
+        throw new Error('Vault path is outside the pinned namespace');
+      }
       return handleVaultSync(getDb(), await getEmbedder(), parsed);
     }),
   );
@@ -489,6 +498,10 @@ export function createServer(): McpServer {
     VaultStatusSchema.shape,
     instrument('vault_status', async (input) => {
       const parsed = VaultStatusSchema.parse(input);
+      // battle-v9 CLASS 2: only the pinned-namespace vault may be inspected.
+      if (!vaultPathInForcedNamespace(parsed.vault_path)) {
+        throw new Error('Vault path is outside the pinned namespace');
+      }
       return handleVaultStatus(getDb(), parsed);
     }),
   );
@@ -500,6 +513,10 @@ export function createServer(): McpServer {
     VaultSearchSchema.shape,
     instrument('vault_search', async (input) => {
       const parsed = VaultSearchSchema.parse(input);
+      // battle-v9 CLASS 2: only the pinned-namespace vault may be searched.
+      if (!vaultPathInForcedNamespace(parsed.vault_path)) {
+        throw new Error('Vault path is outside the pinned namespace');
+      }
       return handleVaultSearch(getDb(), await getEmbedder(), parsed);
     }),
   );
@@ -511,7 +528,9 @@ export function createServer(): McpServer {
     MemoryExportVaultSchema.shape,
     instrument('memory_export_vault', async (input) => {
       const parsed = MemoryExportVaultSchema.parse(input);
-      return handleExportVault(getDb(), parsed);
+      // battle-v9 CLASS 2: export_vault writes memories OUT to disk; a forced
+      // deployment must not let an omitted namespace dump every tenant to .md.
+      return handleExportVault(getDb(), withForcedNs(parsed));
     }),
   );
 
@@ -522,7 +541,9 @@ export function createServer(): McpServer {
     MemoryCanvasSchema.shape,
     instrument('memory_canvas', async (input) => {
       const parsed = MemoryCanvasSchema.parse(input);
-      return handleCanvas(getDb(), parsed);
+      // battle-v9 CLASS 2: canvas exports the whole graph; force the namespace
+      // so an omitted filter cannot render cross-tenant nodes/links.
+      return handleCanvas(getDb(), withForcedNs(parsed));
     }),
   );
 
@@ -548,7 +569,9 @@ export function createServer(): McpServer {
     MemoryExtractLearningsSchema.shape,
     instrument('memory_extract_learnings', async (input) => {
       const parsed = MemoryExtractLearningsSchema.parse(input);
-      return handleExtractLearnings(getDb(), await getEmbedder(), parsed);
+      // battle-v9 CLASS 2: with auto_store this WRITES via handleStore using the
+      // input namespace — force it so a write can't land in another tenant.
+      return handleExtractLearnings(getDb(), await getEmbedder(), withForcedNs(parsed));
     }),
   );
 
@@ -570,7 +593,10 @@ export function createServer(): McpServer {
     MemoryGraphSchema.shape,
     instrument('memory_graph', async (input) => {
       const parsed = MemoryGraphSchema.parse(input);
-      return handleGraph(getDb(), parsed);
+      // battle-v9 CLASS 2: schema carries no namespace, so force-scope at the
+      // handler — entities are shared, so an unforced graph leaks cross-tenant
+      // entity names + linked memory ids/titles.
+      return handleGraph(getDb(), parsed, forcedNamespace());
     }),
   );
 
@@ -675,7 +701,9 @@ export function createServer(): McpServer {
     MemoryCommunitiesSchema.shape,
     instrument('memory_communities', async (input) => {
       const parsed = MemoryCommunitiesSchema.parse(input);
-      return handleCommunities(getDb(), parsed);
+      // battle-v9 CLASS 2: schema carries no namespace — force-scope community
+      // detection + membership to the pinned tenant at the handler.
+      return handleCommunities(getDb(), parsed, forcedNamespace());
     }),
   );
 
@@ -708,7 +736,8 @@ export function createServer(): McpServer {
     MemoryAttributionSchema.shape,
     instrument('memory_attribution', async (input) => {
       const parsed = MemoryAttributionSchema.parse(input);
-      return handleAttribution(getDb(), parsed);
+      // battle-v9 CLASS 2: attribution rollup must count only the forced tenant.
+      return handleAttribution(getDb(), withForcedNs(parsed));
     }),
   );
 
@@ -755,6 +784,10 @@ export function createServer(): McpServer {
     MemoryUnlinkedMentionsSchema.shape,
     instrument('memory_unlinked_mentions', async (input) => {
       const parsed = MemoryUnlinkedMentionsSchema.parse(input);
+      // battle-v9 CLASS 2: seed is a by-id read like memory_related — refuse a
+      // foreign seed (existence non-confirmation). The neighbour scan is already
+      // partitioned to the seed's (scope,namespace) at the graph layer (4d8a1b1).
+      if (!idInForcedNs(parsed.id)) throw new Error('Memory not found');
       return handleUnlinkedMentions(getDb(), await getEmbedder(), parsed);
     }),
   );
@@ -837,6 +870,16 @@ export function createServer(): McpServer {
     MemoryRevalidateSchema.shape,
     instrument('memory_revalidate', async (input) => {
       const parsed = MemoryRevalidateSchema.parse(input);
+      // battle-v9 CLASS 2: action=list stays namespace-forced; preview/confirm
+      // operate on parsed.id and must refuse a foreign id — confirm even MUTATES
+      // (clears the stale flag), so this guards a cross-tenant write too.
+      if (
+        (parsed.action === 'preview' || parsed.action === 'confirm') &&
+        parsed.id &&
+        !idInForcedNs(parsed.id)
+      ) {
+        throw new Error('Memory not found');
+      }
       return handleRevalidate(getDb(), withForcedNs(parsed));
     }),
   );

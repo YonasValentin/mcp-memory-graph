@@ -55,6 +55,11 @@ export interface DetectCommunitiesOptions {
    * first sweep that changes no label (convergence). Default 20.
    */
   maxIterations?: number;
+  /**
+   * battle-v9 CLASS 2: when set, detect communities over only the entities
+   * witnessed by a live memory in this namespace (the forced-tenant subgraph).
+   */
+  namespace?: string;
 }
 
 /** Minimal entity row — every entity is a node, even isolated ones. */
@@ -101,16 +106,38 @@ interface Graph {
  * zeroes an edge. Parallel rows between the same pair accumulate. Self-loops
  * are skipped — they carry no clustering signal.
  */
-function buildGraph(db: Database.Database): Graph {
+function buildGraph(db: Database.Database, namespace?: string): Graph {
   // Deterministic node order: normalized_name (stable, human-meaningful) then
   // id (a UUID) as the final tiebreak so the order is total and reproducible.
-  const entities = db
-    .prepare<[], EntityRow>(
-      `SELECT id, mention_count
-         FROM entities
-        ORDER BY normalized_name, id`,
-    )
-    .all();
+  // battle-v9 CLASS 2: on a namespace-forced deployment, restrict the graph to
+  // entities witnessed by a LIVE memory in that namespace so community detection
+  // runs over the tenant's subgraph only — a foreign entity is never a node, and
+  // dangling edges to it are skipped by the index lookup below.
+  const entities = namespace
+    ? db
+        .prepare<[string], EntityRow>(
+          `SELECT id, mention_count
+             FROM entities
+            WHERE id IN (
+              SELECT DISTINCT me.entity_id
+                FROM memory_entities me
+                JOIN memories m ON m.id = me.memory_id
+               WHERE m.namespace = ?
+                 AND m.parent_id IS NULL
+                 AND m.valid_to IS NULL
+                 AND m.tx_expired IS NULL
+                 AND m.superseded_at IS NULL
+            )
+            ORDER BY normalized_name, id`,
+        )
+        .all(namespace)
+    : db
+        .prepare<[], EntityRow>(
+          `SELECT id, mention_count
+             FROM entities
+            ORDER BY normalized_name, id`,
+        )
+        .all();
 
   const ids: string[] = entities.map((e) => e.id);
   const index = new Map<string, number>();
@@ -188,7 +215,7 @@ export function detectCommunities(
 ): Map<string, number> {
   const maxIterations = opts.maxIterations ?? DEFAULT_MAX_ITERATIONS;
 
-  const graph = buildGraph(db);
+  const graph = buildGraph(db, opts.namespace);
   const n = graph.ids.length;
   const result = new Map<string, number>();
   if (n === 0) return result;
@@ -271,6 +298,12 @@ export interface SummarizeCommunitiesOptions {
   minSize?: number;
   /** Member memories surfaced per community (most important first). Default 20. */
   memberMemoriesCap?: number;
+  /**
+   * battle-v9 CLASS 2: when set, member_memory_ids are restricted to memories in
+   * this namespace. Required even after scoping the entity set, because a shared
+   * entity can link memories of OTHER tenants.
+   */
+  namespace?: string;
 }
 
 const DEFAULT_SUMMARY_LIMIT = 20;
@@ -323,7 +356,7 @@ export function summarizeCommunitiesWithTotal(
   db: Database.Database,
   opts: SummarizeCommunitiesOptions & { min_size?: number } = {},
 ): { communities: CommunitySummary[]; total_communities: number } {
-  const communities = detectCommunities(db);
+  const communities = detectCommunities(db, { namespace: opts.namespace });
   const summaries = summarizeFromCommunities(db, communities, {
     ...opts,
     minSize: opts.minSize ?? opts.min_size,
@@ -376,15 +409,31 @@ function summarizeFromCommunities(
     // that EXIST and are retired, but KEEP an orphaned link (a memory_entities row
     // whose memory was hard-deleted: m.id IS NULL) so the documented orphan-ranking
     // behaviour is preserved. LEFT JOIN so the null-match case survives.
-    const links = db
-      .prepare<string[], MemoryEntityRow>(
-        `SELECT me.memory_id AS memory_id, me.entity_id AS entity_id
-           FROM memory_entities me
-           LEFT JOIN memories m ON m.id = me.memory_id
-          WHERE me.entity_id IN (${placeholders})
-            AND (m.id IS NULL OR (m.valid_to IS NULL AND m.tx_expired IS NULL AND m.superseded_at IS NULL))`,
-      )
-      .all(...batch);
+    //
+    // battle-v9 CLASS 2: a shared entity can link memories in OTHER namespaces, so
+    // when forced we additionally require m.namespace = ? — which also drops the
+    // orphan (m.id IS NULL) rows, since an unattributable link can't be proven to
+    // belong to the forced tenant.
+    const links = opts.namespace
+      ? db
+          .prepare<string[], MemoryEntityRow>(
+            `SELECT me.memory_id AS memory_id, me.entity_id AS entity_id
+               FROM memory_entities me
+               JOIN memories m ON m.id = me.memory_id
+              WHERE me.entity_id IN (${placeholders})
+                AND m.namespace = ?
+                AND m.valid_to IS NULL AND m.tx_expired IS NULL AND m.superseded_at IS NULL`,
+          )
+          .all(...batch, opts.namespace)
+      : db
+          .prepare<string[], MemoryEntityRow>(
+            `SELECT me.memory_id AS memory_id, me.entity_id AS entity_id
+               FROM memory_entities me
+               LEFT JOIN memories m ON m.id = me.memory_id
+              WHERE me.entity_id IN (${placeholders})
+                AND (m.id IS NULL OR (m.valid_to IS NULL AND m.tx_expired IS NULL AND m.superseded_at IS NULL))`,
+          )
+          .all(...batch);
     for (const link of links) {
       const list = memoriesByEntity.get(link.entity_id);
       if (list) list.push(link.memory_id);

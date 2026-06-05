@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import path from 'node:path';
 
 /**
  * T1 — single source of truth for MCP_API_NAMESPACE tenancy.
@@ -61,4 +62,19 @@ export function idIsInForcedNamespace(db: Database.Database, id: string): boolea
     .prepare<[string], { namespace: string | null }>('SELECT namespace FROM memories WHERE id = ?')
     .get(id);
   return !!row && row.namespace === ns;
+}
+
+/**
+ * battle-v9 CLASS 2 — vault boundary. The vault tools (vault_sync/status/search)
+ * derive their namespace from `basename(vault_path)` and self-scope to
+ * scope='project'. On a namespace-forced deployment that lets a caller read or
+ * write ANY namespace over POST /mcp by naming a foreign vault path. The only
+ * vault a pinned tenant may touch is the one whose basename equals the forced
+ * namespace. Returns true (no restriction) when scoping is off. A trailing
+ * separator is tolerated so `/v/edc` and `/v/edc/` both resolve to `edc`.
+ */
+export function vaultPathInForcedNamespace(vaultPath: string): boolean {
+  const ns = forcedNamespace();
+  if (!ns) return true;
+  return path.basename(vaultPath) === ns;
 }

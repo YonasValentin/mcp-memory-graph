@@ -41,12 +41,15 @@ interface CommunitiesResult {
 export function handleCommunities(
   db: Database.Database,
   input: CommunitiesInput = {},
+  forcedNamespace?: string,
 ): CommunitiesResult {
   // Single graph build: derive the post-filter summaries AND the true
-  // corpus-wide total from ONE community detection pass.
+  // corpus-wide total from ONE community detection pass. battle-v9 CLASS 2: a
+  // namespace-forced deployment confines detection + membership to that tenant.
   const { communities, total_communities } = summarizeCommunitiesWithTotal(db, {
     limit: input.limit,
     minSize: input.min_size,
+    namespace: forcedNamespace,
   });
 
   return {

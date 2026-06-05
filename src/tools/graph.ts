@@ -51,7 +51,11 @@ interface GraphResult {
   total_relationships: number;
 }
 
-export function handleGraph(db: Database.Database, input: GraphInput): GraphResult {
+export function handleGraph(
+  db: Database.Database,
+  input: GraphInput,
+  forcedNamespace?: string,
+): GraphResult {
   const limit = input.limit ?? 20;
   const depth = input.depth ?? 1;
   const includeMemories = input.include_memories ?? true;
@@ -120,6 +124,30 @@ export function handleGraph(db: Database.Database, input: GraphInput): GraphResu
     entityRows = db.prepare(query).all(...params) as typeof entityRows;
   }
 
+  // battle-v9 CLASS 2: entities are SHARED (no namespace column), so a foreign
+  // tenant's entity name would otherwise surface on a namespace-forced
+  // deployment. Restrict the visible entity set to those witnessed by a LIVE
+  // memory in the forced namespace (an entity with no in-tenant memory is
+  // dropped). The memory join below additionally filters m.namespace so a shared
+  // entity cannot bridge to a foreign memory.
+  if (forcedNamespace) {
+    const live = liveConditions({ excludeSuperseded: true, topLevelOnly: true })
+      .map((c) => `m.${c}`)
+      .join(' AND ');
+    const allowed = new Set(
+      db
+        .prepare<[string], { id: string }>(
+          `SELECT DISTINCT me.entity_id AS id
+             FROM memory_entities me
+             JOIN memories m ON m.id = me.memory_id
+            WHERE m.namespace = ? AND ${live}`,
+        )
+        .all(forcedNamespace)
+        .map((r) => r.id),
+    );
+    entityRows = entityRows.filter((e) => allowed.has(e.id));
+  }
+
   if (entityRows.length === 0) {
     return { entities: [], memories: [], total_entities: 0, total_relationships: 0 };
   }
@@ -170,15 +198,20 @@ export function handleGraph(db: Database.Database, input: GraphInput): GraphResu
     const live = liveConditions({ excludeSuperseded: true, topLevelOnly: true })
       .map((c) => `m.${c}`)
       .join(' AND ');
+    // battle-v9 CLASS 2: a shared entity can link memories of other tenants, so
+    // the join itself must filter on the forced namespace (not just the entity
+    // set) or a foreign memory's id/title/namespace would leak.
+    const nsClause = forcedNamespace ? ' AND m.namespace = ?' : '';
+    const params = forcedNamespace ? [...entityIds, forcedNamespace] : [...entityIds];
     memories = db.prepare(`
       SELECT DISTINCT m.id, m.title, m.namespace
       FROM memory_entities me
       JOIN memories m ON m.id = me.memory_id
       WHERE me.entity_id IN (${idPlaceholders})
-        AND ${live}
+        AND ${live}${nsClause}
       ORDER BY m.importance_score DESC
       LIMIT 50
-    `).all(...entityIds) as typeof memories;
+    `).all(...params) as typeof memories;
   }
 
   return {
