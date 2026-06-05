@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3';
 import type { Memory, VersionRecord } from '../types.js';
 import {
   getMemoryById,
-  invalidateMemory,
+  invalidateSubtree,
   deleteMemory,
   rowToMemory,
 } from '../db/repository.js';
@@ -97,7 +97,10 @@ export function handleForget(
   }
 
   if (mode === 'soft') {
-    invalidateMemory(db, input.id);
+    // Tombstone the parent AND every descendant chunk — an ingested document's
+    // child chunks are independently searchable, so soft-forgetting only the
+    // parent would leave the "forgotten" content recallable (battle-v7 H5).
+    invalidateSubtree(db, input.id);
     // Write-through: mirrorMemoryWrite sees the now-stamped valid_to and moves
     // the file to .memory/deleted/ so the tombstone travels through git.
     mirrorMemoryWrite(db, input.id);

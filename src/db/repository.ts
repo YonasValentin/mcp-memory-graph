@@ -425,6 +425,50 @@ export function reinstateMemory(db: Database.Database, id: string): number {
     .run(id).changes;
 }
 
+/**
+ * Bi-temporally invalidate a memory AND every descendant chunk (its parent_id
+ * subtree) in one statement. Soft-forgetting an ingested PARENT document must
+ * tombstone its child chunks too — each chunk carries its own embedding + FTS
+ * row and is independently searchable, so leaving them live orphans the
+ * "forgotten" document's content in recall (battle-v7 H5). COALESCE preserves
+ * any valid_to already stamped on a row. For a childless memory this is exactly
+ * invalidateMemory. Returns the number of rows whose valid_to was newly set.
+ */
+export function invalidateSubtree(db: Database.Database, id: string, validTo?: string): number {
+  return db
+    .prepare(
+      `WITH RECURSIVE sub(id) AS (
+         SELECT id FROM memories WHERE id = ?
+         UNION ALL
+         SELECT m.id FROM memories m JOIN sub ON m.parent_id = sub.id
+       )
+       UPDATE memories
+         SET valid_to = COALESCE(valid_to, COALESCE(?, ${NOW_ISO_SQL}))
+       WHERE id IN (SELECT id FROM sub) AND valid_to IS NULL`,
+    )
+    .run(id, validTo ?? null).changes;
+}
+
+/**
+ * Inverse of {@link invalidateSubtree}: reinstate a memory AND every descendant
+ * chunk into default recall (clears valid_to/tx_expired across the subtree), so
+ * memory_restore brings a soft-forgotten ingested document back whole. For a
+ * childless memory this is exactly reinstateMemory.
+ */
+export function reinstateSubtree(db: Database.Database, id: string): number {
+  return db
+    .prepare(
+      `WITH RECURSIVE sub(id) AS (
+         SELECT id FROM memories WHERE id = ?
+         UNION ALL
+         SELECT m.id FROM memories m JOIN sub ON m.parent_id = sub.id
+       )
+       UPDATE memories SET valid_to = NULL, tx_expired = NULL
+       WHERE id IN (SELECT id FROM sub)`,
+    )
+    .run(id).changes;
+}
+
 export function getMemoryById(
   db: Database.Database,
   id: string,

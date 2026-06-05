@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { EmbeddingProvider } from '../types.js';
-import { getMemoryById, updateMemory, reinstateMemory } from '../db/repository.js';
+import { getMemoryById, updateMemory, reinstateSubtree } from '../db/repository.js';
 import { mirrorMemoryWrite } from '../vault/write-through.js';
 import { NOW_ISO_SQL } from '../db/predicates.js';
 
@@ -202,7 +202,10 @@ export async function handleRestore(
   // 2. Un-tombstone LAST so the write-through mirror reflects the final
   //    (already un-condensed) content when it moves the file back from
   //    .memory/deleted/ to its live path.
-  const reinstated = wasTombstoned && reinstateMemory(db, input.id) > 0;
+  // Reinstate the whole parent_id subtree so a soft-forgotten ingested document
+  // comes back whole (parent + all child chunks) — symmetric with the
+  // invalidateSubtree on soft-forget (battle-v7 H5).
+  const reinstated = wasTombstoned && reinstateSubtree(db, input.id) > 0;
   if (reinstated) {
     mirrorMemoryWrite(db, input.id);
   }
