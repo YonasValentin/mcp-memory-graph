@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { EmbeddingProvider, MemoryRow } from '../types.js';
 import { insertMemory, getMemoryById, updateMemory } from '../db/repository.js';
 import { computeContentSignal } from '../search/content-signals.js';
+import { notify, rowToEventPayload } from '../events/hooks.js';
 
 interface ImportItem {
   id?: string;
@@ -93,6 +94,11 @@ export async function handleImport(
 
   const now = new Date().toISOString();
 
+  // M3 event bus (L4 emission gap): collect mutated ids INSIDE the txn and emit
+  // AFTER it commits (notify writes to webhook_deliveries; never nest it).
+  const createdIds: string[] = [];
+  const updatedIds: string[] = [];
+
   const process = db.transaction(() => {
     for (let i = 0; i < validItems.length; i++) {
       const item = validItems[i];
@@ -124,6 +130,7 @@ export async function handleImport(
             }
 
             updateMemory(db, existingId!, updates, embeddings[i]);
+            updatedIds.push(existingId!);
             imported++;
           } else {
             skipped++;
@@ -166,6 +173,7 @@ export async function handleImport(
         };
 
         insertMemory(db, row, embeddings[i]);
+        createdIds.push(row.id);
         imported++;
       } catch /* c8 ignore start */ {
         errors++;
@@ -179,6 +187,16 @@ export async function handleImport(
   // it WAIT on busy_timeout instead of throwing SQLITE_BUSY on the deferred
   // write-upgrade.
   process.immediate();
+
+  // Announce the imported rows now the txn has committed (no-op unless the bus is on).
+  for (const id of createdIds) {
+    const r = getMemoryById(db, id);
+    if (r) notify(db, 'memory.created', rowToEventPayload(r));
+  }
+  for (const id of updatedIds) {
+    const r = getMemoryById(db, id);
+    if (r) notify(db, 'memory.updated', rowToEventPayload(r));
+  }
 
   return { imported, skipped, errors, remapped };
 }

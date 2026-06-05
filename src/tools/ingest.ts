@@ -4,10 +4,12 @@ import type { EmbeddingProvider, IngestResult, MemoryRow, ContentType, MemorySco
 import {
   insertMemory,
   deleteMemory,
+  getMemoryById,
   getIngestSourceByPath,
   upsertIngestSource,
 } from '../db/repository.js';
 import { handleUpdate } from './update.js';
+import { notify, rowToEventPayload } from '../events/hooks.js';
 import { chunkContent } from '../chunking/chunker.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
 import { redactRecord, redactModeFromEnv } from '../lib/redact-content.js';
@@ -167,6 +169,9 @@ export async function handleIngest(
       });
     });
     replace();
+    // M3 event bus: a re-ingest replaced the document's content (L4 emission gap).
+    const reingested = getMemoryById(db, parentId);
+    if (reingested) notify(db, 'memory.updated', rowToEventPayload(reingested));
     return { parent_id: parentId, chunk_count: chunks.length, chunk_ids: chunkIds, status: 'updated' };
   }
 
@@ -221,6 +226,10 @@ export async function handleIngest(
     }
   });
   ingest();
+
+  // M3 event bus: a new document entered the store (L4 emission gap).
+  const created = getMemoryById(db, parentId);
+  if (created) notify(db, 'memory.created', rowToEventPayload(created));
 
   return { parent_id: parentId, chunk_count: chunks.length, chunk_ids: chunkIds, status: 'new' };
 }

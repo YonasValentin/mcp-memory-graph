@@ -12,6 +12,8 @@ import { registerApiRoutes, registerPublishRoutes } from '../api/routes.js';
 import { rateLimitMiddleware, RateLimiter, defaultConfig as rateLimitDefaultConfig, publishConfig as rateLimitPublishConfig } from '../api/rate-limit.js';
 import { renderMetrics, METRICS_CONTENT_TYPE } from '../api/metrics.js';
 import { securityHeadersMiddleware } from '../api/security-headers.js';
+import { dispatchPendingWebhooks } from '../events/dispatcher.js';
+import { webhooksEnabled } from '../events/emitter.js';
 import { logger } from '../lib/logger.js';
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -474,14 +476,55 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
   return { app, transports, servers };
 }
 
+/**
+ * Periodically drain the webhook delivery queue while the server runs (battle-v7
+ * L4). Without this the bus only ever flushed when a caller MANUALLY invoked
+ * memory_webhook {action:'dispatch'} — so in a long-running server, enqueued
+ * deliveries (memory.created / updated / superseded / forgotten …) never fired
+ * autonomously. Gated by webhooksEnabled() at the call site. The timer is
+ * `unref()`'d so it never keeps the process alive on its own, an in-flight guard
+ * prevents overlapping drains (each does real network I/O), and errors are
+ * swallowed (a flaky receiver must never crash the server). Returns a stop
+ * function for graceful shutdown.
+ */
+export function startWebhookDispatchLoop(
+  getDb: () => Database.Database,
+  opts?: { intervalMs?: number; dispatch?: typeof dispatchPendingWebhooks },
+): () => void {
+  const intervalMs = opts?.intervalMs ?? parseInt(process.env.MCP_WEBHOOK_DISPATCH_INTERVAL_MS ?? '10000', 10);
+  const dispatch = opts?.dispatch ?? dispatchPendingWebhooks;
+  let inFlight = false;
+  const timer = setInterval(() => {
+    if (inFlight) return;
+    inFlight = true;
+    Promise.resolve()
+      .then(() => dispatch(getDb()))
+      .catch((err) =>
+        logger.warn({
+          event: 'webhook_dispatch_loop_error',
+          err: err instanceof Error ? err.message : String(err),
+        }),
+      )
+      .finally(() => {
+        inFlight = false;
+      });
+  }, intervalMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
 export async function runServe(): Promise<void> {
   const port = parseInt(process.env.MCP_PORT ?? '3100', 10);
   const host = bindHost();
 
   const { app, transports } = buildApp({ getDb: getReadWriteDb, getEmbedder });
 
+  // Drain the webhook queue on an interval so deliveries fire autonomously (L4).
+  const stopWebhookLoop = webhooksEnabled() ? startWebhookDispatchLoop(getReadWriteDb) : undefined;
+
   const shutdown = async () => {
     logger.info({ event: 'shutdown_start' });
+    stopWebhookLoop?.();
     for (const sid of Object.keys(transports)) {
       await transports[sid].close();
       delete transports[sid];

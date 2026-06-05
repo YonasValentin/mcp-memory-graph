@@ -13,7 +13,7 @@ import {
   rowToMemory,
 } from '../db/repository.js';
 import { getConfig } from '../config/loader.js';
-import { propagateSafe } from '../events/hooks.js';
+import { notify, rowToEventPayload, propagateSafe } from '../events/hooks.js';
 import { clearRevalidation } from '../graph/propagate.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
 import { computeRetention } from '../search/temporal.js';
@@ -386,9 +386,14 @@ export async function handleConsolidate(
             propagateSafe(db, candidate.id);
             updateMemory(db, mem.id, { content: merged }, newEmbedding);
             deleteMemory(db, candidate.id);
+            // M3 event bus (L4 emission gap): the candidate was removed; the
+            // survivor changed if content was absorbed.
+            notify(db, 'memory.deleted', rowToEventPayload(secondaryRow));
             if (merged !== primaryRow.content) {
               clearRevalidation(db, mem.id);
               propagateSafe(db, mem.id);
+              const survivor = getMemoryById(db, mem.id);
+              if (survivor) notify(db, 'memory.updated', rowToEventPayload(survivor));
             }
           }
 

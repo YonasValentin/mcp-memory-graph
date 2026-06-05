@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3';
 import type { EmbeddingProvider } from '../types.js';
 import { getMemoryById, updateMemory, reinstateSubtree } from '../db/repository.js';
 import { mirrorMemoryWrite } from '../vault/write-through.js';
-import { propagateSafe } from '../events/hooks.js';
+import { notify, rowToEventPayload, propagateSafe } from '../events/hooks.js';
 import { NOW_ISO_SQL } from '../db/predicates.js';
 
 interface CondenseEntry {
@@ -92,9 +92,12 @@ export async function handleCondense(
       if (ok) {
         result.condensed++;
         // The memory's content materially shrank to a summary → anything derived
-        // from it may no longer hold. Flag dependents stale (battle-v7 L3) — the
-        // direct updateMemory above bypasses the handler that normally does this.
+        // from it may no longer hold. Flag dependents stale (battle-v7 L3) and
+        // announce the edit (L4 emission gap) — the direct updateMemory above
+        // bypasses the handler that normally does both.
         propagateSafe(db, entry.id);
+        const condensedRow = getMemoryById(db, entry.id);
+        if (condensedRow) notify(db, 'memory.updated', rowToEventPayload(condensedRow));
       } else /* c8 ignore start */ {
         result.errors.push(`Memory ${entry.id} disappeared between read and write`);
         result.skipped++;
@@ -221,6 +224,10 @@ export async function handleRestore(
       message: 'Nothing to restore — memory is currently valid and was not condensed',
     };
   }
+
+  // M3 event bus (L4 emission gap): a restore brings a memory back / expands it.
+  const restoredRow = getMemoryById(db, input.id);
+  if (restoredRow) notify(db, 'memory.updated', rowToEventPayload(restoredRow));
 
   const parts: string[] = [];
   if (reinstated) parts.push('reinstated into default recall');
