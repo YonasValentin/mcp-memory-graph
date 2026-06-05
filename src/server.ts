@@ -337,6 +337,8 @@ export function createServer(): McpServer {
     MemoryUpdateSchema.shape,
     instrument('memory_update', async (input) => {
       const parsed = MemoryUpdateSchema.parse(input);
+      // H3: by-id mutation must respect a forced namespace (existence non-confirmation).
+      if (!idInForcedNs(parsed.id)) throw new Error('Memory not found');
       const result = await handleUpdate(getDb(), await getEmbedder(), parsed);
       if (!result) throw new Error('Memory not found');
       return { updated: true, memory: result };
@@ -353,7 +355,13 @@ export function createServer(): McpServer {
     },
     instrument('memory_delete', async (input) => {
       const parsed = MemoryDeleteSchema.parse(input);
-      return handleDelete(getDb(), parsed);
+      // H3: a by-id delete must respect a forced namespace; a bulk filter-delete
+      // must be confined to the forced namespace so it can't reach across tenants.
+      if (parsed.id && !idInForcedNs(parsed.id)) throw new Error('Memory not found');
+      const fns = forcedNamespace();
+      const scoped =
+        fns && parsed.filter ? { ...parsed, filter: { ...parsed.filter, namespace: fns } } : parsed;
+      return handleDelete(getDb(), scoped);
     }),
   );
 
@@ -569,6 +577,8 @@ export function createServer(): McpServer {
     MemoryExtractEntitiesSchema.shape,
     instrument('memory_extract_entities', async (input) => {
       const parsed = MemoryExtractEntitiesSchema.parse(input);
+      // H3: extracting entities mutates the graph for a specific memory id.
+      if (!idInForcedNs(parsed.memory_id)) throw new Error('Memory not found');
       return handleExtractEntities(getDb(), parsed);
     }),
   );
@@ -580,6 +590,8 @@ export function createServer(): McpServer {
     MemoryCondenseSchema.shape,
     instrument('memory_condense', async (input) => {
       const parsed = MemoryCondenseSchema.parse(input);
+      // H3: condense mutates each listed memory by id — every one must be owned.
+      if (parsed.memories.some((m) => !idInForcedNs(m.id))) throw new Error('Memory not found');
       return handleCondense(getDb(), await getEmbedder(), parsed);
     }),
   );
@@ -591,6 +603,8 @@ export function createServer(): McpServer {
     MemoryRestoreSchema.shape,
     instrument('memory_restore', async (input) => {
       const parsed = MemoryRestoreSchema.parse(input);
+      // H3: restore un-tombstones/uncondenses a specific id.
+      if (!idInForcedNs(parsed.id)) throw new Error('Memory not found');
       return handleRestore(getDb(), await getEmbedder(), parsed);
     }),
   );
@@ -712,6 +726,8 @@ export function createServer(): McpServer {
     MemoryForgetSchema.shape,
     instrument('memory_forget', async (input) => {
       const parsed = MemoryForgetSchema.parse(input);
+      // H3: GDPR forget targets a specific id — never another tenant's memory.
+      if (!idInForcedNs(parsed.id)) throw new Error('Memory not found');
       return handleForget(getDb(), parsed);
     }),
   );
@@ -771,6 +787,8 @@ export function createServer(): McpServer {
     MemoryVersionRestoreSchema.shape,
     instrument('memory_version_restore', async (input) => {
       const parsed = MemoryVersionRestoreSchema.parse(input);
+      // H3: version-restore re-embeds a specific id's content.
+      if (!idInForcedNs(parsed.id)) throw new Error('Memory not found');
       return handleVersionRestore(getDb(), await getEmbedder(), parsed);
     }),
   );
