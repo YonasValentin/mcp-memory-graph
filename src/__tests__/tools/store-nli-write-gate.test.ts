@@ -29,9 +29,12 @@ import type { EmbeddingProvider } from '../../types.js';
  */
 class StubNli implements NliClassifier {
   calls = 0;
-  async classify(_premise: string, hypothesis: string) {
+  async classify(premise: string, hypothesis: string) {
     this.calls++;
-    return hypothesis.includes('NOT')
+    // Symmetric: a genuine contradiction is a negation pair (exactly ONE side
+    // negated), so it fires whichever text is the premise — modelling real NLI
+    // symmetry and satisfying the H6 bidirectional gate.
+    return premise.includes('NOT') !== hypothesis.includes('NOT')
       ? { label: 'contradiction' as const, score: 0.95 }
       : { label: 'neutral' as const, score: 0.1 };
   }

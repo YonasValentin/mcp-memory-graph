@@ -32,8 +32,12 @@ import type { EmbeddingProvider } from '../../types.js';
  * tests know exactly which candidates should be flagged.
  */
 class StubNli implements NliClassifier {
-  async classify(_premise: string, hypothesis: string) {
-    return hypothesis.includes('NOT')
+  async classify(premise: string, hypothesis: string) {
+    // Symmetric negation-pair model (exactly ONE side negated). For the pure
+    // detectContradictions tests below only the hypothesis ever carries NOT, so
+    // this is identical to the old hypothesis-only stub there; for the handleStore
+    // tests it also satisfies the H6 bidirectional gate.
+    return premise.includes('NOT') !== hypothesis.includes('NOT')
       ? { label: 'contradiction' as const, score: 0.95 }
       : { label: 'neutral' as const, score: 0.1 };
   }

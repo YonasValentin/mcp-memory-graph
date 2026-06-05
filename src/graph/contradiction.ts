@@ -142,6 +142,16 @@ export class CrossEncoderNli implements NliClassifier {
  * content as the PREMISE and the new memory as the HYPOTHESIS, and returns the
  * candidates judged `contradiction` with score ≥ `minScore` (default 0.6).
  *
+ * `bidirectional` (battle-v7 H6) — when set, a candidate is retired only when
+ * BOTH directions agree it is a contradiction (premise↔hypothesis swapped).
+ * A genuine contradiction is symmetric ("X is on 3000" vs "X is NOT on 3000"
+ * reads as a contradiction either way), whereas the MNLI cross-encoder can
+ * over-predict "contradiction" in a SINGLE direction for two mutually-compatible
+ * facts on the same sub-topic — which would silently retire a valid memory. The
+ * reverse pass filters those spurious one-way over-predictions out. The reported
+ * score is the weaker (min) of the two directions. Off by default so the pure
+ * single-direction plumbing tests keep their semantics; handleStore enables it.
+ *
  * Pure with respect to the injected `nli` (no DB, no model of its own) — fully
  * unit-testable with a deterministic stub.
  */
@@ -149,14 +159,20 @@ export async function detectContradictions(
   nli: NliClassifier,
   newContent: string,
   candidates: { id: string; content: string }[],
-  opts?: { minScore?: number },
+  opts?: { minScore?: number; bidirectional?: boolean },
 ): Promise<Array<{ id: string; score: number }>> {
   const minScore = opts?.minScore ?? 0.6;
   const hits: Array<{ id: string; score: number }> = [];
   for (const candidate of candidates) {
-    const { label, score } = await nli.classify(candidate.content, newContent);
-    if (label === 'contradiction' && score >= minScore) {
-      hits.push({ id: candidate.id, score });
+    const forward = await nli.classify(candidate.content, newContent);
+    if (forward.label !== 'contradiction' || forward.score < minScore) continue;
+    if (opts?.bidirectional) {
+      // Reverse pass: the new fact as premise, the existing fact as hypothesis.
+      const reverse = await nli.classify(newContent, candidate.content);
+      if (reverse.label !== 'contradiction' || reverse.score < minScore) continue;
+      hits.push({ id: candidate.id, score: Math.min(forward.score, reverse.score) });
+    } else {
+      hits.push({ id: candidate.id, score: forward.score });
     }
   }
   return hits;

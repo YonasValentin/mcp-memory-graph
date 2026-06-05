@@ -65,10 +65,11 @@ class MarkerEmbedder implements EmbeddingProvider {
   }
 }
 
-/** Flags 'contradiction' iff the hypothesis text contains the literal `NOT`. */
+/** Symmetric negation-pair stub (exactly one side negated) — satisfies the H6
+ *  bidirectional gate that handleStore now applies. */
 class StubNli implements NliClassifier {
-  async classify(_premise: string, hypothesis: string) {
-    return hypothesis.includes('NOT')
+  async classify(premise: string, hypothesis: string) {
+    return premise.includes('NOT') !== hypothesis.includes('NOT')
       ? { label: 'contradiction' as const, score: 0.95 }
       : { label: 'neutral' as const, score: 0.1 };
   }

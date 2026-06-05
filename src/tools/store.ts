@@ -159,7 +159,10 @@ export async function handleStore(
         candidates.push({ id: hit.id, content: row.content });
       }
     }
-    const contradicted = await detectContradictions(nli, input.content, candidates);
+    // bidirectional (H6): require BOTH directions to agree before retiring, so a
+    // single-direction MNLI over-prediction can't silently delete a valid,
+    // compatible fact on the same sub-topic.
+    const contradicted = await detectContradictions(nli, input.content, candidates, { bidirectional: true });
     for (const c of contradicted) {
       nliInvalidated.push(c.id);
       nliContradictions.push({
