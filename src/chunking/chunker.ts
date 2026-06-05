@@ -1,9 +1,12 @@
 import type { ChunkingOptions, ChunkResult } from '../types.js';
-import { getStrategy } from './strategies.js';
+import { getStrategy, enforceMaxChunkSize } from './strategies.js';
 
 export function chunkContent(content: string, options: ChunkingOptions): ChunkResult[] {
   const strategy = getStrategy(options.content_type);
-  const initialChunks = strategy.chunk(content, options.chunk_size);
+  // Bound every chunk to chunk_size BEFORE overlap/filter: the strategies only
+  // split on natural boundaries, so a boundary-free oversized segment must be
+  // hard-split or its tail is lost to the embedder's context window (M4).
+  const initialChunks = enforceMaxChunkSize(strategy.chunk(content, options.chunk_size), options.chunk_size);
 
   let chunks = initialChunks;
 

@@ -262,6 +262,63 @@ class CodeStrategy implements ChunkingStrategy {
   }
 }
 
+/**
+ * Hard-split a chunk's content into windows no larger than `chunkSize`. The
+ * strategies above merge UP to chunkSize but only split on NATURAL boundaries
+ * (paragraph / sentence / heading / function), so a segment with no interior
+ * boundary — a dense single paragraph, minified code, a base64 blob — was emitted
+ * WHOLE, far exceeding chunkSize. The embedder then silently truncates everything
+ * past its ~256-token window, so the chunk's tail is unsearchable (battle-v7 M4).
+ * Prefer to break at the last whitespace inside the window (avoid splitting a
+ * word); fall back to a hard character cut when the window has no whitespace at
+ * all. Pieces concatenate back to the original content exactly (nothing lost).
+ */
+export function hardSplitContent(content: string, chunkSize: number): string[] {
+  if (chunkSize <= 0 || content.length <= chunkSize) return [content];
+  const pieces: string[] = [];
+  let i = 0;
+  while (i < content.length) {
+    let end = Math.min(i + chunkSize, content.length);
+    if (end < content.length) {
+      const lastSpace = content.lastIndexOf(' ', end);
+      const lastNewline = content.lastIndexOf('\n', end);
+      const brk = Math.max(lastSpace, lastNewline);
+      if (brk > i) end = brk + 1; // include the break char so nothing is dropped
+    }
+    pieces.push(content.slice(i, end));
+    i = end;
+  }
+  return pieces;
+}
+
+/**
+ * Post-process chunker output so NO chunk exceeds chunkSize (battle-v7 M4). Splits
+ * any oversized chunk via {@link hardSplitContent}, recomputing offsets + indices.
+ * A no-op (returns the input) when every chunk already fits, so the common path is
+ * untouched.
+ */
+export function enforceMaxChunkSize(results: ChunkResult[], chunkSize: number): ChunkResult[] {
+  if (results.every((r) => r.content.length <= chunkSize)) return results;
+  const out: ChunkResult[] = [];
+  for (const r of results) {
+    if (r.content.length <= chunkSize) {
+      out.push({ ...r, chunk_index: out.length });
+      continue;
+    }
+    let offset = 0;
+    for (const piece of hardSplitContent(r.content, chunkSize)) {
+      out.push({
+        content: piece,
+        start_offset: r.start_offset + offset,
+        end_offset: r.start_offset + offset + piece.length,
+        chunk_index: out.length,
+      });
+      offset += piece.length;
+    }
+  }
+  return out;
+}
+
 export function getStrategy(contentType: string): ChunkingStrategy {
   switch (contentType) {
     case 'markdown':
