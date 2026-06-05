@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import { normalizeName, resolveToCanonicalName } from '../graph/entity-store.js';
+import { liveConditions } from '../db/predicates.js';
 
 interface GraphInput {
   entity?: string;
@@ -159,16 +160,22 @@ export function handleGraph(db: Database.Database, input: GraphInput): GraphResu
       })),
   }));
 
-  // Get linked memories
+  // Get linked memories — only LIVE, top-level, non-superseded rows. vec/graph
+  // rows are retained on bitemporal invalidation (for as_of reconstruction), so
+  // without the valid_to/tx_expired predicate a retired/forgotten/NLI-superseded
+  // fact would leak back into a live traversal (battle-v7 H4). Build the WHERE
+  // from the single-source liveConditions() predicate (prefixed for the m alias).
   let memories: Array<{ id: string; title: string | null; namespace: string | null }> = [];
   if (includeMemories && entityIds.length > 0) {
+    const live = liveConditions({ excludeSuperseded: true, topLevelOnly: true })
+      .map((c) => `m.${c}`)
+      .join(' AND ');
     memories = db.prepare(`
       SELECT DISTINCT m.id, m.title, m.namespace
       FROM memory_entities me
       JOIN memories m ON m.id = me.memory_id
       WHERE me.entity_id IN (${idPlaceholders})
-        AND m.parent_id IS NULL
-        AND m.superseded_at IS NULL
+        AND ${live}
       ORDER BY m.importance_score DESC
       LIMIT 50
     `).all(...entityIds) as typeof memories;
