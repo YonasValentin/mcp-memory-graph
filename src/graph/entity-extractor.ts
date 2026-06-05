@@ -130,6 +130,9 @@ export function extractEntitiesRegex(content: string): ExtractedEntity[] {
   // and still skip the named standards prefixes as a cheap first filter.
   for (const match of content.matchAll(WORK_ITEM_RE)) {
     if (NON_TICKET_PREFIXES.has(match[1])) continue;
+    // PR-/MR- shapes are pull/merge requests (emitted as pull_request below), not
+    // work items — don't double-label the same reference (battle-v7 M5).
+    if (match[1] === 'PR' || match[1] === 'MR') continue;
     const before = content.slice(Math.max(0, match.index - WORK_ITEM_LOOKBEHIND), match.index);
     if (!WORK_ITEM_CONTEXT_RE.test(before)) continue;
     add(`${match[1]}-${match[2]}`, 'work_item', 0.7);
