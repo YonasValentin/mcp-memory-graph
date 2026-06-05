@@ -680,34 +680,39 @@ export function findNearDuplicates(
   partition?: MemoryPartition,
 ): Array<{ rowid: number; id: string; distance: number }> {
   const find = db.transaction(() => {
-    // Oversample when partitioned: cross-tenant rows occupy the nearest slots
-    // and are then filtered out, so widen k to keep `limit` same-partition hits
-    // (mirrors hybridSearch's post-filter-after-oversample pattern). Single-tenant
-    // callers (no partition) keep the exact pre-fix k = limit.
-    const k = partition ? Math.max(limit, 64) : limit;
-    const rows = db
-      .prepare<[Buffer, number], { rowid: number; distance: number }>(
-        'SELECT rowid, distance FROM memories_vec WHERE embedding MATCH ? AND k = ? ORDER BY distance',
-      )
-      .all(Buffer.from(embedding.buffer), k);
+    // Cross-tenant isolation (battle-v7 H2 / battle-v8 B1): when partitioned, push
+    // the (scope, namespace) predicate INTO the vec0 KNN so the k nearest are the
+    // k nearest SAME-tenant rows. memories_vec declares scope/namespace as
+    // filterable metadata columns and insertMemory stores a null namespace as ''
+    // — so a flood of foreign-tenant rows can NEVER starve a same-tenant candidate
+    // out of the window (the earlier post-filter-after-fixed-k could). k stays the
+    // true `limit`; single-tenant callers (no partition) are unchanged.
+    const rows = partition
+      ? db
+          .prepare<[Buffer, number, string, string], { rowid: number; distance: number }>(
+            'SELECT rowid, distance FROM memories_vec WHERE embedding MATCH ? AND k = ? AND scope = ? AND namespace = ? ORDER BY distance',
+          )
+          .all(Buffer.from(embedding.buffer), limit, partition.scope, partition.namespace ?? '')
+      : db
+          .prepare<[Buffer, number], { rowid: number; distance: number }>(
+            'SELECT rowid, distance FROM memories_vec WHERE embedding MATCH ? AND k = ? ORDER BY distance',
+          )
+          .all(Buffer.from(embedding.buffer), limit);
 
     const results: Array<{ rowid: number; id: string; distance: number }> = [];
     for (const row of rows) {
       if (row.distance > distanceThreshold) break;
-      if (results.length >= limit) break;
       // vec0 rows are only removed on hard delete, not on bi-temporal
-      // invalidation (which just stamps valid_to / tx_expired). Exclude
-      // invalidated rows here so every consumer (dedup, consolidation,
-      // similarity edges) ignores tombstoned/superseded memories uniformly.
+      // invalidation (which just stamps valid_to / tx_expired) — and vec0 can't
+      // filter those columns. Exclude invalidated rows here so every consumer
+      // (dedup, consolidation, similarity edges) ignores tombstoned/superseded
+      // memories uniformly.
       const mem = db
-        .prepare<[number], { id: string; valid_to: string | null; tx_expired: string | null; scope: string; namespace: string | null }>(
-          'SELECT id, valid_to, tx_expired, scope, namespace FROM memories WHERE rowid = ?',
+        .prepare<[number], { id: string; valid_to: string | null; tx_expired: string | null }>(
+          'SELECT id, valid_to, tx_expired FROM memories WHERE rowid = ?',
         )
         .get(Number(row.rowid));
       if (!mem || mem.valid_to !== null || mem.tx_expired !== null) continue;
-      // Cross-tenant isolation: a candidate in a different (scope, namespace) is
-      // never a near-duplicate/contradiction candidate for this write (battle-v7 H2).
-      if (partition && (mem.scope !== partition.scope || (mem.namespace ?? null) !== (partition.namespace ?? null))) continue;
       results.push({ rowid: Number(row.rowid), id: mem.id, distance: row.distance });
     }
     return results;

@@ -239,8 +239,8 @@ export async function handleConsolidate(
     try {
       const minImportance = getConfig().consolidation.min_importance_to_keep;
       const lowQualityRows = db
-        .prepare<unknown[], { id: string; content: string; title: string | null; namespace: string | null; document_type: string | null }>(
-          `SELECT id, content, title, namespace, document_type FROM memories
+        .prepare<unknown[], { id: string; content: string; title: string | null; scope: string; namespace: string | null; document_type: string | null }>(
+          `SELECT id, content, title, scope, namespace, document_type FROM memories
            WHERE importance_score < ?
              AND confidence_score < 0.3
              AND access_count = 0
@@ -260,7 +260,9 @@ export async function handleConsolidate(
           }),
         );
         embeddingOps++;
-        const duplicates = findNearDuplicates(db, embedding, distanceThreshold, 5);
+        // Confine the dedup vec scan to this row's own (scope, namespace) so a
+        // foreign-tenant near-match never makes a row look prunable (battle-v8 A1).
+        const duplicates = findNearDuplicates(db, embedding, distanceThreshold, 5, { scope: row.scope, namespace: row.namespace });
         const hasNearDuplicate = duplicates.some((d) => d.id !== row.id);
         if (!hasNearDuplicate) continue;
 
@@ -320,8 +322,8 @@ export async function handleConsolidate(
   if (!limitReached()) {
     try {
       const allMemories = db
-        .prepare<unknown[], { id: string; content: string; importance_score: number; title: string | null; namespace: string | null; document_type: string | null }>(
-          `SELECT id, content, importance_score, title, namespace, document_type FROM memories
+        .prepare<unknown[], { id: string; content: string; importance_score: number; title: string | null; scope: string; namespace: string | null; document_type: string | null }>(
+          `SELECT id, content, importance_score, title, scope, namespace, document_type FROM memories
            WHERE parent_id IS NULL${filterClause}
            ORDER BY importance_score DESC`,
         )
@@ -342,7 +344,10 @@ export async function handleConsolidate(
           }),
         );
         embeddingOps++;
-        const duplicates = findNearDuplicates(db, embedding, distanceThreshold, 10);
+        // Confine the dedup-merge vec scan to this row's own (scope, namespace) so
+        // a foreign tenant's memory can never be merged into / corrupted by this
+        // row (battle-v8 A1).
+        const duplicates = findNearDuplicates(db, embedding, distanceThreshold, 10, { scope: mem.scope, namespace: mem.namespace });
         const candidates = duplicates.filter((d) => d.id !== mem.id && !mergedIds.has(d.id));
 
         if (candidates.length === 0) continue;

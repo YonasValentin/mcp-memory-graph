@@ -25,15 +25,6 @@ export interface MemoryPartition {
   namespace: string | null;
 }
 
-/** True when `row` lives outside `partition` (so it must be skipped). */
-function outsidePartition(
-  row: { scope: string; namespace: string | null },
-  partition?: MemoryPartition,
-): boolean {
-  if (!partition) return false;
-  return row.scope !== partition.scope || (row.namespace ?? null) !== (partition.namespace ?? null);
-}
-
 const STOP_WORDS = new Set([
   'the', 'this', 'that', 'with', 'from', 'have', 'been', 'will', 'would',
   'could', 'should', 'their', 'there', 'about', 'which', 'when', 'what',
@@ -77,17 +68,25 @@ export function detectConflicts(
   excludeMemoryId?: string,
   partition?: MemoryPartition,
 ): ConflictResult[] {
-  // Oversample when partitioned: cross-tenant rows occupy the nearest-neighbor
-  // slots and are then filtered out, so widen k to keep enough same-partition
-  // candidates (mirrors hybridSearch's post-filter-after-oversample pattern).
-  const k = partition ? 64 : 10;
-  const candidates = db
-    .prepare<[Buffer, number], { rowid: number; distance: number }>(
-      `SELECT rowid, distance FROM memories_vec
-       WHERE embedding MATCH ? AND k = ?
-       ORDER BY distance`,
-    )
-    .all(Buffer.from(newEmbedding.buffer), k);
+  // Cross-tenant isolation (battle-v7 H1 / battle-v8 B1): when partitioned, push
+  // the (scope, namespace) predicate INTO the vec0 KNN so a flood of foreign-tenant
+  // rows can't starve a same-tenant conflict candidate out of the k window. vec0
+  // stores a null namespace as ''. k stays 10; non-partitioned callers unchanged.
+  const candidates = partition
+    ? db
+        .prepare<[Buffer, number, string, string], { rowid: number; distance: number }>(
+          `SELECT rowid, distance FROM memories_vec
+           WHERE embedding MATCH ? AND k = ? AND scope = ? AND namespace = ?
+           ORDER BY distance`,
+        )
+        .all(Buffer.from(newEmbedding.buffer), 10, partition.scope, partition.namespace ?? '')
+    : db
+        .prepare<[Buffer, number], { rowid: number; distance: number }>(
+          `SELECT rowid, distance FROM memories_vec
+           WHERE embedding MATCH ? AND k = ?
+           ORDER BY distance`,
+        )
+        .all(Buffer.from(newEmbedding.buffer), 10);
 
   const newWords = extractSignificantWords(newContent);
   const results: ConflictResult[] = [];
@@ -96,8 +95,8 @@ export function detectConflicts(
     if (candidate.distance > 0.4) break;
 
     const row = db
-      .prepare<[number], { id: string; content: string; parent_id: string | null; superseded_at: string | null; valid_to: string | null; tx_expired: string | null; scope: string; namespace: string | null }>(
-        'SELECT id, content, parent_id, superseded_at, valid_to, tx_expired, scope, namespace FROM memories WHERE rowid = ?',
+      .prepare<[number], { id: string; content: string; parent_id: string | null; superseded_at: string | null; valid_to: string | null; tx_expired: string | null }>(
+        'SELECT id, content, parent_id, superseded_at, valid_to, tx_expired FROM memories WHERE rowid = ?',
       )
       .get(Number(candidate.rowid));
 
@@ -106,11 +105,9 @@ export function detectConflicts(
     if (row.superseded_at !== null) continue;
     // vec rows are retained on bitemporal invalidation (for as_of reconstruction),
     // so a retired/forgotten row can be a candidate here — never conflict against one.
+    // (The (scope, namespace) partition is enforced in the vec0 MATCH above.)
     if (row.valid_to !== null || row.tx_expired !== null) continue;
     if (excludeMemoryId && row.id === excludeMemoryId) continue;
-    // Cross-tenant isolation: a candidate in a different (scope, namespace) is
-    // never a conflict candidate for this write (battle-v7 H1).
-    if (outsidePartition(row, partition)) continue;
 
     const vectorSim = cosineSimFromL2(candidate.distance);
     const existingWords = extractSignificantWords(row.content);

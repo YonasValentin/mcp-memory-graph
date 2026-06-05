@@ -533,7 +533,11 @@ export function createServer(): McpServer {
     MemoryConsolidateSchema.shape,
     instrument('memory_consolidate', async (input) => {
       const parsed = MemoryConsolidateSchema.parse(input);
-      return handleConsolidate(getDb(), await getEmbedder(), parsed);
+      // H3/A1: a bulk prune/merge over a namespace-forced deployment must be
+      // confined to the pinned tenant — without this a tenant could hard-delete
+      // or merge another tenant's memories (the dedup vec scans are partitioned
+      // per-row inside handleConsolidate).
+      return handleConsolidate(getDb(), await getEmbedder(), withForcedNs(parsed));
     }),
   );
 
