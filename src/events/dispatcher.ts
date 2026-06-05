@@ -72,12 +72,19 @@ function isoZ(d: Date): string {
 }
 
 /**
- * Built-in sender: POST to `pinnedIp` while keeping Host/SNI = url.hostname.
- * node:http(s) `lookup` forces the socket to the validated address, closing the
- * DNS-rebinding TOCTOU. Never follows redirects; drains+discards the body so
- * keep-alive sockets are freed; whole call bounded by `timeoutMs`.
+ * Built-in sender: POST directly to the already-validated `pinnedIp` while
+ * keeping the original hostname for TLS SNI (cert validation) and the Host
+ * header (virtual-hosting). Connecting to the IP literal — rather than the
+ * DNS name plus a custom `lookup` callback — forces the socket to the validated
+ * address (no second DNS round-trip, so the rebinding TOCTOU stays closed) AND
+ * sidesteps a Node ≥18/22 connect-path bug: with a DNS-name host + custom
+ * `lookup`, Node passes `options.all = true` and reads `address = undefined`
+ * from the scalar callback form, throwing "Invalid IP address: undefined" — which
+ * silently broke EVERY outbound webhook to a real (DNS-named) host (battle-v7 M3).
+ * Never follows redirects; drains+discards the body so keep-alive sockets are
+ * freed; whole call bounded by `timeoutMs`.
  */
-function sendPinned(
+export function sendPinned(
   url: URL,
   headers: Record<string, string>,
   body: string,
@@ -90,17 +97,14 @@ function sendPinned(
     const req = lib.request(
       {
         protocol: url.protocol,
-        host: url.hostname,
+        // Connect straight to the validated IP literal (no DNS lookup happens for
+        // an IP host, so the pin holds and the custom-lookup bug can't fire).
+        host: pinnedIp,
         servername: isHttps ? url.hostname : undefined, // TLS SNI stays the hostname
         port: url.port || (isHttps ? 443 : 80),
         path: `${url.pathname}${url.search}`,
         method: 'POST',
-        headers: { ...headers, host: url.host },
-        // Force the connection to the already-validated IP — defeats rebinding.
-        lookup: (_hostname, _opts, cb) => {
-          const family = pinnedIp.includes(':') ? 6 : 4;
-          (cb as (e: NodeJS.ErrnoException | null, a: string, f: number) => void)(null, pinnedIp, family);
-        },
+        headers: { ...headers, host: url.host }, // virtual-hosting targets the real host
       },
       (res) => {
         let read = 0;
