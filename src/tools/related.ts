@@ -28,11 +28,15 @@ export async function handleRelated(
   recordAccess(db, [{ memory_id: input.id, access_type: 'related' }]);
 
   const fetchLimit = input.limit + 20;
+  // Confine the neighbour KNN to the target's own (scope, namespace) via the vec0
+  // partition pushdown — without it this read leaked other tenants' and private
+  // scope='user' memories across the boundary every sibling read tool enforces
+  // (battle-v9 cross-tenant read leak). vec0 stores a null namespace as ''.
   const vecMatches = db
-    .prepare<[Buffer, number], VecMatch>(
-      'SELECT rowid, distance FROM memories_vec WHERE embedding MATCH ? AND k = ? ORDER BY distance',
+    .prepare<[Buffer, number, string, string], VecMatch>(
+      'SELECT rowid, distance FROM memories_vec WHERE embedding MATCH ? AND k = ? AND scope = ? AND namespace = ? ORDER BY distance',
     )
-    .all(Buffer.from(embedding.buffer), fetchLimit);
+    .all(Buffer.from(embedding.buffer), fetchLimit, targetRow.scope, targetRow.namespace ?? '');
 
   const childRowids = new Set<number>();
   const childRows = db

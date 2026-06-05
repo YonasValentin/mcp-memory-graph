@@ -48,7 +48,10 @@ export async function findUnlinkedMentions(
   // Translate the cosine floor into an L2 distance cutoff and oversample so the
   // post-filters (self / chunks / explicitly-linked) don't starve the top-N.
   const maxDistance = l2FromCosineSim(opts.minSimilarity);
-  const neighbors = findNearDuplicates(db, embedding, maxDistance, opts.limit + 25);
+  // Confine the neighbour scan to the target's own (scope, namespace) — without
+  // this the global vec0 KNN leaked (and surfaced snippets of) other tenants' /
+  // other scopes' private memories (battle-v9 cross-tenant read leak).
+  const neighbors = findNearDuplicates(db, embedding, maxDistance, opts.limit + 25, { scope: target.scope, namespace: target.namespace });
 
   // Ids already connected to the target by an explicit (non-similarity) edge.
   const explicitlyLinked = new Set(
