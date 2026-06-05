@@ -13,6 +13,8 @@ import {
   rowToMemory,
 } from '../db/repository.js';
 import { getConfig } from '../config/loader.js';
+import { propagateSafe } from '../events/hooks.js';
+import { clearRevalidation } from '../graph/propagate.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
 import { computeRetention } from '../search/temporal.js';
 import { l2FromCosineSim } from '../search/scoring.js';
@@ -375,8 +377,19 @@ export async function handleConsolidate(
               embeddingOps++;
             }
 
+            // Change-propagation (battle-v7 L3): the direct repository calls
+            // below bypass the handlers that normally propagate. (1) The candidate
+            // is about to be hard-deleted — its derived_from edges FK-cascade away,
+            // so flag its dependents stale FIRST (mirrors handleDelete). (2) If the
+            // surviving memory absorbed new content, its dependents may no longer
+            // hold either.
+            propagateSafe(db, candidate.id);
             updateMemory(db, mem.id, { content: merged }, newEmbedding);
             deleteMemory(db, candidate.id);
+            if (merged !== primaryRow.content) {
+              clearRevalidation(db, mem.id);
+              propagateSafe(db, mem.id);
+            }
           }
 
           mergedIds.add(candidate.id);

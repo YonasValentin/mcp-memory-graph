@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import type { EmbeddingProvider } from '../types.js';
 import { getMemoryById, updateMemory, reinstateSubtree } from '../db/repository.js';
 import { mirrorMemoryWrite } from '../vault/write-through.js';
+import { propagateSafe } from '../events/hooks.js';
 import { NOW_ISO_SQL } from '../db/predicates.js';
 
 interface CondenseEntry {
@@ -90,6 +91,10 @@ export async function handleCondense(
       const ok = persist.immediate();
       if (ok) {
         result.condensed++;
+        // The memory's content materially shrank to a summary → anything derived
+        // from it may no longer hold. Flag dependents stale (battle-v7 L3) — the
+        // direct updateMemory above bypasses the handler that normally does this.
+        propagateSafe(db, entry.id);
       } else /* c8 ignore start */ {
         result.errors.push(`Memory ${entry.id} disappeared between read and write`);
         result.skipped++;
