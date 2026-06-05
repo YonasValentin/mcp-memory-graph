@@ -231,14 +231,26 @@ export function redactContent(text: string, mode: RedactMode): RedactResult {
         // Only a SINGLE wrap point counts. A terminal/email-wrapped credential is
         // broken exactly ONCE (one contiguous whitespace run); all-caps PROSE that
         // happens to contain the literal sigil (`AKIA NORTH AMERICA US WEST 2`)
-        // has MANY gaps. Require the original span to be exactly two non-space
-        // chunks split by one whitespace run whose concatenation IS the secret —
-        // otherwise it is prose, not a wrapped secret. (origEnd-origStart ===
-        // m[0].length means no whitespace was bridged → a contiguous dup.)
+        // has MANY gaps. Recover just the wrapped secret: the FIRST two non-space
+        // chunks split by one whitespace run. The greedy-tailed patterns
+        // (github_token {30,}, jwt {10,}) can, on the whitespace-REMOVED copy,
+        // over-run past the wrap point into a following word (`ghp_…<wrap>… word`
+        // → `ghp_……word`), so the original span may carry a SECOND whitespace run
+        // before that trailing word — the old `^(\S+)(\s+)(\S+)$` end-anchor then
+        // rejected the whole thing and the secret leaked verbatim (battle-v7 M1).
+        // Accept the two chunks only when their concatenation is itself a COMPLETE
+        // match of THIS pattern (anchored) — that redacts the secret, leaves the
+        // trailing word, and still rejects prose (whose first two chunks never form
+        // a full sigil+entropy secret).
         const orig = scan.slice(origStart, origEnd);
-        const oneWrap = /^(\S+)(\s+)(\S+)$/.exec(orig);
-        if (oneWrap && oneWrap[1] + oneWrap[3] === m[0]) {
-          spans.push({ start: origStart, end: origEnd, kind });
+        const wrap = /^(\S+)(\s+)(\S+)/.exec(orig);
+        if (wrap) {
+          const candidate = wrap[1] + wrap[3];
+          const anchored = new RegExp(`^(?:${regex.source})$`);
+          if (anchored.test(candidate)) {
+            const end = origStart + wrap[1].length + wrap[2].length + wrap[3].length;
+            spans.push({ start: origStart, end, kind });
+          }
         }
       }
     }
