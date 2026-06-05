@@ -26,6 +26,7 @@ interface IngestInput {
   namespace?: string;
   department?: string;
   author?: string;
+  access_level?: string;
   tags?: string[];
   metadata?: Record<string, unknown>;
 }
@@ -120,7 +121,7 @@ export async function handleIngest(
       author: input.author ?? null,
       department: input.department ?? null,
       tags: tagsJson,
-      access_level: 'public',
+      access_level: input.access_level ?? 'public',
       language: 'en',
       metadata: metadataJson,
       parent_id: parentId,
@@ -192,7 +193,7 @@ export async function handleIngest(
       author: input.author ?? null,
       department: input.department ?? null,
       tags: tagsJson,
-      access_level: 'public',
+      access_level: input.access_level ?? 'public',
       language: 'en',
       metadata: metadataJson,
       parent_id: null,

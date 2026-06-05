@@ -371,11 +371,18 @@ function summarizeFromCommunities(
   const memoriesByEntity = new Map<string, string[]>();
   for (const batch of chunkIds(entityIds)) {
     const placeholders = batch.map(() => '?').join(',');
+    // A community must not list a soft-forgotten / invalidated / superseded member
+    // id (battle-v8 B2 — the H4 invariant on the communities path). Exclude rows
+    // that EXIST and are retired, but KEEP an orphaned link (a memory_entities row
+    // whose memory was hard-deleted: m.id IS NULL) so the documented orphan-ranking
+    // behaviour is preserved. LEFT JOIN so the null-match case survives.
     const links = db
       .prepare<string[], MemoryEntityRow>(
-        `SELECT memory_id, entity_id
-           FROM memory_entities
-          WHERE entity_id IN (${placeholders})`,
+        `SELECT me.memory_id AS memory_id, me.entity_id AS entity_id
+           FROM memory_entities me
+           LEFT JOIN memories m ON m.id = me.memory_id
+          WHERE me.entity_id IN (${placeholders})
+            AND (m.id IS NULL OR (m.valid_to IS NULL AND m.tx_expired IS NULL AND m.superseded_at IS NULL))`,
       )
       .all(...batch);
     for (const link of links) {

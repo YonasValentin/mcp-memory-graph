@@ -342,6 +342,10 @@ export const MemoryDeleteSchema = z
         scope: scopeField(false),
         namespace: namespaceField(),
         department: departmentField(),
+        // battle-v8 C3: the repository filter already supports document_type
+        // (filterToWhere) — surface it so a by-type delete is actually reachable
+        // (it silently no-op'd {deleted:0} before).
+        document_type: documentTypeField().optional(),
         before_date: z
           .string()
           .optional()
@@ -419,6 +423,10 @@ export const MemoryIngestSchema = z.object({
   namespace: namespaceField(),
   department: departmentField(),
   author: authorField(),
+  // battle-v8 B3: declare document sensitivity so confidential/restricted ingests
+  // are honoured by the egress ceilings (dataset export / vault) instead of being
+  // forced to 'public'.
+  access_level: accessLevelOptional(),
   tags: tagsField(),
   metadata: metadataField(),
   content_type: z

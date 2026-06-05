@@ -14,7 +14,6 @@ import {
 } from '../db/repository.js';
 import { getConfig } from '../config/loader.js';
 import { notify, rowToEventPayload, propagateSafe } from '../events/hooks.js';
-import { clearRevalidation } from '../graph/propagate.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
 import { computeRetention } from '../search/temporal.js';
 import { l2FromCosineSim } from '../search/scoring.js';
@@ -395,7 +394,9 @@ export async function handleConsolidate(
             // survivor changed if content was absorbed.
             notify(db, 'memory.deleted', rowToEventPayload(secondaryRow));
             if (merged !== primaryRow.content) {
-              clearRevalidation(db, mem.id);
+              // A machine merge is NOT the survivor re-asserting itself against its
+              // OWN upstream, so do NOT clear the survivor's pre-existing stale flag
+              // (battle-v8 C2) — only flag its dependents + announce.
               propagateSafe(db, mem.id);
               const survivor = getMemoryById(db, mem.id);
               if (survivor) notify(db, 'memory.updated', rowToEventPayload(survivor));

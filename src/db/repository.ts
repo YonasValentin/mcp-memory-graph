@@ -456,6 +456,17 @@ export function invalidateSubtree(db: Database.Database, id: string, validTo?: s
  * childless memory this is exactly reinstateMemory.
  */
 export function reinstateSubtree(db: Database.Database, id: string): number {
+  // Only revive rows tombstoned at-or-after the ROOT's own forget instant, so a
+  // child chunk that was independently soft-forgotten BEFORE the parent (an
+  // earlier valid_to, preserved by invalidateSubtree's COALESCE) stays tombstoned
+  // on a parent restore (battle-v8 B4). If the root itself isn't tombstoned
+  // (un-condense only), just clear it.
+  const root = db
+    .prepare<[string], { valid_to: string | null }>('SELECT valid_to FROM memories WHERE id = ?')
+    .get(id);
+  if (!root || root.valid_to === null) {
+    return db.prepare('UPDATE memories SET valid_to = NULL, tx_expired = NULL WHERE id = ?').run(id).changes;
+  }
   return db
     .prepare(
       `WITH RECURSIVE sub(id) AS (
@@ -464,9 +475,9 @@ export function reinstateSubtree(db: Database.Database, id: string): number {
          SELECT m.id FROM memories m JOIN sub ON m.parent_id = sub.id
        )
        UPDATE memories SET valid_to = NULL, tx_expired = NULL
-       WHERE id IN (SELECT id FROM sub)`,
+       WHERE id IN (SELECT id FROM sub) AND valid_to >= ?`,
     )
-    .run(id).changes;
+    .run(id, root.valid_to).changes;
 }
 
 export function getMemoryById(

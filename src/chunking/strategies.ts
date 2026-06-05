@@ -280,8 +280,10 @@ export function hardSplitContent(content: string, chunkSize: number): string[] {
   while (i < content.length) {
     let end = Math.min(i + chunkSize, content.length);
     if (end < content.length) {
-      const lastSpace = content.lastIndexOf(' ', end);
-      const lastNewline = content.lastIndexOf('\n', end);
+      // Search from end-1: a break that lands EXACTLY on the window edge would,
+      // with +1, yield a chunkSize+1 piece (battle-v8 C1 off-by-one).
+      const lastSpace = content.lastIndexOf(' ', end - 1);
+      const lastNewline = content.lastIndexOf('\n', end - 1);
       const brk = Math.max(lastSpace, lastNewline);
       if (brk > i) end = brk + 1; // include the break char so nothing is dropped
     }

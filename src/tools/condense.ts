@@ -151,12 +151,18 @@ export async function handleRestore(
   // explicit typed query (matches the repository's bitemporal-column pattern).
   // An absent row means the memory doesn't exist.
   const tomb = db
-    .prepare<[string], { valid_to: string | null; tx_expired: string | null; superseded_at: string | null }>(
-      'SELECT valid_to, tx_expired, superseded_at FROM memories WHERE id = ?',
+    .prepare<[string], { valid_to: string | null; tx_expired: string | null; superseded_at: string | null; parent_id: string | null }>(
+      'SELECT valid_to, tx_expired, superseded_at, parent_id FROM memories WHERE id = ?',
     )
     .get(input.id);
   if (!tomb) {
     return { restored: false, message: 'Memory not found' };
+  }
+  // battle-v8 B4: restoring a CHILD chunk by id would resurrect a fragment while
+  // the parent document stays tombstoned (orphan). Redirect to the whole document
+  // so it comes back consistent. Recurse once on the top-level parent.
+  if (tomb.parent_id) {
+    return handleRestore(db, embedder, { id: tomb.parent_id });
   }
   // Snapshot the tombstone state before any mutation below.
   const wasTombstoned = tomb.valid_to !== null || tomb.tx_expired !== null;
