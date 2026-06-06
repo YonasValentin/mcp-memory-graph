@@ -371,6 +371,108 @@ const migrations: Migration[] = [
       }
     },
   },
+  {
+    version: 14,
+    up: (db) => {
+      // Multi-tenancy structural fix — the shared knowledge-graph tables gain a
+      // (scope, namespace) tenancy dimension so isolation is a SCHEMA invariant.
+      //
+      // Pre-v14 entities/aliases/relationships were GLOBAL (one row per concept,
+      // no owner), so they default to (global, '') — the cross-project shared
+      // partition. This is faithful: a single-user corpus keeps every entity it
+      // had, bridging projects exactly as before. Under a forced namespace the
+      // read path matches the tenant's namespace only, so these global rows are
+      // simply not surfaced to a tenant (total isolation) — no data is lost.
+      //
+      // memory_links / memory_conflicts CAN recover a real namespace: every edge
+      // and conflict has endpoint memories that already carry (scope, namespace).
+      // We backfill from the source/new memory so an existing graph is correctly
+      // partitioned without re-derivation.
+      //
+      // All ADDs are columnExists-guarded for idempotency and the synthetic
+      // from-0 legacy path (a minimal base schema may lack some of these tables;
+      // guard each table independently).
+      const addScopeNs = (table: string) => {
+        // A table may be absent on the minimal from-0 path — skip silently.
+        const exists = db
+          .prepare<[string], { name: string }>(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+          )
+          .get(table);
+        if (!exists) return;
+        if (!columnExists(db, table, 'scope')) {
+          db.exec(`ALTER TABLE ${table} ADD COLUMN scope TEXT NOT NULL DEFAULT 'global'`);
+        }
+        if (!columnExists(db, table, 'namespace')) {
+          db.exec(`ALTER TABLE ${table} ADD COLUMN namespace TEXT NOT NULL DEFAULT ''`);
+        }
+      };
+      for (const t of [
+        'entities',
+        'entity_aliases',
+        'entity_relationships',
+        'memory_links',
+        'memory_conflicts',
+      ]) {
+        addScopeNs(t);
+      }
+
+      // Backfill edge/conflict partition from endpoint memories (only where the
+      // endpoint resolves — orphans keep the global default). memory_links keys
+      // on source_memory_id; memory_conflicts on new_memory_id (the writing side).
+      const tableExists = (t: string) =>
+        db
+          .prepare<[string], { name: string }>(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+          )
+          .get(t) != null;
+      if (tableExists('memory_links') && tableExists('memories')) {
+        db.exec(`
+          UPDATE memory_links
+             SET scope = COALESCE((SELECT m.scope FROM memories m WHERE m.id = memory_links.source_memory_id), scope),
+                 namespace = COALESCE((SELECT m.namespace FROM memories m WHERE m.id = memory_links.source_memory_id), namespace)
+           WHERE EXISTS (SELECT 1 FROM memories m WHERE m.id = memory_links.source_memory_id);
+        `);
+      }
+      if (tableExists('memory_conflicts') && tableExists('memories')) {
+        db.exec(`
+          UPDATE memory_conflicts
+             SET scope = COALESCE((SELECT m.scope FROM memories m WHERE m.id = memory_conflicts.new_memory_id), scope),
+                 namespace = COALESCE((SELECT m.namespace FROM memories m WHERE m.id = memory_conflicts.new_memory_id), namespace)
+           WHERE EXISTS (SELECT 1 FROM memories m WHERE m.id = memory_conflicts.new_memory_id);
+        `);
+      }
+
+      // Rebuild the unique indexes to include the tenancy dimension. The old
+      // global-unique shapes (idx_alias_normalized on normalized_alias alone;
+      // no entity-identity index) would now reject two tenants sharing a name.
+      // DROP+CREATE is safe inside the migration transaction. The from-0 path may
+      // not have built the old index name — IF EXISTS tolerates that.
+      if (tableExists('entity_aliases')) {
+        db.exec('DROP INDEX IF EXISTS idx_alias_normalized');
+        db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_alias_normalized
+                   ON entity_aliases(normalized_alias, scope, namespace)`);
+      }
+      if (tableExists('entities')) {
+        db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_entities_identity
+                   ON entities(normalized_name, scope, namespace)`);
+        db.exec('CREATE INDEX IF NOT EXISTS idx_entities_partition ON entities(scope, namespace)');
+      }
+      if (tableExists('entity_relationships')) {
+        db.exec(
+          'CREATE INDEX IF NOT EXISTS idx_rel_partition ON entity_relationships(scope, namespace)',
+        );
+      }
+      if (tableExists('memory_links')) {
+        db.exec('CREATE INDEX IF NOT EXISTS idx_mlinks_partition ON memory_links(scope, namespace)');
+      }
+      if (tableExists('memory_conflicts')) {
+        db.exec(
+          'CREATE INDEX IF NOT EXISTS idx_conflict_partition ON memory_conflicts(scope, namespace)',
+        );
+      }
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {
