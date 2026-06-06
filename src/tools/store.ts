@@ -335,7 +335,12 @@ export async function handleStore(
     try {
       const entities = extractEntitiesRegex(input.content);
       if (entities.length > 0) {
-        storeExtractedEntities(db, row.id, entities, 'regex');
+        // v14: the extracted graph inherits the owning memory's partition so it
+        // is tenant-local (and, under a forced namespace, carries the forced ns).
+        storeExtractedEntities(db, row.id, entities, 'regex', {
+          scope: row.scope,
+          namespace: row.namespace ?? '',
+        });
       }
     } catch (err) /* c8 ignore start */ {
       // Entity extraction is non-critical. Log and continue without aborting the txn.

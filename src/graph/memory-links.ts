@@ -41,6 +41,16 @@ export function createMemoryLink(db: Database.Database, input: MemoryLinkInput):
   if (input.sourceId === input.targetId) return '';
   const relation = input.relation ?? 'links_to';
 
+  // v14 multi-tenancy: an edge carries the partition of its endpoint memories,
+  // and the endpoints MUST live in the same (scope, namespace). A memory link
+  // expresses a relationship between two memories; across tenants that is
+  // meaningless and — under a forced namespace — would let a graph walk hop to a
+  // foreign memory. Refuse the edge at the source. (Single-user impact is nil:
+  // co-occurrence edges already only form within a partition, since entity
+  // identity is per-tenant; cross-project wikilinks do not arise.)
+  const partition = sameTenantPartition(db, input.sourceId, input.targetId);
+  if (!partition) return '';
+
   const existing = db
     .prepare<[string, string, string], { id: string }>(
       'SELECT id FROM memory_links WHERE source_memory_id = ? AND target_memory_id = ? AND relation = ?',
@@ -62,8 +72,8 @@ export function createMemoryLink(db: Database.Database, input: MemoryLinkInput):
   // valid_to / tx_expired stay NULL (still valid, not retracted).
   db.prepare(
     `INSERT INTO memory_links
-       (id, source_memory_id, target_memory_id, relation, confidence, confidence_score, source_kind, valid_from)
-     VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+       (id, source_memory_id, target_memory_id, relation, confidence, confidence_score, source_kind, valid_from, scope, namespace)
+     VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)`,
   ).run(
     id,
     input.sourceId,
@@ -72,8 +82,33 @@ export function createMemoryLink(db: Database.Database, input: MemoryLinkInput):
     input.confidence ?? 'INFERRED',
     input.confidenceScore ?? 0.5,
     input.sourceKind ?? 'wikilink',
+    partition.scope,
+    partition.namespace,
   );
   return id;
+}
+
+/**
+ * v14 — the shared (scope, namespace) of two memories, or null if either is
+ * missing or they belong to different tenants. namespace NULL is normalized to
+ * '' to match the graph-table sentinel. A missing endpoint (should not happen
+ * under the memories FK) returns null so no orphan edge is stamped.
+ */
+function sameTenantPartition(
+  db: Database.Database,
+  sourceId: string,
+  targetId: string,
+): { scope: string; namespace: string } | null {
+  const stmt = db.prepare<[string], { scope: string; namespace: string | null }>(
+    'SELECT scope, namespace FROM memories WHERE id = ?',
+  );
+  const s = stmt.get(sourceId);
+  const t = stmt.get(targetId);
+  if (!s || !t) return null;
+  const sNs = s.namespace ?? '';
+  const tNs = t.namespace ?? '';
+  if (s.scope !== t.scope || sNs !== tNs) return null;
+  return { scope: s.scope, namespace: sNs };
 }
 
 /** Edges where `memoryId` is the source (what this memory points to). */

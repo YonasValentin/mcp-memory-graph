@@ -182,7 +182,13 @@ export async function rebuildFromVault(
 
     try {
       const entities = extractEntitiesRegex(parsed.content);
-      if (entities.length > 0) storeExtractedEntities(db, parsed.id, entities, 'regex');
+      // v14: rebuilt-from-vault entities inherit the note's partition (the same
+      // (scope, namespace) the row is restored under) so the graph stays scoped.
+      if (entities.length > 0)
+        storeExtractedEntities(db, parsed.id, entities, 'regex', {
+          scope: row.scope,
+          namespace: row.namespace ?? '',
+        });
     } catch (err) /* c8 ignore start */ {
       // Entity extraction is non-critical — one bad file never aborts a rebuild.
       logger.warn({ event: 'rebuild_entity_failed', id: parsed.id, err: errMsg(err) });

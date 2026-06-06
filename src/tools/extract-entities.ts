@@ -49,13 +49,29 @@ export function handleExtractEntities(
   const nameToEntityId = new Map<string, string>();
 
   const process = db.transaction(() => {
+    // v14: the graph this tool writes inherits the owning memory's partition, so
+    // it is tenant-local (and under a forced namespace carries the forced ns).
+    // The tool is guarded by idInForcedNs(memory_id) upstream, so a forced caller
+    // can only target its own memory. namespace NULL → '' sentinel.
+    const owner = db
+      .prepare<[string], { scope: string; namespace: string | null }>(
+        'SELECT scope, namespace FROM memories WHERE id = ?',
+      )
+      .get(input.memory_id);
+    const partition = {
+      scope: owner?.scope ?? 'global',
+      namespace: owner?.namespace ?? '',
+    };
+
     // Process entities
     for (const entity of input.entities) {
       const existing = db
-        .prepare<[string, string], { id: string }>('SELECT id FROM entities WHERE normalized_name = ? AND type = ?')
-        .get(normalizeName(entity.name), entity.type);
+        .prepare<[string, string, string, string], { id: string }>(
+          'SELECT id FROM entities WHERE normalized_name = ? AND type = ? AND scope = ? AND namespace = ?',
+        )
+        .get(normalizeName(entity.name), entity.type, partition.scope, partition.namespace);
 
-      const entityId = findOrCreateEntity(db, entity.name, entity.type);
+      const entityId = findOrCreateEntity(db, entity.name, entity.type, partition);
       nameToEntityId.set(entity.name.toLowerCase(), entityId);
 
       if (existing) {
@@ -66,14 +82,14 @@ export function handleExtractEntities(
 
       linkEntityToMemory(db, input.memory_id, entityId, 'mention', 'llm', 0.9);
 
-      // Add aliases
+      // Add aliases (stamped with the partition so two tenants may share one).
       if (entity.aliases) {
         for (const alias of entity.aliases) {
           const normalizedAlias = normalizeName(alias);
           try {
             db.prepare(
-              'INSERT INTO entity_aliases (id, entity_id, alias, normalized_alias, source) VALUES (?, ?, ?, ?, ?)',
-            ).run(randomUUID(), entityId, alias, normalizedAlias, 'llm');
+              'INSERT INTO entity_aliases (id, entity_id, alias, normalized_alias, source, scope, namespace) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            ).run(randomUUID(), entityId, alias, normalizedAlias, 'llm', partition.scope, partition.namespace);
             result.aliases_added++;
           } catch {
             // Alias already exists (unique constraint)
@@ -88,7 +104,7 @@ export function handleExtractEntities(
         const sourceId = nameToEntityId.get(rel.source.toLowerCase());
         const targetId = nameToEntityId.get(rel.target.toLowerCase());
         if (sourceId && targetId) {
-          findOrCreateRelationship(db, sourceId, targetId, rel.type);
+          findOrCreateRelationship(db, sourceId, targetId, rel.type, partition);
           result.relationships_created++;
         }
       }

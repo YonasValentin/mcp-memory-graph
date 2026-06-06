@@ -3,6 +3,21 @@ import { randomUUID } from 'node:crypto';
 import type { ExtractedEntity } from './entity-extractor.js';
 import { createMemoryLink } from './memory-links.js';
 
+/**
+ * v14 multi-tenancy — the partition an entity-graph write belongs to. An entity
+ * inherits the owning memory's (scope, namespace); scope='global'/namespace=''
+ * is the cross-project shared bridge (single-user). Identity is
+ * (normalized_name, scope, namespace), so the SAME concept in two tenants is two
+ * rows and mention_count is per-tenant. Defaults to the global bridge so any
+ * un-updated caller (and pre-v14 behaviour) lands in the shared partition.
+ */
+export interface GraphPartition {
+  scope: string;
+  namespace: string;
+}
+
+const GLOBAL_PARTITION: GraphPartition = { scope: 'global', namespace: '' };
+
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 /**
@@ -84,14 +99,18 @@ export function findOrCreateEntity(
   db: Database.Database,
   name: string,
   type: string,
+  partition: GraphPartition = GLOBAL_PARTITION,
 ): string {
   const normalized = normalizeName(name);
 
+  // v14: identity is per (normalized_name, scope, namespace). The same concept
+  // name in another tenant is a distinct row, so this lookup — and the
+  // mention_count it bumps — is naturally tenant-local.
   const existing = db
-    .prepare<[string], { id: string }>(
-      'SELECT id FROM entities WHERE normalized_name = ?',
+    .prepare<[string, string, string], { id: string }>(
+      'SELECT id FROM entities WHERE normalized_name = ? AND scope = ? AND namespace = ?',
     )
-    .get(normalized);
+    .get(normalized, partition.scope, partition.namespace);
 
   if (existing) {
     // LLM-provided types ('person','project','tool','organization') are more specific
@@ -129,9 +148,9 @@ export function findOrCreateEntity(
 
   const id = randomUUID();
   db.prepare(`
-    INSERT INTO entities (id, name, normalized_name, type)
-    VALUES (?, ?, ?, ?)
-  `).run(id, name, normalized, type);
+    INSERT INTO entities (id, name, normalized_name, type, scope, namespace)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(id, name, normalized, type, partition.scope, partition.namespace);
 
   return id;
 }
@@ -159,17 +178,18 @@ export function storeExtractedEntities(
   memoryId: string,
   entities: ExtractedEntity[],
   extractedBy: string,
+  partition: GraphPartition = GLOBAL_PARTITION,
 ): void {
   const store = db.transaction(() => {
     const entityIds: string[] = [];
     for (const entity of entities) {
-      const entityId = findOrCreateEntity(db, entity.name, entity.type);
+      const entityId = findOrCreateEntity(db, entity.name, entity.type, partition);
       linkEntityToMemory(db, memoryId, entityId, 'mention', extractedBy, entity.confidence);
       entityIds.push(entityId);
     }
     // Entities mentioned together in one memory co-occur — materialize that as
     // graph edges so the knowledge graph actually has edges (not just nodes).
-    buildCooccurrenceEdges(db, entityIds);
+    buildCooccurrenceEdges(db, entityIds, partition);
     // Bridge co-occurrence into the memory<->memory graph too (G3-F7): memories
     // sharing an entity get a memory_links 'co_occurs' edge, so /api/graph and
     // memory_get.links reflect co-occurrence (not just entity_relationships).
@@ -247,13 +267,14 @@ const MAX_COOCCURRENCE_ENTITIES = 12;
 export function buildCooccurrenceEdges(
   db: Database.Database,
   entityIds: string[],
+  partition: GraphPartition = GLOBAL_PARTITION,
 ): void {
   const unique = [...new Set(entityIds)].slice(0, MAX_COOCCURRENCE_ENTITIES);
   for (let i = 0; i < unique.length; i++) {
     for (let j = i + 1; j < unique.length; j++) {
       const [source, target] =
         unique[i] < unique[j] ? [unique[i], unique[j]] : [unique[j], unique[i]];
-      findOrCreateRelationship(db, source, target, 'co_occurs');
+      findOrCreateRelationship(db, source, target, 'co_occurs', partition);
     }
   }
 }
@@ -304,6 +325,7 @@ export function findOrCreateRelationship(
   sourceEntityId: string,
   targetEntityId: string,
   type: string,
+  partition: GraphPartition = GLOBAL_PARTITION,
 ): string {
   const existing = db
     .prepare<[string, string, string], { id: string; evidence_count: number }>(
@@ -330,9 +352,9 @@ export function findOrCreateRelationship(
 
   const id = randomUUID();
   db.prepare(`
-    INSERT INTO entity_relationships (id, source_entity_id, target_entity_id, type, strength, evidence_count)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(id, sourceEntityId, targetEntityId, type, edgeStrength(mA, mB, 1), 1);
+    INSERT INTO entity_relationships (id, source_entity_id, target_entity_id, type, strength, evidence_count, scope, namespace)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, sourceEntityId, targetEntityId, type, edgeStrength(mA, mB, 1), 1, partition.scope, partition.namespace);
 
   return id;
 }
