@@ -443,6 +443,85 @@ const migrations: Migration[] = [
         `);
       }
 
+      // battle-v14 F3 — re-derive each entity's (scope, namespace) from its
+      // memory_entities owners and SPLIT a shared entity cross-linked to multiple
+      // tenants into one row per owning partition. Pre-v14 findOrCreateEntity
+      // dedups by name ONLY, so a concept mentioned by two tenants was ONE global
+      // entity cross-linked to both; left at (global,'') a forced tenant's
+      // graph/communities/questions would read its name off the shared row. After
+      // this split a migrated graph matches fresh-v14 per-tenant identity, so the
+      // legacy memory_entities post-filter is sufficient again. Single-namespace
+      // entities are simply stamped to their owner; orphans keep (global,'').
+      if (tableExists('entities') && tableExists('memory_entities') && tableExists('memories')) {
+        const ents = db
+          .prepare<[], { id: string; name: string; normalized_name: string; type: string; mention_count: number }>(
+            'SELECT id, name, normalized_name, type, mention_count FROM entities',
+          )
+          .all();
+        const ownersStmt = db.prepare<[string], { scope: string; namespace: string }>(
+          `SELECT DISTINCT m.scope AS scope, COALESCE(m.namespace, '') AS namespace
+             FROM memory_entities me JOIN memories m ON m.id = me.memory_id
+            WHERE me.entity_id = ?
+            ORDER BY m.scope, COALESCE(m.namespace, '')`,
+        );
+        const stampEntity = db.prepare('UPDATE entities SET scope = ?, namespace = ? WHERE id = ?');
+        const insEntity = db.prepare(
+          'INSERT INTO entities (id, name, normalized_name, type, mention_count, scope, namespace) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        );
+        // Repoint a memory_entities row to the per-namespace entity for its memory.
+        const repointMe = db.prepare(
+          `UPDATE OR IGNORE memory_entities SET entity_id = ?
+             WHERE entity_id = ? AND memory_id IN (
+               SELECT id FROM memories WHERE COALESCE(namespace,'') = ? AND scope = ?
+             )`,
+        );
+        const copyAliases = db.prepare(
+          `INSERT OR IGNORE INTO entity_aliases (id, entity_id, alias, normalized_alias, source, scope, namespace)
+             SELECT lower(hex(randomblob(16))), ?, alias, normalized_alias, source, ?, ?
+               FROM entity_aliases WHERE entity_id = ?`,
+        );
+        for (const e of ents) {
+          const owners = ownersStmt.all(e.id);
+          if (owners.length === 0) continue; // orphan → keep (global,'')
+          // Stamp the original row to the first owner partition.
+          stampEntity.run(owners[0].scope, owners[0].namespace, e.id);
+          // For each ADDITIONAL owner, create a per-namespace clone + repoint.
+          for (let i = 1; i < owners.length; i++) {
+            const o = owners[i];
+            const cloneId = `${e.id}#${o.scope}:${o.namespace}`;
+            insEntity.run(cloneId, e.name, e.normalized_name, e.type, e.mention_count, o.scope, o.namespace);
+            copyAliases.run(cloneId, o.scope, o.namespace, e.id);
+            repointMe.run(cloneId, e.id, o.namespace, o.scope);
+          }
+        }
+        // Stamp relationships from their SOURCE entity's resolved partition and
+        // DROP any edge whose endpoints now resolve to different namespaces (a
+        // pre-v14 cross-tenant edge — exactly the graph-walk-hop leak). Edges
+        // among split clones re-form on the next store; correctness > completeness.
+        if (tableExists('entity_relationships')) {
+          db.exec(`
+            UPDATE entity_relationships
+               SET scope = COALESCE((SELECT scope FROM entities WHERE id = entity_relationships.source_entity_id), scope),
+                   namespace = COALESCE((SELECT namespace FROM entities WHERE id = entity_relationships.source_entity_id), namespace)
+             WHERE EXISTS (SELECT 1 FROM entities WHERE id = entity_relationships.source_entity_id);
+          `);
+          db.exec(`
+            DELETE FROM entity_relationships
+             WHERE (SELECT namespace FROM entities WHERE id = entity_relationships.source_entity_id)
+                IS NOT (SELECT namespace FROM entities WHERE id = entity_relationships.target_entity_id);
+          `);
+        }
+        // Stamp each alias from its (now-partitioned) owning entity.
+        if (tableExists('entity_aliases')) {
+          db.exec(`
+            UPDATE entity_aliases
+               SET scope = COALESCE((SELECT scope FROM entities WHERE id = entity_aliases.entity_id), scope),
+                   namespace = COALESCE((SELECT namespace FROM entities WHERE id = entity_aliases.entity_id), namespace)
+             WHERE EXISTS (SELECT 1 FROM entities WHERE id = entity_aliases.entity_id);
+          `);
+        }
+      }
+
       // Before building the UNIQUE identity indexes, MERGE any pre-existing
       // duplicates the old (non-unique) shapes allowed — otherwise CREATE UNIQUE
       // INDEX throws and the whole upgrade rolls back, stranding the DB at v13.

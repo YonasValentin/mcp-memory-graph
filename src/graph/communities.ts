@@ -115,10 +115,15 @@ function buildGraph(db: Database.Database, namespace?: string): Graph {
   // dangling edges to it are skipped by the index lookup below.
   const entities = namespace
     ? db
-        .prepare<[string], EntityRow>(
+        .prepare<[string, string], EntityRow>(
+          // battle-v14 F3: require the entity's OWN namespace to match too — a
+          // migrated/residual (global,'') entity cross-linked to an in-tenant
+          // memory would otherwise become a node and leak its name. v14 identity
+          // is per-namespace, so an in-tenant entity carries namespace = ?.
           `SELECT id, mention_count
              FROM entities
-            WHERE id IN (
+            WHERE namespace = ?
+              AND id IN (
               SELECT DISTINCT me.entity_id
                 FROM memory_entities me
                 JOIN memories m ON m.id = me.memory_id
@@ -130,7 +135,7 @@ function buildGraph(db: Database.Database, namespace?: string): Graph {
             )
             ORDER BY normalized_name, id`,
         )
-        .all(namespace)
+        .all(namespace, namespace)
     : db
         .prepare<[], EntityRow>(
           `SELECT id, mention_count

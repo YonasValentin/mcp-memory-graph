@@ -133,6 +133,12 @@ export function handleQuestions(
       // `entities`, so HAVING would bind to the GLOBAL column (the leak) instead
       // of this tenant-scoped subquery. Use a distinct name (`tenant_mentions`).
       const t = scopeFilter('mt', input); // tenant mention count (alias mt)
+      // battle-v14 F3: gate the entity to its OWN namespace too. A migrated/
+      // residual (global,'') entity cross-linked to an in-tenant memory would
+      // otherwise pass with its global name. v14 identity is per-namespace, so an
+      // in-tenant entity carries e.namespace = the forced namespace.
+      const eNs = input.namespace !== undefined ? ' WHERE e.namespace = ?' : '';
+      const eNsParams = input.namespace !== undefined ? [input.namespace] : [];
       rows = db
         .prepare<unknown[], { name: string; tenant_mentions: number; linked: number }>(
           `SELECT e.name AS name,
@@ -145,12 +151,12 @@ export function handleQuestions(
                      JOIN memories m ON m.id = me.memory_id
                     WHERE me.entity_id = e.id
                       AND ${live('m')}${f.sql}) AS linked
-             FROM entities e
+             FROM entities e${eNs}
             GROUP BY e.id
            HAVING tenant_mentions >= ${MIN_MENTIONS} AND linked <= ${MAX_LINKED_MEMORIES}
             ORDER BY e.name`,
         )
-        .all(...t.params, ...f.params)
+        .all(...t.params, ...f.params, ...eNsParams)
         .map((r) => ({ name: r.name, mention_count: r.tenant_mentions, linked: r.linked }));
     } else {
       // Unforced (single-tenant) path — unchanged: the global e.mention_count is

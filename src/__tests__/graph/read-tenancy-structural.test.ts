@@ -6,17 +6,22 @@
  * structural guarantee (and reveals whether the legacy post-filters are still
  * load-bearing).
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { createTestDb } from '../../testing/test-db.js';
 import { MockEmbeddingProvider } from '../../testing/mock-embedder.js';
 import { handleStore } from '../../tools/store.js';
 import { handleGraph } from '../../tools/graph.js';
+import { handleCommunities } from '../../tools/communities.js';
 
 const embedder = new MockEmbeddingProvider();
 let db: Database.Database;
 beforeEach(() => {
   db = createTestDb();
+});
+afterEach(() => {
+  delete process.env.MCP_API_NAMESPACE;
 });
 
 /** Seed a shared-DB two-tenant graph: both projects mention 'Redis' + 'Kafka',
@@ -68,5 +73,29 @@ describe('v14 read-path isolation — handleGraph under a forced namespace', () 
     );
     for (const e of g.entities) expect(projBEntityIds.has(e.id)).toBe(false);
     for (const m of g.memories) expect(m.namespace).toBe('projA');
+  });
+});
+
+describe('v14 F3 — a residual (global,\'\') cross-linked entity is not surfaced to a forced tenant', () => {
+  it('handleGraph/handleCommunities hide a global-partition entity name even when cross-linked to the tenant', async () => {
+    process.env.MCP_API_NAMESPACE = 'tenantB';
+    await handleStore(db, embedder, {
+      title: 'b', content: 'tenantB note about networking', scope: 'project', namespace: 'tenantB',
+    });
+    const bMem = db.prepare("SELECT id FROM memories WHERE namespace='tenantB'").get() as { id: string };
+    // Simulate a migration/residual artefact: a SHARED (global,'') entity whose
+    // NAME carries a foreign secret, cross-linked to tenantB's own memory.
+    const secret = randomUUID();
+    db.prepare(
+      "INSERT INTO entities (id,name,normalized_name,type,scope,namespace,mention_count) VALUES (?, 'ApolloTenantASecret','apollotenantasecret','project','global','',42)",
+    ).run(secret);
+    db.prepare(
+      "INSERT OR IGNORE INTO memory_entities (memory_id,entity_id,role,extracted_by,confidence) VALUES (?,?,'mention','regex',0.9)",
+    ).run(bMem.id, secret);
+
+    const g = handleGraph(db, { limit: 50 }, 'tenantB');
+    expect(g.entities.some((e) => e.name === 'ApolloTenantASecret')).toBe(false);
+    const c = handleCommunities(db, { limit: 50, min_size: 1 }, 'tenantB');
+    expect(JSON.stringify(c)).not.toContain('ApolloTenantASecret');
   });
 });

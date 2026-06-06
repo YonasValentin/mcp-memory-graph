@@ -44,6 +44,11 @@ function v13Db(): Database.Database {
       id TEXT PRIMARY KEY NOT NULL, old_memory_id TEXT NOT NULL,
       new_memory_id TEXT NOT NULL, conflict_type TEXT NOT NULL DEFAULT 'superseded'
     );
+    CREATE TABLE memory_entities (
+      memory_id TEXT NOT NULL, entity_id TEXT NOT NULL, role TEXT DEFAULT 'mention',
+      extracted_by TEXT DEFAULT 'regex', confidence REAL NOT NULL DEFAULT 0.5,
+      PRIMARY KEY (memory_id, entity_id)
+    );
   `);
   // Two projA memories + one projB memory; a projA edge and a projA→projB conflict.
   db.exec(`
@@ -130,6 +135,32 @@ describe('migrate v14 — graph tenancy backfill', () => {
       value: string;
     };
     expect(v.value).toBe('14');
+  });
+
+  it('splits a pre-v14 SHARED entity cross-linked to multiple tenants into per-namespace rows', () => {
+    // Pre-v14 findOrCreateEntity dedups by name only, so a concept mentioned by
+    // two tenants is ONE global entity cross-linked (via memory_entities) to both
+    // tenants' memories. After migration each tenant must own a SEPARATE entity
+    // row in its own namespace (matching fresh-v14 write identity) so a forced
+    // tenant's graph/communities never reads the shared row's name.
+    const db = v13Db();
+    db.exec(`
+      INSERT INTO entities (id, name, normalized_name, type, mention_count)
+        VALUES ('e-shared','Redis','redis','tool',5);
+      INSERT INTO memory_entities (memory_id, entity_id) VALUES
+        ('mA1','e-shared'), ('mB1','e-shared');
+    `);
+    migrateDatabase(db);
+    // 'redis' now exists once per owning namespace (projA and projB).
+    const rows = db
+      .prepare("SELECT scope, namespace FROM entities WHERE normalized_name = 'redis' ORDER BY namespace")
+      .all() as Array<{ scope: string; namespace: string }>;
+    expect(rows.map((r) => r.namespace).sort()).toEqual(['projA', 'projB']);
+    // Each memory_entities row points at the entity in ITS OWN namespace.
+    const aEnt = db.prepare("SELECT e.namespace FROM memory_entities me JOIN entities e ON e.id = me.entity_id WHERE me.memory_id = 'mA1'").get() as { namespace: string };
+    const bEnt = db.prepare("SELECT e.namespace FROM memory_entities me JOIN entities e ON e.id = me.entity_id WHERE me.memory_id = 'mB1'").get() as { namespace: string };
+    expect(aEnt.namespace).toBe('projA');
+    expect(bEnt.namespace).toBe('projB');
   });
 
   it('dedupes pre-existing duplicate normalized_name/alias rows so the new UNIQUE index can build', () => {

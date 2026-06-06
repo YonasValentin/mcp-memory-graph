@@ -140,15 +140,21 @@ export function handleGraph(
     const live = liveConditions({ excludeSuperseded: true, topLevelOnly: true })
       .map((c) => `m.${c}`)
       .join(' AND ');
+    // battle-v14 F3: also require the ENTITY's own namespace to match. A
+    // migrated/residual (global,'') entity cross-linked to an in-tenant memory
+    // would otherwise pass the memory-join filter and leak its NAME. v14 entity
+    // identity is per-namespace (fresh writes + the migration split), so a
+    // legitimately in-tenant entity carries en.namespace = forcedNamespace.
     for (const r of db
-      .prepare<[string], { id: string; n: number }>(
+      .prepare<[string, string], { id: string; n: number }>(
         `SELECT me.entity_id AS id, COUNT(DISTINCT me.memory_id) AS n
            FROM memory_entities me
            JOIN memories m ON m.id = me.memory_id
-          WHERE m.namespace = ? AND ${live}
+           JOIN entities en ON en.id = me.entity_id
+          WHERE m.namespace = ? AND en.namespace = ? AND ${live}
           GROUP BY me.entity_id`,
       )
-      .all(forcedNamespace)) {
+      .all(forcedNamespace, forcedNamespace)) {
       scopedMentions.set(r.id, r.n);
     }
     // Drop entities with no in-tenant witness, then override the count + re-rank
