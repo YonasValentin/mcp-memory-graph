@@ -119,26 +119,49 @@ function edgePartition(
   return { scope: s.scope, namespace: sNs };
 }
 
+/**
+ * battle-v14 G4: under a forced namespace, an edge whose OTHER endpoint memory is
+ * in a different namespace is a cross-tenant hop — exclude it so memory_get.links/
+ * backlinks never disclose a foreign memory id. A pre-v14/migrated DB (or an
+ * unforced single-user link round-tripped, then pinned) can hold such edges; the
+ * read surface validates the endpoint regardless. Returns the SQL fragment +
+ * params that constrain `<col>` (the other endpoint) to the forced namespace, or
+ * empty when unforced. NULL namespace stored as '' — compare via COALESCE.
+ */
+function foreignEndpointGuard(col: 'source_memory_id' | 'target_memory_id'): {
+  sql: string;
+  params: string[];
+} {
+  const ns = forcedNamespace();
+  if (!ns) return { sql: '', params: [] };
+  return {
+    sql: ` AND (SELECT COALESCE(namespace, '') FROM memories WHERE id = memory_links.${col}) = ?`,
+    params: [ns],
+  };
+}
+
 /** Edges where `memoryId` is the source (what this memory points to). */
 export function getOutgoingLinks(db: Database.Database, memoryId: string): MemoryLinkRow[] {
+  const guard = foreignEndpointGuard('target_memory_id');
   return db
-    .prepare<[string], MemoryLinkRow>(
+    .prepare<string[], MemoryLinkRow>(
       `SELECT * FROM memory_links
-        WHERE source_memory_id = ?
+        WHERE source_memory_id = ?${guard.sql}
         ORDER BY confidence_score DESC, evidence_count DESC`,
     )
-    .all(memoryId);
+    .all(memoryId, ...guard.params);
 }
 
 /** Backlinks — edges where `memoryId` is the target (what points at this memory). */
 export function getBacklinks(db: Database.Database, memoryId: string): MemoryLinkRow[] {
+  const guard = foreignEndpointGuard('source_memory_id');
   return db
-    .prepare<[string], MemoryLinkRow>(
+    .prepare<string[], MemoryLinkRow>(
       `SELECT * FROM memory_links
-        WHERE target_memory_id = ?
+        WHERE target_memory_id = ?${guard.sql}
         ORDER BY confidence_score DESC, evidence_count DESC`,
     )
-    .all(memoryId);
+    .all(memoryId, ...guard.params);
 }
 
 /**

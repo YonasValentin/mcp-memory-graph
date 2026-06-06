@@ -90,3 +90,33 @@ describe('battle-v14 F5 — consolidate dry_run count is tenant-scoped', () => {
     delete process.env.MCP_API_NAMESPACE;
   });
 });
+
+describe('battle-v14 G4 — cross-namespace links/conflicts do not leak to a forced tenant', () => {
+  it('getOutgoingLinks/getBacklinks exclude an edge whose OTHER endpoint is foreign (under forcing)', async () => {
+    const { getOutgoingLinks, getBacklinks, createMemoryLink } = await import('../../graph/memory-links.js');
+    insertMemory(db, row('mA', { namespace: 'tenant-a' }), unit(0));
+    insertMemory(db, row('mB', { namespace: 'tenant-b' }), unit(1));
+    // Pre-v14/migrated cross-namespace edges between tenant-a's mA and tenant-b's
+    // mB, created unforced; then the per-tenant server is pinned to tenant-a.
+    expect(createMemoryLink(db, { sourceId: 'mA', targetId: 'mB', sourceKind: 'wikilink' })).not.toBe('');
+    expect(createMemoryLink(db, { sourceId: 'mB', targetId: 'mA', sourceKind: 'wikilink' })).not.toBe('');
+    process.env.MCP_API_NAMESPACE = 'tenant-a';
+    // Reading tenant-a's OWN memory mA must never disclose the foreign mB endpoint.
+    expect(getOutgoingLinks(db, 'mA').some((l) => l.target_memory_id === 'mB')).toBe(false);
+    expect(getBacklinks(db, 'mA').some((l) => l.source_memory_id === 'mB')).toBe(false);
+  });
+
+  it('memory_health does not count a conflict whose other endpoint is foreign', async () => {
+    const { handleHealth } = await import('../../tools/health.js');
+    const { randomUUID } = await import('node:crypto');
+    insertMemory(db, row('ca', { namespace: 'tenant-a', content: 'a' }), unit(0));
+    insertMemory(db, row('cb', { namespace: 'tenant-b', content: 'b' }), unit(1));
+    // cross-namespace unresolved conflict (old=tenant-a, new=tenant-b).
+    db.prepare(
+      "INSERT INTO memory_conflicts (id, old_memory_id, new_memory_id, conflict_type, scope, namespace) VALUES (?, 'ca', 'cb', 'contradicted', 'project', 'tenant-b')",
+    ).run(randomUUID());
+    process.env.MCP_API_NAMESPACE = 'tenant-a';
+    const h = handleHealth(db, { namespace: 'tenant-a' });
+    expect(h.conflicts.unresolved).toBe(0); // the new side is foreign → not tenant-a's
+  });
+});

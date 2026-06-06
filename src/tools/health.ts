@@ -90,13 +90,21 @@ export function handleHealth(
   // conflict whose OLD memory is already retired (valid_to/tx_expired set) was
   // resolved by supersession even though resolved_at was never stamped, so
   // exclude it — otherwise every applied supersede shows 'unresolved' forever.
+  // battle-v14 G4: require BOTH endpoints in scope. A migrated/pre-v14 conflict
+  // can be cross-namespace (old in tenant-a, new in tenant-b); scoping only the
+  // OLD side still counted it for tenant-a, disclosing that a foreign tenant's
+  // memory contradicts one of theirs. Joining the NEW memory with the same scope
+  // filter means a forced tenant only counts conflicts wholly within its namespace
+  // (matches memory_insights, which already scopes both sides).
   const cf = scopeClause('o', input);
+  const nf = scopeClause('n', input);
   const unresolved = count(
     db,
     `SELECT COUNT(*) AS n FROM memory_conflicts c
        JOIN memories o ON o.id = c.old_memory_id
-      WHERE c.resolved_at IS NULL AND o.valid_to IS NULL AND o.tx_expired IS NULL${cf.sql}`,
-    cf.params,
+       JOIN memories n ON n.id = c.new_memory_id
+      WHERE c.resolved_at IS NULL AND o.valid_to IS NULL AND o.tx_expired IS NULL${cf.sql}${nf.sql}`,
+    [...cf.params, ...nf.params],
   );
 
   // Webhook delivery health is a SINGLE global event bus (opt-in via
