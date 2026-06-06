@@ -86,6 +86,11 @@ const stored = {}; // ns -> count
 console.error('Multi-tenant sim: seeding 3 tenants on one shared DB (real models)...');
 const ENTITY_TYPE = { PostgreSQL: 'tool', Redis: 'tool', Kafka: 'tool', Stripe: 'tool', Kubernetes: 'tool' };
 for (const t of TENANTS) {
+  // Each tenant is served by a server pinned to its namespace (v14 G5: the entity
+  // graph partition = forcedNamespace()), so set it for the duration of this
+  // tenant's writes. Without it the entity graph would collapse to the single
+  // shared '' partition (the single-user model) and tenants would not collide.
+  process.env.MCP_API_NAMESPACE = t.ns;
   stored[t.ns] = 0;
   const tenantMemIds = [];
   for (let i = 0; i < TOPICS.length; i++) {
@@ -148,6 +153,10 @@ function scanForLeak(tenantNs, label, result) {
 console.error('Read-tool leakage sweep across all tenants...');
 for (const t of TENANTS) {
   const ns = t.ns;
+  // Pin the server to this tenant for its whole read sweep — getOutgoingLinks /
+  // memory_health / memory_stats / export-vault sidecars all consult
+  // forcedNamespace() (process.env), not just the per-call argument.
+  process.env.MCP_API_NAMESPACE = ns;
   const ownId = allIds.find((id) => ledger.get(id) === ns);
 
   // Queries include shared tech terms (collide), generic topics, AND a direct
@@ -200,15 +209,18 @@ for (const t of TENANTS) {
     catch (err) { errors.push(`related ${ns}: ${err.message}`); }
   }
 }
+delete process.env.MCP_API_NAMESPACE;
 
 // ── Write-isolation: consolidate forced to one tenant never touches another ────
 console.error('Write-isolation sweep...');
 const beforeLive = Object.fromEntries(TENANTS.map((t) => [t.ns, liveInNs(t.ns)]));
 for (const t of TENANTS) {
   try {
+    process.env.MCP_API_NAMESPACE = t.ns;
     await handleConsolidate(db, embedder, { namespace: t.ns, max_operations: 50 });
   } catch (err) { errors.push(`consolidate ${t.ns}: ${err.message}`); }
 }
+delete process.env.MCP_API_NAMESPACE;
 const afterLive = Object.fromEntries(TENANTS.map((t) => [t.ns, liveInNs(t.ns)]));
 
 // A tenant's consolidate may prune/merge ITS OWN duplicates (the seeded corpus has
