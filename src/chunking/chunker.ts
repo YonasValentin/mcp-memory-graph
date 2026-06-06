@@ -15,7 +15,14 @@ export function chunkContent(content: string, options: ChunkingOptions): ChunkRe
       if (index === 0) return chunk;
 
       const prevChunk = initialChunks[index - 1];
-      const overlapText = prevChunk.content.slice(-options.overlap);
+      let overlapText = prevChunk.content.slice(-options.overlap);
+      // battle-v9 CLASS 5: a fixed code-unit tail slice can begin on a LOW
+      // surrogate (the orphaned half of an astral pair) — drop it so the overlap
+      // never carries a lone surrogate that corrupts to U+FFFD on embed/store.
+      if (overlapText.length > 0) {
+        const first = overlapText.charCodeAt(0);
+        if (first >= 0xdc00 && first <= 0xdfff) overlapText = overlapText.slice(1);
+      }
       return {
         ...chunk,
         content: overlapText + chunk.content,

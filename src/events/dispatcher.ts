@@ -99,8 +99,18 @@ export function sendPinned(
     // settle-on-cap the promise hangs forever and wedges the autonomous dispatch
     // loop (battle-v8 A2). The guard also stops a late end/error from double-settling.
     let settled = false;
-    const done = (status: number) => { if (!settled) { settled = true; resolve({ status }); } };
-    const fail = (err: Error) => { if (!settled) { settled = true; reject(err); } };
+    // battle-v9 CLASS 5: req.setTimeout below is an INACTIVITY timer — a
+    // slow-trickle (slowloris-read) receiver that emits one byte just under
+    // timeoutMs resets it indefinitely and holds the delivery for receiver-
+    // controlled time, wedging the single-threaded dispatch loop. Add an ABSOLUTE
+    // wall-clock deadline (timeoutMs from the call) that no activity can extend.
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    const done = (status: number) => {
+      if (!settled) { settled = true; clearTimeout(deadline); resolve({ status }); }
+    };
+    const fail = (err: Error) => {
+      if (!settled) { settled = true; clearTimeout(deadline); reject(err); }
+    };
     const req = lib.request(
       {
         protocol: url.protocol,
@@ -129,6 +139,12 @@ export function sendPinned(
       },
     );
     req.setTimeout(timeoutMs, () => req.destroy(new Error(`timeout after ${timeoutMs}ms`)));
+    // Absolute deadline: true wall-clock cap that an active slowloris cannot reset.
+    deadline = setTimeout(() => {
+      req.destroy(new Error(`deadline after ${timeoutMs}ms`));
+      fail(new Error(`deadline after ${timeoutMs}ms`));
+    }, timeoutMs);
+    deadline.unref?.();
     req.on('error', fail);
     req.write(body);
     req.end();

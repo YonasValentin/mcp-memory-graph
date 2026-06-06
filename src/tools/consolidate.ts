@@ -193,7 +193,10 @@ export async function handleConsolidate(
   // ── Stage 1: Update quality scores ────────────────────────────────────
   try {
     if (!dryRun) {
-      report.scores_updated = updateQualityScores(db);
+      // battle-v9 CLASS 5: confine Stage-1 score recomputation to the tenant
+      // being consolidated (same filter as every other stage) — without it a
+      // namespace-forced consolidate rewrote importance_score for ALL tenants.
+      report.scores_updated = updateQualityScores(db, filterClause, filterParams);
     } else {
       const countRow = db
         .prepare<unknown[], { cnt: number }>(
@@ -365,6 +368,15 @@ export async function handleConsolidate(
 
           const merged = mergeContent(primaryRow.content, secondaryRow.content);
 
+          // battle-v9 CLASS 5 (known limitation, not a data bug): in dry_run the
+          // survivor is NOT mutated, so a candidate that only becomes reachable
+          // after the survivor ABSORBS earlier content is not counted here — the
+          // preview is a LOWER BOUND on what apply performs. A faithful preview
+          // would need a virtual re-embedding corpus (or apply-then-rollback, which
+          // conflicts with updateMemory/deleteMemory's own BEGIN IMMEDIATE and the
+          // in-loop async embeds). apply is correct and lossless; only the preview
+          // count is conservative. `duplicates_merged` under dry_run is therefore
+          // documented as an estimate (>= would-merge is never over-counted).
           if (!dryRun) {
             let newEmbedding: Float32Array | undefined;
             if (merged !== primaryRow.content) {

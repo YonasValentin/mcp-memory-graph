@@ -188,6 +188,23 @@ export function updateMemory(
         (updates.scope ?? existing.scope) || '',
         (updates.namespace ?? existing.namespace) || '',
       );
+    } else {
+      // battle-v9 CLASS 5 — vec0 partition staleness. The block above rewrites the
+      // memories_vec scope/namespace columns only when the CONTENT changed (it
+      // re-embeds). But a scope/namespace change WITHOUT a content change — e.g.
+      // memory_import's REMAP-on-overwrite, or a plain re-scope via memory_update —
+      // left the vec0 partition columns pointing at the OLD tenant, so a
+      // partitioned KNN (findNearDuplicates/related/hybrid) mis-located the row.
+      // vec0 supports UPDATE of metadata columns (verified), so sync them here.
+      const scopeChanged = updates.scope !== undefined && updates.scope !== existing.scope;
+      const nsChanged = updates.namespace !== undefined && updates.namespace !== existing.namespace;
+      if (scopeChanged || nsChanged) {
+        db.prepare('UPDATE memories_vec SET scope = ?, namespace = ? WHERE rowid = ?').run(
+          (updates.scope ?? existing.scope) || '',
+          (updates.namespace ?? existing.namespace) || '',
+          BigInt(existing.rowid),
+        );
+      }
     }
 
     db.prepare(
@@ -672,13 +689,27 @@ export function recordAccess(
 
 // ── Quality Scoring ──────────────────────────────────────────────────────
 
-export function updateQualityScores(db: Database.Database): number {
-  const result = db.prepare(`
+/**
+ * Recompute importance from access patterns. battle-v9 CLASS 5: accepts an
+ * optional scope/namespace filter clause (the `${clause}` shape buildFilterClause
+ * produces — a leading ' AND …' or ''). When supplied (consolidate under
+ * MCP_API_NAMESPACE forcing), BOTH the outer WHERE and the normalization
+ * denominator subquery are constrained to the tenant, so a forced consolidate no
+ * longer rewrites every tenant's importance_score (and the denominator isn't
+ * skewed by another tenant's hottest row). Unfiltered (default) is unchanged.
+ */
+export function updateQualityScores(
+  db: Database.Database,
+  filterClause = '',
+  filterParams: unknown[] = [],
+): number {
+  const result = db
+    .prepare(`
     UPDATE memories SET
       importance_score = MIN(1.0, MAX(0.0,
         0.3 * importance_score +
         0.4 * MIN(1.0, CAST(access_count AS REAL) / MAX(
-          (SELECT MAX(access_count) FROM memories WHERE parent_id IS NULL), 1
+          (SELECT MAX(access_count) FROM memories WHERE parent_id IS NULL${filterClause}), 1
         )) +
         0.3 * CASE
           WHEN last_accessed_at IS NULL THEN 0.1
@@ -688,8 +719,11 @@ export function updateQualityScores(db: Database.Database): number {
           ELSE 0.1
         END
       ))
-    WHERE parent_id IS NULL
-  `).run();
+    WHERE parent_id IS NULL${filterClause}
+  `)
+    // The subquery (inner) appears before the outer WHERE in the SQL, so its
+    // params bind first; both use the same filter.
+    .run(...filterParams, ...filterParams);
 
   return result.changes;
 }

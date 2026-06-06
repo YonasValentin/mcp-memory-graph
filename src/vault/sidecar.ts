@@ -4,6 +4,7 @@ import type Database from 'better-sqlite3';
 import { exportGraph, type GraphArtifact } from '../graph/graph-export.js';
 import { createMemoryLink } from '../graph/memory-links.js';
 import { confineToVault } from './writer.js';
+import { getVaultEgress } from '../config/loader.js';
 import { buildIntegrityManifest } from '../tools/manifest.js';
 
 /**
@@ -23,7 +24,9 @@ export function writeGraphSidecar(db: Database.Database, vaultRoot: string): str
   const abs = confineToVault(root, SIDECAR_REL);
   /* c8 ignore next */
   if (!abs) return null;
-  const artifact = exportGraph(db);
+  // battle-v9 CLASS 5: apply the same egress cap the .md write-through enforces,
+  // so a confidential/restricted memory never leaks into the git-shared sidecar.
+  const artifact = exportGraph(db, {}, getVaultEgress());
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, JSON.stringify(artifact, null, 2), 'utf-8');
   return abs;

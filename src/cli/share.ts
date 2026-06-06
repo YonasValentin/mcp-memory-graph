@@ -1,6 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import { getReadOnlyDb } from '../lib/direct-access.js';
 import { exportGraph, mergeGraphFiles } from '../graph/graph-export.js';
+import { getVaultEgress } from '../config/loader.js';
 
 const DEFAULT_OUT = './memory-graph.json';
 
@@ -25,7 +26,9 @@ function parseFlags(args: string[]): Record<string, string> {
 export function runExportGraph(argv: string[]): void {
   const flags = parseFlags(argv);
   const db = getReadOnlyDb();
-  const artifact = exportGraph(db, { scope: flags.scope, namespace: flags.namespace });
+  // battle-v9 CLASS 5: honour the vault egress cap when exporting the shareable
+  // graph from the CLI too, so a manual share can't leak above-cap content.
+  const artifact = exportGraph(db, { scope: flags.scope, namespace: flags.namespace }, getVaultEgress());
   const out = flags.out || DEFAULT_OUT;
   /* c8 ignore start — IO: file write + console output. */
   const stamped = { ...artifact, exported_at: new Date().toISOString() };

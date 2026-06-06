@@ -343,6 +343,34 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: 13,
+    up: (db) => {
+      // battle-v9 CLASS 5 — legacy space-format timestamp normalization. Old rows
+      // wrote range-compared bitemporal columns as 'YYYY-MM-DD HH:MM:SS' (a space
+      // separator); current writes use ISO-8601 'YYYY-MM-DDTHH:MM:SS.SSSZ'. A
+      // space sorts BEFORE 'T', so a legacy valid_to lexicographically mis-collates
+      // against an ISO-Z as_of/NOW param and a row valid earlier the same day was
+      // wrongly hidden (or a tombstone wrongly suppressed a later live edit).
+      // Rewrite any space-format value (with or without fractional seconds) to
+      // ISO-Z so all comparisons collate consistently. Idempotent: ISO-Z values
+      // (which contain 'T', not a space at offset 11) never match the patterns.
+      const normalize = (table: string, col: string) => {
+        if (!columnExists(db, table, col)) return;
+        db.exec(
+          `UPDATE ${table} SET ${col} = replace(${col}, ' ', 'T') || 'Z'
+             WHERE ${col} LIKE '____-__-__ __:__:__'
+                OR ${col} LIKE '____-__-__ __:__:__.%'`,
+        );
+      };
+      for (const col of ['valid_from', 'valid_to', 'tx_expired', 'expires_at']) {
+        normalize('memories', col);
+      }
+      for (const col of ['valid_from', 'valid_to', 'tx_expired']) {
+        normalize('memory_links', col);
+      }
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

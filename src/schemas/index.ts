@@ -108,6 +108,7 @@ export const MemoryStoreSchema = z.object({
     .describe('Identifier of the writing agent for multi-agent attribution'),
   expires_at: z
     .string()
+    .datetime({ message: 'expires_at must be a full ISO-8601 timestamp, e.g. 2026-03-01T00:00:00Z' })
     .optional()
     .describe(
       'ISO 8601 expiration date (memory auto-excluded from search after this)',
@@ -196,12 +197,16 @@ export const MemorySearchSchema = z.object({
     })
     .optional()
     .describe('Apply time-based decay to favor recent memories'),
+  // battle-v9 CLASS 5: validate like as_of. An unvalidated/partial date reaches
+  // a lexicographic range slice and silently returns wrong results.
   date_from: z
     .string()
+    .datetime({ message: 'date_from must be a full ISO-8601 timestamp, e.g. 2026-03-01T00:00:00Z' })
     .optional()
     .describe('Filter: only memories created after this ISO 8601 date'),
   date_to: z
     .string()
+    .datetime({ message: 'date_to must be a full ISO-8601 timestamp, e.g. 2026-03-01T00:00:00Z' })
     .optional()
     .describe('Filter: only memories created before this ISO 8601 date'),
   min_confidence: z
@@ -315,6 +320,7 @@ export const MemoryUpdateSchema = z.object({
     .describe('Updated tags (replaces existing)'),
   expires_at: z
     .string()
+    .datetime({ message: 'expires_at must be a full ISO-8601 timestamp, e.g. 2026-03-01T00:00:00Z' })
     .nullable()
     .optional()
     .describe('New expiration date, or null to remove'),
@@ -683,6 +689,17 @@ const MemoryImportItemSchema = z.object({
     .describe(
       'Explicit importance 0-1 — preserved on restore (falls back to the ' +
       'content-derived heuristic only when absent), so a backup keeps criticality',
+    ),
+  // battle-v9 CLASS 5: confidence_score's sibling of the importance fix — without
+  // it every backup/restore reset trust to 0.5, breaking the lossless promise.
+  confidence_score: z
+    .number()
+    .min(0)
+    .max(1)
+    .nullable()
+    .optional()
+    .describe(
+      'Explicit confidence/trust 0-1 — preserved on restore so a backup keeps groundedness',
     ),
 });
 
@@ -1387,6 +1404,20 @@ const optString = () =>
     return String(v);
   }, z.string().optional());
 
+// battle-v9 CLASS 5: REST equivalent of the as_of datetime gate — an unvalidated
+// date string reaches a lexicographic range slice and silently mis-filters.
+const optDatetime = (field: string) =>
+  z.preprocess(
+    (v) => {
+      if (v === undefined || v === null || v === '') return undefined;
+      return String(v);
+    },
+    z
+      .string()
+      .datetime({ message: `${field} must be a full ISO-8601 timestamp, e.g. 2026-03-01T00:00:00Z` })
+      .optional(),
+  );
+
 // optBool is wired into ApiGetQuerySchema for the include_chunks toggle.
 const optBool = () =>
   z.preprocess((v) => {
@@ -1408,8 +1439,8 @@ export const ApiSearchQuerySchema = z.object({
   limit: intFromString(1, 100, 20),
   offset: intFromString(0, 100000, 0),
   min_confidence: floatFromString(0, 1),
-  date_from: optString(),
-  date_to: optString(),
+  date_from: optDatetime('date_from'),
+  date_to: optDatetime('date_to'),
 });
 
 export const ApiListQuerySchema = z.object({

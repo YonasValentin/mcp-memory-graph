@@ -4,7 +4,7 @@ import type Database from 'better-sqlite3';
  * The current schema version baked into this codebase. Updated together with
  * a new entry in `runMigrations`.
  */
-export const CURRENT_SCHEMA_VERSION = 12;
+export const CURRENT_SCHEMA_VERSION = 13;
 
 /**
  * Persistent memory-to-memory edge store (Pillar 1). Edges carry a confidence

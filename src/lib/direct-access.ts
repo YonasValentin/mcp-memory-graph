@@ -9,15 +9,28 @@ import type { EmbeddingProvider } from '../types.js';
 let embedderPromise: Promise<EmbeddingProvider> | null = null;
 
 function readSchemaVersion(db: Database.Database): number {
+  let row: { value: string } | undefined;
   try {
-    const row = db
+    row = db
       .prepare<[], { value: string }>("SELECT value FROM schema_meta WHERE key = 'schema_version'")
       .get();
-    return row ? Number(row.value) : 0;
   } catch {
     // schema_meta table absent → uninitialized DB.
     return 0;
   }
+  if (!row) return 0;
+  // battle-v9 CLASS 5 (P11 parity): the migration path validates the recorded
+  // version with /^\d+$/ and refuses a corrupt value; the read-only path coerced
+  // it with Number(), so '12abc'→12 or '1e9'→1000000000 could masquerade as a
+  // known schema and slip past the below-version guard. Apply the SAME check.
+  if (!/^\d+$/.test(row.value)) {
+    throw new Error(
+      `Corrupt schema_version in schema_meta: '${row.value}'. Expected a canonical ` +
+        `non-negative decimal integer. Refusing read-only access against an unknown ` +
+        `schema; restore from backup or recreate the database.`,
+    );
+  }
+  return Number(row.value);
 }
 
 /**

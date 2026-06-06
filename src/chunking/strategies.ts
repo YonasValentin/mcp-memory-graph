@@ -286,11 +286,32 @@ export function hardSplitContent(content: string, chunkSize: number): string[] {
       const lastNewline = content.lastIndexOf('\n', end - 1);
       const brk = Math.max(lastSpace, lastNewline);
       if (brk > i) end = brk + 1; // include the break char so nothing is dropped
+      // battle-v9 CLASS 5: never cut between a surrogate pair (a hard cut at
+      // i+chunkSize can land mid-pair) — UTF-16 .slice() would split an astral
+      // emoji into lone surrogates that the embedder/store corrupt to U+FFFD.
+      // Back the cut up by one so the pair stays whole (it moves to the next
+      // piece). The whitespace path is already pair-safe (space is single-unit).
+      const safe = avoidSurrogateSplit(content, end);
+      if (safe > i) end = safe;
     }
     pieces.push(content.slice(i, end));
     i = end;
   }
   return pieces;
+}
+
+/**
+ * If index `end` falls between a UTF-16 surrogate pair (high at end-1, low at
+ * end), return end-1 so a slice there keeps the astral codepoint whole; else
+ * return end unchanged. Pure.
+ */
+function avoidSurrogateSplit(content: string, end: number): number {
+  if (end > 0 && end < content.length) {
+    const hi = content.charCodeAt(end - 1);
+    const lo = content.charCodeAt(end);
+    if (hi >= 0xd800 && hi <= 0xdbff && lo >= 0xdc00 && lo <= 0xdfff) return end - 1;
+  }
+  return end;
 }
 
 /**

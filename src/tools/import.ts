@@ -29,6 +29,7 @@ interface ImportItem {
   updated_at?: string | null;
   agent_id?: string | null;
   importance_score?: number | null;
+  confidence_score?: number | null;
 }
 
 function isValidImportItem(item: unknown): item is ImportItem {
@@ -168,7 +169,10 @@ export async function handleImport(
           // backup/restore keeps governance/criticality; fall back to the
           // content heuristic (matching handleStore) only when absent.
           importance_score: item.importance_score ?? computeContentSignal(item.content),
-          confidence_score: 0.5,
+          // battle-v9 CLASS 5: preserve an explicitly-set confidence_score (export
+          // emits it) so a backup/restore keeps groundedness instead of resetting
+          // trust to the 0.5 default.
+          confidence_score: item.confidence_score ?? 0.5,
           stability: 1.0,
         };
 
