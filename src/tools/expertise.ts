@@ -131,8 +131,13 @@ export async function handleExpertise(
   const now = new Date().toISOString();
   const inc = Math.max(1, Math.floor(input.weight ?? 1));
 
-  const existing = findExpertiseRow(db, scope, namespace, topic);
-  if (existing) {
+  // battle-v9 CLASS 3: an observe is a read-modify-write counter bump. Two
+  // concurrent observes must neither lose an increment (both read N, both write
+  // N+inc) nor both create a first-observation row. Serialize find→decide→write
+  // in a BEGIN IMMEDIATE txn (.immediate). The first-observation embedding can't
+  // be awaited inside a sync txn, so the fast path (existing row) increments
+  // under the lock with NO embed; only a genuine first observation embeds.
+  const applyIncrement = (existing: MemoryRow & { rowid: number }): ExpertiseEntry => {
     const meta = (existing.metadata ? safeJson(existing.metadata) : {}) as Partial<MetaShape>;
     const evidence = (typeof meta.evidence_count === 'number' ? meta.evidence_count : 1) + inc;
     const level = saturatingLevel(evidence);
@@ -142,50 +147,62 @@ export async function handleExpertise(
     db.prepare(
       "UPDATE memories SET metadata = ?, importance_score = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
     ).run(JSON.stringify(newMeta), level, existing.id);
-    return {
-      action: 'observe',
-      observed: { topic, level, evidence_count: evidence, last_seen: now, memory_id: existing.id },
-    };
-  }
+    return { topic, level, evidence_count: evidence, last_seen: now, memory_id: existing.id };
+  };
 
-  // First observation — create the typed memory (needs one embedding).
-  const evidence = inc;
-  const level = saturatingLevel(evidence);
-  const meta: MetaShape = { topic, level, evidence_count: evidence, last_seen: now };
+  // Fast path: atomically increment an existing row's counter (no embed needed).
+  const incremented = db
+    .transaction((): ExpertiseEntry | null => {
+      const existing = findExpertiseRow(db, scope, namespace, topic);
+      return existing ? applyIncrement(existing) : null;
+    })
+    .immediate();
+  if (incremented) return { action: 'observe', observed: incremented };
+
+  // First observation — embed OUTSIDE the txn, then insert-if-still-absent under
+  // the lock. The re-check absorbs a concurrent create (→ increment instead),
+  // so two racing first-observes can never produce a duplicate expertise row.
   const content = `Expertise: ${topic}`;
   const embedding = await embedder.embed(
     contextualizeForEmbedding(content, { title: topic, document_type: 'expertise', namespace }),
   );
-  const row: MemoryRow = {
-    id: randomUUID(),
-    scope,
-    namespace,
-    title: topic,
-    content,
-    document_type: 'expertise',
-    source: null,
-    author: null,
-    department: null,
-    tags: null,
-    access_level: 'private',
-    language: 'en',
-    metadata: JSON.stringify(meta),
-    parent_id: null,
-    chunk_index: null,
-    version: 1,
-    created_at: now,
-    updated_at: now,
-    expires_at: null,
-    access_count: 0,
-    last_accessed_at: null,
-    importance_score: level,
-    confidence_score: 0.7,
-    stability: 1.0,
-    agent_id: process.env.MCP_AGENT_ID ?? null,
-  };
-  insertMemory(db, row, embedding);
-  return {
-    action: 'observe',
-    observed: { topic, level, evidence_count: evidence, last_seen: now, memory_id: row.id },
-  };
+  const observed = db
+    .transaction((): ExpertiseEntry => {
+      const raced = findExpertiseRow(db, scope, namespace, topic);
+      if (raced) return applyIncrement(raced);
+      const evidence = inc;
+      const level = saturatingLevel(evidence);
+      const meta: MetaShape = { topic, level, evidence_count: evidence, last_seen: now };
+      const row: MemoryRow = {
+        id: randomUUID(),
+        scope,
+        namespace,
+        title: topic,
+        content,
+        document_type: 'expertise',
+        source: null,
+        author: null,
+        department: null,
+        tags: null,
+        access_level: 'private',
+        language: 'en',
+        metadata: JSON.stringify(meta),
+        parent_id: null,
+        chunk_index: null,
+        version: 1,
+        created_at: now,
+        updated_at: now,
+        expires_at: null,
+        access_count: 0,
+        last_accessed_at: null,
+        importance_score: level,
+        confidence_score: 0.7,
+        stability: 1.0,
+        agent_id: process.env.MCP_AGENT_ID ?? null,
+      };
+      insertMemory(db, row, embedding);
+      return { topic, level, evidence_count: evidence, last_seen: now, memory_id: row.id };
+    })
+    .immediate();
+  return { action: 'observe', observed };
 }

@@ -17,6 +17,18 @@ export { CURRENT_SCHEMA_VERSION };
  * a genuine failure aborts the migration transaction instead of silently
  * bumping the schema version past a partially-applied migration.
  */
+/** True when `table` has a column named `col` (for migrations that must tolerate
+ *  a minimal/ancient base schema — e.g. the synthetic from-0 upgrade path). */
+function columnExists(db: Database.Database, table: string, col: string): boolean {
+  return (
+    db
+      .prepare<[string, string], { name: string }>(
+        'SELECT name FROM pragma_table_info(?) WHERE name = ?',
+      )
+      .get(table, col) != null
+  );
+}
+
 export function addColumn(db: Database.Database, sql: string): void {
   try {
     db.exec(sql);
@@ -290,6 +302,45 @@ const migrations: Migration[] = [
       // fixed model), so existing rows are unaffected.
       addColumn(db, 'ALTER TABLE memories ADD COLUMN embedding_model TEXT');
       addColumn(db, 'ALTER TABLE memories ADD COLUMN embedding_dim INTEGER');
+    },
+  },
+  {
+    version: 12,
+    up: (db) => {
+      // The dedup + partial index reference document_type/source/parent_id —
+      // base-table columns no migration adds. A real DB at any version has them;
+      // the synthetic from-0 legacy path may use a minimal `memories` table that
+      // does not (and has no session notes), so skip safely there.
+      if (
+        !columnExists(db, 'memories', 'document_type') ||
+        !columnExists(db, 'memories', 'source') ||
+        !columnExists(db, 'memories', 'valid_to')
+      ) {
+        return;
+      }
+      // battle-v9 CLASS 3 — at most one LIVE session-note memory per source.
+      // Before creating the UNIQUE partial index, retire any pre-existing
+      // duplicates a past create-race may have left (keep the earliest by rowid,
+      // tombstone the rest) so the index can be built safely on any real DB. The
+      // whole migration runs inside runMigrations' transaction, so a failure
+      // rolls back atomically rather than half-applying.
+      db.exec(`
+        UPDATE memories
+           SET valid_to = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE document_type = 'session' AND parent_id IS NULL
+           AND valid_to IS NULL AND tx_expired IS NULL
+           AND rowid NOT IN (
+             SELECT MIN(rowid) FROM memories
+              WHERE document_type = 'session' AND parent_id IS NULL
+                AND valid_to IS NULL AND tx_expired IS NULL
+              GROUP BY source
+           );
+      `);
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_session_source_live ON memories(source)
+          WHERE document_type = 'session' AND parent_id IS NULL
+            AND valid_to IS NULL AND tx_expired IS NULL;
+      `);
     },
   },
 ];

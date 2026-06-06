@@ -82,6 +82,14 @@ export function updateMemory(
   id: string,
   updates: Partial<MemoryRow>,
   newEmbedding?: Float32Array,
+  // battle-v9 CLASS 3: optional optimistic-concurrency guard. When set, the
+  // update is applied ONLY IF the row's version still equals expectedVersion
+  // (re-checked INSIDE the immediate txn). A caller that read content/version
+  // outside a lock (e.g. session_note's read-merge-append) passes the version it
+  // based its merge on; a concurrent writer that bumped the version first makes
+  // this return null so the caller re-reads and retries — no lost write. Default
+  // (undefined) preserves the existing last-write-wins behaviour for all callers.
+  expectedVersion?: number,
 ): MemoryRow | null {
   const update = db.transaction(() => {
     const existing = db
@@ -91,6 +99,11 @@ export function updateMemory(
       .get(id);
 
     if (!existing) {
+      return null;
+    }
+
+    if (expectedVersion !== undefined && existing.version !== expectedVersion) {
+      // CAS miss: the row changed since the caller read it. Signal a retry.
       return null;
     }
 

@@ -115,23 +115,32 @@ export function handleCoreMemoryAppend(
   input: { scope: MemoryScope; namespace?: string; text: string },
 ): CoreMemoryAppendResult {
   const namespace = ns(input.namespace);
-  const row = readRow(db, input.scope, namespace);
-  const current = row?.content ?? '';
-  const charLimit = row?.char_limit ?? DEFAULT_CHAR_LIMIT;
+  // battle-v9 CLASS 3: read+check+write must be ONE atomic unit. Two concurrent
+  // appends each read the same `current` and the second ON-CONFLICT UPDATE
+  // clobbers the first → a line is silently lost. BEGIN IMMEDIATE (.immediate)
+  // takes the write lock at BEGIN so the read-modify-write serializes against
+  // other writers (busy_timeout applies instead of an instant SQLITE_BUSY on the
+  // deferred→write lock upgrade).
+  const append = db.transaction((): CoreMemoryAppendResult => {
+    const row = readRow(db, input.scope, namespace);
+    const current = row?.content ?? '';
+    const charLimit = row?.char_limit ?? DEFAULT_CHAR_LIMIT;
 
-  const next = current.length > 0 ? `${current}\n${input.text}` : input.text;
+    const next = current.length > 0 ? `${current}\n${input.text}` : input.text;
 
-  if (next.length > charLimit) {
-    return {
-      ok: false,
-      error: 'core_memory_full',
-      used: current.length,
-      char_limit: charLimit,
-    };
-  }
+    if (next.length > charLimit) {
+      return {
+        ok: false,
+        error: 'core_memory_full',
+        used: current.length,
+        char_limit: charLimit,
+      };
+    }
 
-  upsertContent(db, input.scope, namespace, next);
-  return { ok: true, content: next, used: next.length, char_limit: charLimit };
+    upsertContent(db, input.scope, namespace, next);
+    return { ok: true, content: next, used: next.length, char_limit: charLimit };
+  });
+  return append.immediate();
 }
 
 /**
@@ -145,27 +154,31 @@ export function handleCoreMemoryReplace(
   input: { scope: MemoryScope; namespace?: string; old_text: string; new_text: string },
 ): CoreMemoryReplaceResult {
   const namespace = ns(input.namespace);
-  const row = readRow(db, input.scope, namespace);
-  const current = row?.content ?? '';
-  const charLimit = row?.char_limit ?? DEFAULT_CHAR_LIMIT;
+  // battle-v9 CLASS 3: atomic read-modify-write (see handleCoreMemoryAppend).
+  const replace = db.transaction((): CoreMemoryReplaceResult => {
+    const row = readRow(db, input.scope, namespace);
+    const current = row?.content ?? '';
+    const charLimit = row?.char_limit ?? DEFAULT_CHAR_LIMIT;
 
-  const idx = current.indexOf(input.old_text);
-  if (idx === -1) {
-    return { ok: false, error: 'not_found' };
-  }
+    const idx = current.indexOf(input.old_text);
+    if (idx === -1) {
+      return { ok: false, error: 'not_found' };
+    }
 
-  const next =
-    current.slice(0, idx) + input.new_text + current.slice(idx + input.old_text.length);
+    const next =
+      current.slice(0, idx) + input.new_text + current.slice(idx + input.old_text.length);
 
-  if (next.length > charLimit) {
-    return {
-      ok: false,
-      error: 'core_memory_full',
-      used: current.length,
-      char_limit: charLimit,
-    };
-  }
+    if (next.length > charLimit) {
+      return {
+        ok: false,
+        error: 'core_memory_full',
+        used: current.length,
+        char_limit: charLimit,
+      };
+    }
 
-  upsertContent(db, input.scope, namespace, next);
-  return { ok: true, content: next, used: next.length };
+    upsertContent(db, input.scope, namespace, next);
+    return { ok: true, content: next, used: next.length };
+  });
+  return replace.immediate();
 }

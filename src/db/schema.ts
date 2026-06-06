@@ -4,7 +4,7 @@ import type Database from 'better-sqlite3';
  * The current schema version baked into this codebase. Updated together with
  * a new entry in `runMigrations`.
  */
-export const CURRENT_SCHEMA_VERSION = 11;
+export const CURRENT_SCHEMA_VERSION = 12;
 
 /**
  * Persistent memory-to-memory edge store (Pillar 1). Edges carry a confidence
@@ -262,6 +262,13 @@ export function initializeSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_memories_access_count ON memories(access_count);
     CREATE INDEX IF NOT EXISTS idx_memories_superseded ON memories(superseded_at);
     CREATE INDEX IF NOT EXISTS idx_memories_condensation ON memories(condensation_level, importance_score, access_count);
+    -- battle-v9 CLASS 3: at most ONE live session-note memory per source. The
+    -- partial UNIQUE index is the cross-process backstop that stops two
+    -- concurrent memory_session_note CREATEs from inserting duplicate session
+    -- memories (the app then catches the UNIQUE error and appends instead).
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_session_source_live ON memories(source)
+      WHERE document_type = 'session' AND parent_id IS NULL
+        AND valid_to IS NULL AND tx_expired IS NULL;
 
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
       title,

@@ -9,7 +9,11 @@ import { clearRevalidation } from '../graph/propagate.js';
 export async function handleUpdate(
   db: Database.Database,
   embedder: EmbeddingProvider,
-  input: MemoryUpdate & { id: string },
+  // battle-v9 CLASS 3: expected_version is an optional optimistic-concurrency
+  // guard (see updateMemory) — used by memory_session_note's read-merge-append to
+  // avoid a lost write when two processes append to the same session note. Not
+  // exposed on the public memory_update schema; default behaviour is unchanged.
+  input: MemoryUpdate & { id: string; expected_version?: number },
 ): Promise<Memory | null> {
   // Read existing OUTSIDE any transaction so we can take an async embed call
   // without holding a write lock. The actual update is then done inside a
@@ -60,9 +64,11 @@ export async function handleUpdate(
   // updateMemory itself wraps in db.transaction — so the version-log insert
   // and the row update are atomic. If the row was deleted between our read
   // and this call, updateMemory returns null and we surface that to caller.
-  const updatedRow = updateMemory(db, input.id, updates, newEmbedding);
-  /* c8 ignore next 3 */
+  const updatedRow = updateMemory(db, input.id, updates, newEmbedding, input.expected_version);
   if (!updatedRow) {
+    // Either the row was deleted between our read and this call, or (when
+    // expected_version was supplied) a concurrent writer bumped the version
+    // first — a CAS miss the caller handles by re-reading and retrying.
     return null;
   }
 

@@ -140,63 +140,72 @@ export async function handleSessionState(
   };
   const content = renderContent(meta);
   const now = new Date().toISOString();
-  const existing = findRow(db, scope, namespace, key);
 
-  if (existing) {
-    const embedding = await embedder.embed(
-      contextualizeForEmbedding(content, {
-        title: `Session: ${key}`,
-        document_type: 'session-state',
-        namespace,
-      }),
-    );
-    const updated = updateMemory(
-      db,
-      existing.id,
-      { content, metadata: JSON.stringify(meta) },
-      embedding,
-    );
-    const newVersion = updated?.version ?? existing.version;
-    return {
-      action: 'save',
-      saved: true,
-      unchanged: newVersion === existing.version,
-      session_key: key,
-      memory_id: existing.id,
-      version: newVersion,
-    };
-  }
-
+  // battle-v9 CLASS 3: `content` is fully determined by `input` (a full replace,
+  // not an append), so embed BEFORE opening the txn and make the find→(update|
+  // insert) decision atomic under BEGIN IMMEDIATE. Without this, two concurrent
+  // first-saves for the same session_key both see existing=null and each insert
+  // a duplicate session-state row. The re-check inside the lock routes a raced
+  // create to the update branch.
   const embedding = await embedder.embed(
-    contextualizeForEmbedding(content, { title: `Session: ${key}`, document_type: 'session-state', namespace }),
+    contextualizeForEmbedding(content, {
+      title: `Session: ${key}`,
+      document_type: 'session-state',
+      namespace,
+    }),
   );
-  const row: MemoryRow = {
-    id: randomUUID(),
-    scope,
-    namespace,
-    title: `Session: ${key}`,
-    content,
-    document_type: 'session-state',
-    source: null,
-    author: null,
-    department: null,
-    tags: null,
-    access_level: 'private',
-    language: 'en',
-    metadata: JSON.stringify(meta),
-    parent_id: null,
-    chunk_index: null,
-    version: 1,
-    created_at: now,
-    updated_at: now,
-    expires_at: null,
-    access_count: 0,
-    last_accessed_at: null,
-    importance_score: 0.7,
-    confidence_score: 0.7,
-    stability: 1.0,
-    agent_id: process.env.MCP_AGENT_ID ?? null,
-  };
-  insertMemory(db, row, embedding);
-  return { action: 'save', saved: true, session_key: key, memory_id: row.id, version: 1 };
+
+  const save = db
+    .transaction((): SessionStateResult => {
+      const existing = findRow(db, scope, namespace, key);
+      if (existing) {
+        const updated = updateMemory(
+          db,
+          existing.id,
+          { content, metadata: JSON.stringify(meta) },
+          embedding,
+        );
+        const newVersion = updated?.version ?? existing.version;
+        return {
+          action: 'save',
+          saved: true,
+          unchanged: newVersion === existing.version,
+          session_key: key,
+          memory_id: existing.id,
+          version: newVersion,
+        };
+      }
+
+      const row: MemoryRow = {
+        id: randomUUID(),
+        scope,
+        namespace,
+        title: `Session: ${key}`,
+        content,
+        document_type: 'session-state',
+        source: null,
+        author: null,
+        department: null,
+        tags: null,
+        access_level: 'private',
+        language: 'en',
+        metadata: JSON.stringify(meta),
+        parent_id: null,
+        chunk_index: null,
+        version: 1,
+        created_at: now,
+        updated_at: now,
+        expires_at: null,
+        access_count: 0,
+        last_accessed_at: null,
+        importance_score: 0.7,
+        confidence_score: 0.7,
+        stability: 1.0,
+        agent_id: process.env.MCP_AGENT_ID ?? null,
+      };
+      insertMemory(db, row, embedding);
+      return { action: 'save', saved: true, session_key: key, memory_id: row.id, version: 1 };
+    })
+    .immediate();
+  return save;
 }
