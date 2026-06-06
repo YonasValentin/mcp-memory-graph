@@ -27,16 +27,20 @@ afterEach(() => {
 /** Seed a shared-DB two-tenant graph: both projects mention 'Redis' + 'Kafka',
  *  each heavily so their global mention_count would differ. */
 async function seedTwoTenants() {
-  // projA: Redis mentioned via 1 memory.
+  // Each tenant runs a per-tenant FORCED server, so entities land in the tenant's
+  // namespace (G5: the graph partition is the forced namespace). projA: Redis via
+  // 1 memory; projB: Redis + Kafka via 3 (higher local volume in its own graph).
+  process.env.MCP_API_NAMESPACE = 'projA';
   await handleStore(db, embedder, {
     title: 'a1', content: 'We use Redis and Kafka in projA.', scope: 'project', namespace: 'projA',
   });
-  // projB: Redis + Kafka mentioned via 3 memories (higher global volume).
+  process.env.MCP_API_NAMESPACE = 'projB';
   for (let i = 0; i < 3; i++) {
     await handleStore(db, embedder, {
       title: `b${i}`, content: 'Redis and Kafka power projB heavily.', scope: 'project', namespace: 'projB',
     });
   }
+  delete process.env.MCP_API_NAMESPACE;
 }
 
 describe('v14 read-path isolation — handleGraph under a forced namespace', () => {

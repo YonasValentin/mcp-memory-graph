@@ -6,6 +6,7 @@ import { computeContentSignal } from '../search/content-signals.js';
 import { extractEntitiesRegex } from '../graph/entity-extractor.js';
 import { storeExtractedEntities, weaveGraphEdges } from '../graph/entity-store.js';
 import { detectConflicts, recordConflicts, type ConflictResult } from '../graph/conflict-resolver.js';
+import { forcedNamespace } from '../lib/tenancy.js';
 import { detectContradictions, type NliClassifier } from '../graph/contradiction.js';
 import { buildSimilarityEdges } from '../graph/similarity-edges.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
@@ -335,11 +336,15 @@ export async function handleStore(
     try {
       const entities = extractEntitiesRegex(input.content);
       if (entities.length > 0) {
-        // v14: the extracted graph inherits the owning memory's partition so it
-        // is tenant-local (and, under a forced namespace, carries the forced ns).
+        // v14 (battle-v14 G5): the entity graph is partitioned by the TENANT
+        // boundary = namespace only. The partition namespace is the forced tenant
+        // (multi-tenant) or '' (single-user shared graph) — NOT the memory's own
+        // namespace, so one user's global + per-project memories keep sharing one
+        // concept row (cross-project bridge) exactly as pre-v14. Scope is stamped
+        // informationally; it never partitions identity.
         storeExtractedEntities(db, row.id, entities, 'regex', {
           scope: row.scope,
-          namespace: row.namespace ?? '',
+          namespace: forcedNamespace() ?? '',
         });
       }
     } catch (err) /* c8 ignore start */ {

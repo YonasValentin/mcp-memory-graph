@@ -368,9 +368,12 @@ export function initializeSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_entities_normalized ON entities(normalized_name);
     CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type);
     CREATE INDEX IF NOT EXISTS idx_entities_mention_count ON entities(mention_count DESC);
+    -- v14 (battle-v14 G5): identity is per (normalized_name, namespace) — the
+    -- tenant boundary. Scope is informational, never part of identity (it would
+    -- fragment a single user's graph across global/project/user scopes).
     CREATE UNIQUE INDEX IF NOT EXISTS idx_entities_identity
-      ON entities(normalized_name, scope, namespace);
-    CREATE INDEX IF NOT EXISTS idx_entities_partition ON entities(scope, namespace);
+      ON entities(normalized_name, namespace);
+    CREATE INDEX IF NOT EXISTS idx_entities_partition ON entities(namespace);
 
     CREATE TABLE IF NOT EXISTS entity_aliases (
       id TEXT PRIMARY KEY NOT NULL,
@@ -382,9 +385,10 @@ export function initializeSchema(db: Database.Database): void {
       namespace TEXT NOT NULL DEFAULT ''
     );
     CREATE INDEX IF NOT EXISTS idx_alias_entity ON entity_aliases(entity_id);
-    -- v14: alias uniqueness is per-tenant — two tenants may both alias 'pg'→PostgreSQL.
+    -- v14: alias uniqueness is per-tenant (namespace) — two tenants may both
+    -- alias 'pg'→PostgreSQL; within one tenant an alias resolves to one entity.
     CREATE UNIQUE INDEX IF NOT EXISTS idx_alias_normalized
-      ON entity_aliases(normalized_alias, scope, namespace);
+      ON entity_aliases(normalized_alias, namespace);
 
     CREATE TABLE IF NOT EXISTS entity_relationships (
       id TEXT PRIMARY KEY NOT NULL,

@@ -7,6 +7,7 @@ import {
   normalizeName,
 } from '../graph/entity-store.js';
 import type { ENTITY_TYPES } from '../constants/enums.js';
+import { forcedNamespace } from '../lib/tenancy.js';
 
 interface EntityInput {
   name: string;
@@ -49,27 +50,25 @@ export function handleExtractEntities(
   const nameToEntityId = new Map<string, string>();
 
   const process = db.transaction(() => {
-    // v14: the graph this tool writes inherits the owning memory's partition, so
-    // it is tenant-local (and under a forced namespace carries the forced ns).
-    // The tool is guarded by idInForcedNs(memory_id) upstream, so a forced caller
-    // can only target its own memory. namespace NULL → '' sentinel.
+    // v14 (battle-v14 G5): the graph is partitioned by NAMESPACE only — the
+    // forced tenant, or '' for the single-user shared graph — NEVER the owning
+    // memory's own scope/namespace (which would fragment the graph and diverge
+    // from handleStore's write path). The tool is guarded by idInForcedNs upstream.
     const owner = db
-      .prepare<[string], { scope: string; namespace: string | null }>(
-        'SELECT scope, namespace FROM memories WHERE id = ?',
-      )
+      .prepare<[string], { scope: string }>('SELECT scope FROM memories WHERE id = ?')
       .get(input.memory_id);
     const partition = {
-      scope: owner?.scope ?? 'global',
-      namespace: owner?.namespace ?? '',
+      scope: owner?.scope ?? 'global', // informational only
+      namespace: forcedNamespace() ?? '',
     };
 
     // Process entities
     for (const entity of input.entities) {
       const existing = db
-        .prepare<[string, string, string, string], { id: string }>(
-          'SELECT id FROM entities WHERE normalized_name = ? AND type = ? AND scope = ? AND namespace = ?',
+        .prepare<[string, string], { id: string }>(
+          'SELECT id FROM entities WHERE normalized_name = ? AND namespace = ?',
         )
-        .get(normalizeName(entity.name), entity.type, partition.scope, partition.namespace);
+        .get(normalizeName(entity.name), partition.namespace);
 
       const entityId = findOrCreateEntity(db, entity.name, entity.type, partition);
       nameToEntityId.set(entity.name.toLowerCase(), entityId);

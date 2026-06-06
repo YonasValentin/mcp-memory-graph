@@ -7,6 +7,7 @@ import { contextualizeForEmbedding } from '../search/contextual.js';
 import { computeContentSignal } from '../search/content-signals.js';
 import { extractEntitiesRegex } from '../graph/entity-extractor.js';
 import { storeExtractedEntities } from '../graph/entity-store.js';
+import { forcedNamespace } from '../lib/tenancy.js';
 import { buildSimilarityEdges } from '../graph/similarity-edges.js';
 import { parseMemoryFile, type ParsedMemoryFile } from './memory-file.js';
 import { loadGraphSidecar, restoreLinksFromSidecar } from './sidecar.js';
@@ -182,12 +183,13 @@ export async function rebuildFromVault(
 
     try {
       const entities = extractEntitiesRegex(parsed.content);
-      // v14: rebuilt-from-vault entities inherit the note's partition (the same
-      // (scope, namespace) the row is restored under) so the graph stays scoped.
+      // v14 (battle-v14 G5): entities are partitioned by the TENANT boundary —
+      // the forced namespace, or '' for a single-user shared graph — never by the
+      // note's own scope/namespace (which would fragment the user's graph).
       if (entities.length > 0)
         storeExtractedEntities(db, parsed.id, entities, 'regex', {
           scope: row.scope,
-          namespace: row.namespace ?? '',
+          namespace: forcedNamespace() ?? '',
         });
     } catch (err) /* c8 ignore start */ {
       // Entity extraction is non-critical — one bad file never aborts a rebuild.

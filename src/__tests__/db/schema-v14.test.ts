@@ -67,26 +67,25 @@ describe('schema v14 — graph-table tenancy columns', () => {
     });
   }
 
-  it('entities has a UNIQUE identity index on (normalized_name, scope, namespace)', () => {
-    // find a unique index whose columns are exactly that triple
+  it('entities has a UNIQUE identity index on (normalized_name, namespace) — namespace is the only tenant key', () => {
     const match = indexNames('entities').some((idx) => {
       const cols = indexColumns(idx);
+      // identity is per (normalized_name, namespace); scope must NOT be part of it
+      // (it would fragment a single user's graph across scopes — battle-v14 G5).
       return (
-        cols.includes('normalized_name') &&
-        cols.includes('scope') &&
-        cols.includes('namespace')
+        cols.length === 2 && cols.includes('normalized_name') && cols.includes('namespace')
       );
     });
-    expect(match, 'no (normalized_name, scope, namespace) index on entities').toBe(true);
+    expect(match, 'no (normalized_name, namespace) identity index on entities').toBe(true);
   });
 
-  it('entity_aliases UNIQUE index includes scope + namespace (two tenants may share an alias)', () => {
+  it('entity_aliases UNIQUE index is per (normalized_alias, namespace) (two tenants may share an alias)', () => {
     const match = indexNames('entity_aliases').some((idx) => {
       const cols = indexColumns(idx);
       return (
-        cols.includes('normalized_alias') && cols.includes('scope') && cols.includes('namespace')
+        cols.length === 2 && cols.includes('normalized_alias') && cols.includes('namespace')
       );
     });
-    expect(match, 'alias unique index not partitioned by scope/namespace').toBe(true);
+    expect(match, 'alias unique index not partitioned by namespace only').toBe(true);
   });
 });

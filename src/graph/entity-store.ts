@@ -103,14 +103,15 @@ export function findOrCreateEntity(
 ): string {
   const normalized = normalizeName(name);
 
-  // v14: identity is per (normalized_name, scope, namespace). The same concept
-  // name in another tenant is a distinct row, so this lookup — and the
-  // mention_count it bumps — is naturally tenant-local.
+  // v14 (battle-v14 G5): identity is per (normalized_name, NAMESPACE) — the
+  // tenant boundary. Scope never partitions (it would fragment a single user's
+  // graph across global/project/user). The same concept in another tenant is a
+  // distinct row; within one partition the mention_count it bumps is tenant-local.
   const existing = db
-    .prepare<[string, string, string], { id: string }>(
-      'SELECT id FROM entities WHERE normalized_name = ? AND scope = ? AND namespace = ?',
+    .prepare<[string, string], { id: string }>(
+      'SELECT id FROM entities WHERE normalized_name = ? AND namespace = ?',
     )
-    .get(normalized, partition.scope, partition.namespace);
+    .get(normalized, partition.namespace);
 
   if (existing) {
     // LLM-provided types ('person','project','tool','organization') are more specific

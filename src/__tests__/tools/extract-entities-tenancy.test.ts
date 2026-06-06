@@ -3,7 +3,7 @@
  * partition onto entities, relationships, AND aliases, so two tenants may both
  * register the same alias and neither sees the other's graph.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type Database from 'better-sqlite3';
 import { createTestDb } from '../../testing/test-db.js';
 import { insertMemory } from '../../db/repository.js';
@@ -33,7 +33,11 @@ function row(id: string, over: Partial<MemoryRow> = {}): MemoryRow {
 }
 
 describe('v14 — handleExtractEntities stamps partition on entity + alias', () => {
-  it('entities, relationships and aliases carry the owning memory partition', () => {
+  afterEach(() => {
+    delete process.env.MCP_API_NAMESPACE;
+  });
+
+  it('SINGLE-USER (unforced): entities/aliases land in the shared partition', () => {
     insertMemory(db, row('m', { scope: 'project', namespace: 'projA' }), unit());
     handleExtractEntities(db, {
       memory_id: 'm',
@@ -43,26 +47,24 @@ describe('v14 — handleExtractEntities stamps partition on entity + alias', () 
       ],
       relationships: [{ source: 'PostgreSQL', target: 'Acme', type: 'used_by' as never }],
     });
-    const es = db.prepare('SELECT DISTINCT scope, namespace FROM entities').all() as Array<{
-      scope: string;
-      namespace: string;
-    }>;
-    for (const e of es) expect(e).toEqual({ scope: 'project', namespace: 'projA' });
-
-    const al = db.prepare("SELECT scope, namespace FROM entity_aliases WHERE normalized_alias = 'pg'").get() as {
-      scope: string;
+    // G5: the graph partition is the forced namespace or '' — not the memory's ns.
+    const es = db.prepare('SELECT DISTINCT namespace FROM entities').all() as Array<{ namespace: string }>;
+    for (const e of es) expect(e.namespace).toBe('');
+    const al = db.prepare("SELECT namespace FROM entity_aliases WHERE normalized_alias = 'pg'").get() as {
       namespace: string;
     };
-    expect(al).toEqual({ scope: 'project', namespace: 'projA' });
+    expect(al.namespace).toBe('');
   });
 
-  it('two tenants may both register the same alias (unique is per-partition)', () => {
-    insertMemory(db, row('mA', { scope: 'project', namespace: 'projA' }), unit(0));
-    insertMemory(db, row('mB', { scope: 'project', namespace: 'projB' }), unit(1));
+  it('MULTI-TENANT (forced): two tenants may both register the same alias (per-namespace unique)', () => {
+    insertMemory(db, row('mA', { scope: 'project', namespace: 'tenant-a' }), unit(0));
+    insertMemory(db, row('mB', { scope: 'project', namespace: 'tenant-b' }), unit(1));
+    process.env.MCP_API_NAMESPACE = 'tenant-a';
     const ra = handleExtractEntities(db, {
       memory_id: 'mA',
       entities: [{ name: 'PostgreSQL', type: 'tool', aliases: ['pg'] }],
     });
+    process.env.MCP_API_NAMESPACE = 'tenant-b';
     const rb = handleExtractEntities(db, {
       memory_id: 'mB',
       entities: [{ name: 'PostgreSQL', type: 'tool', aliases: ['pg'] }],
@@ -73,5 +75,9 @@ describe('v14 — handleExtractEntities stamps partition on entity + alias', () 
       c: number;
     };
     expect(count.c).toBe(2);
+    const ns = db
+      .prepare("SELECT namespace FROM entity_aliases WHERE normalized_alias = 'pg' ORDER BY namespace")
+      .all() as Array<{ namespace: string }>;
+    expect(ns.map((r) => r.namespace)).toEqual(['tenant-a', 'tenant-b']);
   });
 });

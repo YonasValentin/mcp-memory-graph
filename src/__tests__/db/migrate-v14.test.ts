@@ -109,7 +109,7 @@ describe('migrate v14 — graph tenancy backfill', () => {
     expect(c.namespace).toBe('projA');
   });
 
-  it('rebuilds the alias unique index to include scope + namespace', () => {
+  it('rebuilds the alias unique index to (normalized_alias, namespace)', () => {
     const db = v13Db();
     migrateDatabase(db);
     const idxList = db.prepare('PRAGMA index_list(entity_aliases)').all() as Array<{ name: string }>;
@@ -117,7 +117,7 @@ describe('migrate v14 — graph tenancy backfill', () => {
       const c = (db.prepare(`PRAGMA index_info(${i.name})`).all() as Array<{ name: string }>).map(
         (r) => r.name,
       );
-      return c.includes('normalized_alias') && c.includes('scope') && c.includes('namespace');
+      return c.length === 2 && c.includes('normalized_alias') && c.includes('namespace');
     });
     expect(composite).toBe(true);
   });
@@ -137,12 +137,12 @@ describe('migrate v14 — graph tenancy backfill', () => {
     expect(v.value).toBe('14');
   });
 
-  it('splits a pre-v14 SHARED entity cross-linked to multiple tenants into per-namespace rows', () => {
-    // Pre-v14 findOrCreateEntity dedups by name only, so a concept mentioned by
-    // two tenants is ONE global entity cross-linked (via memory_entities) to both
-    // tenants' memories. After migration each tenant must own a SEPARATE entity
-    // row in its own namespace (matching fresh-v14 write identity) so a forced
-    // tenant's graph/communities never reads the shared row's name.
+  it('a migrated pre-v14 shared entity collapses into the single shared partition (no fragmentation)', () => {
+    // battle-v14 G5: the entity graph is partitioned by NAMESPACE only and a
+    // MIGRATED graph collapses to the shared '' partition. A single user keeps ONE
+    // 'redis' row (the cross-project bridge, mention_count intact); a forced tenant
+    // simply never sees the '' pool (its reads filter namespace=forced) and
+    // rebuilds its own graph on fresh writes. No per-namespace split/clones.
     const db = v13Db();
     db.exec(`
       INSERT INTO entities (id, name, normalized_name, type, mention_count)
@@ -151,16 +151,15 @@ describe('migrate v14 — graph tenancy backfill', () => {
         ('mA1','e-shared'), ('mB1','e-shared');
     `);
     migrateDatabase(db);
-    // 'redis' now exists once per owning namespace (projA and projB).
     const rows = db
-      .prepare("SELECT scope, namespace FROM entities WHERE normalized_name = 'redis' ORDER BY namespace")
-      .all() as Array<{ scope: string; namespace: string }>;
-    expect(rows.map((r) => r.namespace).sort()).toEqual(['projA', 'projB']);
-    // Each memory_entities row points at the entity in ITS OWN namespace.
-    const aEnt = db.prepare("SELECT e.namespace FROM memory_entities me JOIN entities e ON e.id = me.entity_id WHERE me.memory_id = 'mA1'").get() as { namespace: string };
-    const bEnt = db.prepare("SELECT e.namespace FROM memory_entities me JOIN entities e ON e.id = me.entity_id WHERE me.memory_id = 'mB1'").get() as { namespace: string };
-    expect(aEnt.namespace).toBe('projA');
-    expect(bEnt.namespace).toBe('projB');
+      .prepare("SELECT namespace, mention_count FROM entities WHERE normalized_name = 'redis'")
+      .all() as Array<{ namespace: string; mention_count: number }>;
+    expect(rows.length).toBe(1); // ONE row — not fragmented per memory namespace
+    expect(rows[0].namespace).toBe(''); // the shared partition
+    expect(rows[0].mention_count).toBe(5); // preserved, not duplicated
+    // Both memories still link to the one entity (the bridge).
+    const links = db.prepare("SELECT COUNT(*) c FROM memory_entities WHERE entity_id = 'e-shared'").get() as { c: number };
+    expect(links.c).toBe(2);
   });
 
   it('dedupes pre-existing duplicate normalized_name/alias rows so the new UNIQUE index can build', () => {
