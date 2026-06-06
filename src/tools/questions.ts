@@ -121,28 +121,56 @@ export function handleQuestions(
     // mention_count semantics and the 0-live-link surfacing are unchanged.
     const f = scopeFilter('m', input); // linked subquery (alias m)
     const scoped = input.namespace !== undefined || input.scope !== undefined;
-    const h = scopeFilter('m2', input); // tenant-membership gate (alias m2)
-    const gate = scoped
-      ? `AND EXISTS (SELECT 1 FROM memory_entities me2
-                       JOIN memories m2 ON m2.id = me2.memory_id
-                      WHERE me2.entity_id = e.id${h.sql})`
-      : '';
-    const rows = db
-      .prepare<unknown[], { name: string; mention_count: number; linked: number }>(
-        `SELECT e.name AS name, e.mention_count AS mention_count,
-                (SELECT COUNT(DISTINCT m.id)
-                   FROM memory_entities me
-                   JOIN memories m ON m.id = me.memory_id
-                  WHERE me.entity_id = e.id
-                    AND ${live('m')}${f.sql}) AS linked
-           FROM entities e
-          WHERE e.mention_count >= ${MIN_MENTIONS}
-          ${gate}
-          GROUP BY e.id
-         HAVING linked <= ${MAX_LINKED_MEMORIES}
-          ORDER BY e.name`,
-      )
-      .all(...f.params, ...(scoped ? h.params : []));
+    let rows: Array<{ name: string; mention_count: number; linked: number }>;
+    if (scoped) {
+      // battle-v9 rebattle-3 (MED side-channel): emitting the GLOBAL e.mention_count
+      // in the evidence disclosed a foreign tenant's activity volume (e.g. tenant-a
+      // mentions redis once, evidence still said mention_count=10 because tenant-b
+      // mentioned it 9×). When scoped, count mentions over the CALLER'S OWN
+      // memories (live or retired) and threshold on THAT — so both the surfaced
+      // entity and its count are strictly the tenant's own footprint.
+      // NB: the alias MUST NOT be `mention_count` — that is a REAL column on
+      // `entities`, so HAVING would bind to the GLOBAL column (the leak) instead
+      // of this tenant-scoped subquery. Use a distinct name (`tenant_mentions`).
+      const t = scopeFilter('mt', input); // tenant mention count (alias mt)
+      rows = db
+        .prepare<unknown[], { name: string; tenant_mentions: number; linked: number }>(
+          `SELECT e.name AS name,
+                  (SELECT COUNT(DISTINCT mt.id)
+                     FROM memory_entities met
+                     JOIN memories mt ON mt.id = met.memory_id
+                    WHERE met.entity_id = e.id AND mt.parent_id IS NULL${t.sql}) AS tenant_mentions,
+                  (SELECT COUNT(DISTINCT m.id)
+                     FROM memory_entities me
+                     JOIN memories m ON m.id = me.memory_id
+                    WHERE me.entity_id = e.id
+                      AND ${live('m')}${f.sql}) AS linked
+             FROM entities e
+            GROUP BY e.id
+           HAVING tenant_mentions >= ${MIN_MENTIONS} AND linked <= ${MAX_LINKED_MEMORIES}
+            ORDER BY e.name`,
+        )
+        .all(...t.params, ...f.params)
+        .map((r) => ({ name: r.name, mention_count: r.tenant_mentions, linked: r.linked }));
+    } else {
+      // Unforced (single-tenant) path — unchanged: the global e.mention_count is
+      // the right "how often does this corpus reference X" signal.
+      rows = db
+        .prepare<unknown[], { name: string; mention_count: number; linked: number }>(
+          `SELECT e.name AS name, e.mention_count AS mention_count,
+                  (SELECT COUNT(DISTINCT m.id)
+                     FROM memory_entities me
+                     JOIN memories m ON m.id = me.memory_id
+                    WHERE me.entity_id = e.id
+                      AND ${live('m')}${f.sql}) AS linked
+             FROM entities e
+            WHERE e.mention_count >= ${MIN_MENTIONS}
+            GROUP BY e.id
+           HAVING linked <= ${MAX_LINKED_MEMORIES}
+            ORDER BY e.name`,
+        )
+        .all(...f.params);
+    }
     for (const r of rows) {
       questions.push({
         type: 'gap',

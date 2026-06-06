@@ -81,19 +81,28 @@ export function handleHealth(
   const aging90 = aging(90);
   const aging180 = aging(180);
 
-  // Conflicts are not scoped to (scope,namespace) — there is no scope column on
-  // memory_conflicts; report store-wide. A conflict whose OLD memory is already
-  // retired (valid_to/tx_expired set) was resolved by supersession even though
-  // resolved_at was never stamped, so exclude it — otherwise every applied
-  // supersede shows as 'unresolved' forever and health never returns to ok.
+  // battle-v9 rebattle-3 (HIGH cross-tenant leak): memory_conflicts has no scope
+  // column, but each conflict IS created within a namespace (the vec0 conflict
+  // scan is partitioned), so the count must be scoped via its OLD memory's
+  // (scope,namespace) — otherwise a forced-namespace tenant sees a FOREIGN
+  // tenant's unresolved-conflict count and its status flips to 'attention'. The
+  // OLD-memory join already exists; just apply the same scope filter to it. A
+  // conflict whose OLD memory is already retired (valid_to/tx_expired set) was
+  // resolved by supersession even though resolved_at was never stamped, so
+  // exclude it — otherwise every applied supersede shows 'unresolved' forever.
+  const cf = scopeClause('o', input);
   const unresolved = count(
     db,
     `SELECT COUNT(*) AS n FROM memory_conflicts c
        JOIN memories o ON o.id = c.old_memory_id
-      WHERE c.resolved_at IS NULL AND o.valid_to IS NULL AND o.tx_expired IS NULL`,
-    [],
+      WHERE c.resolved_at IS NULL AND o.valid_to IS NULL AND o.tx_expired IS NULL${cf.sql}`,
+    cf.params,
   );
 
+  // Webhook delivery health is a SINGLE global event bus (opt-in via
+  // MCP_WEBHOOKS; webhook_targets/deliveries carry no namespace dimension), so it
+  // is reported store-wide BY DESIGN — not a tenancy oversight. A multi-tenant
+  // deployment would not share one webhook bus across tenants.
   const targets = count(db, `SELECT COUNT(*) AS n FROM webhook_targets`, []);
   const circuitOpen = count(
     db,

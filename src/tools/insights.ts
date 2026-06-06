@@ -69,6 +69,13 @@ export function handleInsights(
   // ── 1. unresolved_conflict ──────────────────────────────────────────────────
   {
     const o = scopeFilter('o', input);
+    // battle-v9 rebattle-3: the conflict JOINs both the OLD (o) and NEW (n)
+    // memory, but only `o` was scope-filtered — so a conflict whose old side is
+    // in-tenant but new side is FOREIGN leaked the foreign memory's title/content
+    // verbatim in the insight string. Scope `n` too (same shared-table tenancy
+    // class as graph/communities/questions/health). The partitioned store path no
+    // longer creates cross-namespace conflicts, but legacy/imported rows can.
+    const n = scopeFilter('n', input);
     const rows = db
       .prepare<unknown[], { id: string; otype: string; oldl: string; newl: string }>(
         `SELECT c.id AS id, c.conflict_type AS otype,
@@ -78,10 +85,10 @@ export function handleInsights(
            JOIN memories o ON o.id = c.old_memory_id
            JOIN memories n ON n.id = c.new_memory_id
           WHERE c.resolved_at IS NULL
-            AND o.valid_to IS NULL AND o.tx_expired IS NULL${o.sql}
+            AND o.valid_to IS NULL AND o.tx_expired IS NULL${o.sql}${n.sql}
           ORDER BY c.id`,
       )
-      .all(...o.params);
+      .all(...o.params, ...n.params);
     for (const r of rows) {
       insights.push({
         type: 'unresolved_conflict',
