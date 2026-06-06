@@ -79,12 +79,17 @@ export async function findUnlinkedMentions(
     if (n.id === memoryId || explicitlyLinked.has(n.id)) continue;
 
     const row = db
-      .prepare<[number], import('../types.js').MemoryRow & { parent_id: string | null }>(
-        'SELECT * FROM memories WHERE rowid = ?',
-      )
+      .prepare<
+        [number],
+        import('../types.js').MemoryRow & { parent_id: string | null; superseded_at: string | null }
+      >('SELECT * FROM memories WHERE rowid = ?')
       .get(n.rowid);
-    // Top-level memories only — never surface a chunk of a document.
-    if (!row || row.parent_id !== null) continue;
+    // Top-level, non-superseded memories only — never surface a chunk of a
+    // document, nor a superseded fact (battle-v9 CLASS 4: findNearDuplicates
+    // filters valid_to/tx_expired but NOT superseded_at, so a superseded row
+    // could otherwise leak onto the unlinked-mentions surface — matches
+    // related.ts which already rejects superseded_at).
+    if (!row || row.parent_id !== null || row.superseded_at !== null) continue;
 
     const similarity = cosineSimFromL2(n.distance);
     if (similarity < opts.minSimilarity) continue;

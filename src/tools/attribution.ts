@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { liveConditions } from '../db/predicates.js';
 
 /**
  * Pillar 7 (T22): multi-agent / team attribution.
@@ -27,7 +28,10 @@ export function handleAttribution(
   db: Database.Database,
   input: { scope?: string; namespace?: string },
 ): AttributionResult {
-  const conditions: string[] = ['parent_id IS NULL', 'valid_to IS NULL', 'tx_expired IS NULL'];
+  // battle-v9 CLASS 4: use the single-source live predicate so a restored-but-
+  // still-superseded fact is NOT counted (the docstring promises retired facts
+  // are excluded; the hand-written list omitted superseded_at IS NULL).
+  const conditions: string[] = liveConditions({ excludeSuperseded: true, topLevelOnly: true });
   const params: unknown[] = [];
 
   if (input.scope !== undefined) {

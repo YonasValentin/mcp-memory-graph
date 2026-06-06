@@ -143,7 +143,7 @@ export async function handleRestore(
 ): Promise<{
   restored: boolean;
   message: string;
-  reason?: 'contradiction-retired';
+  reason?: 'contradiction-retired' | 'superseded-retired';
   reinstated?: boolean;
   uncondensed?: boolean;
 }> {
@@ -167,13 +167,26 @@ export async function handleRestore(
   // Snapshot the tombstone state before any mutation below.
   const wasTombstoned = tomb.valid_to !== null || tomb.tx_expired !== null;
 
-  // M2.8 refusal: a fact retired by the NLI write-gate as a CONTRADICTION is
-  // tombstoned (valid_to set) with superseded_at still NULL, and the gate
-  // records a `memory_conflicts` row of type 'contradicted'. Reinstating it
-  // would put a stale fact back next to its correction, so refuse up front —
-  // BEFORE any un-condense / un-tombstone mutation. We only refuse a tombstoned
-  // row (a live row has nothing to reinstate) and ignore RESOLVED conflict rows
-  // (historical audit, not an active retirement).
+  // Refusal: reinstating a fact that a NEWER fact already replaced would create
+  // double-truth (the stale fact live next to its correction/successor), so
+  // refuse up front — BEFORE any un-condense / un-tombstone mutation. Two retire
+  // shapes both qualify, and only on an actually-tombstoned row (a live row has
+  // nothing to reinstate):
+  //   (a) battle-v9 CLASS 4 — a SUPERSEDED retire (superseded_at set, e.g. the
+  //       heuristic supersede path): a successor exists in the supersession
+  //       chain, so it must be restored through that chain, never un-tombstoned
+  //       here. Refuse regardless of any memory_conflicts row.
+  //   (b) M2.8 — an NLI CONTRADICTION retire (superseded_at NULL + an unresolved
+  //       'contradicted' memory_conflicts row). RESOLVED conflict rows are
+  //       historical audit, not an active retirement, so they don't refuse.
+  if (wasTombstoned && tomb.superseded_at !== null) {
+    return {
+      restored: false,
+      reason: 'superseded-retired',
+      message:
+        'Refused: this fact was superseded by a newer fact. Reinstating it would place a stale fact next to its successor (double-truth). Restore the successor through its supersession chain, or store the intended fact fresh.',
+    };
+  }
   if (wasTombstoned && tomb.superseded_at === null) {
     const contradiction = db
       .prepare<[string], { count: number }>(
