@@ -124,11 +124,11 @@ describe('battle-v14 G4 — cross-namespace links/conflicts do not leak to a for
   });
 });
 
-describe('battle-v14 #2 — memory_import cannot claim/overwrite a foreign-namespace id under forcing', () => {
-  it("a forced tenant importing an item carrying a foreign id does NOT modify the foreign row", async () => {
+describe('battle-v14 #2 — memory_import: no foreign-id theft AND no existence oracle under forcing', () => {
+  it('a foreign-namespace id is never overwritten/claimed (no row theft)', async () => {
     insertMemory(db, row('victim', { namespace: 'tenant-b', content: 'tenant-b secret' }), unit(0));
     // tenant-a is pinned and tries to overwrite tenant-b's row by carrying its id.
-    const res = await handleImport(
+    await handleImport(
       db,
       embedder,
       { data: [{ id: 'victim', content: 'STOLEN by tenant-a' }], overwrite: true },
@@ -139,8 +139,45 @@ describe('battle-v14 #2 — memory_import cannot claim/overwrite a foreign-names
       .get('victim') as { content: string; namespace: string };
     expect(after.content).toBe('tenant-b secret'); // content untouched
     expect(after.namespace).toBe('tenant-b'); // NOT claimed into tenant-a
-    expect(res.imported).toBe(0); // nothing imported
-    expect(res.skipped).toBe(1); // foreign id skipped
+  });
+
+  it('a foreign id is reported IDENTICALLY to a brand-new id (no existence/ownership oracle)', async () => {
+    insertMemory(db, row('victim', { namespace: 'tenant-b', content: 'secret' }), unit(0));
+    const foreign = await handleImport(
+      db,
+      embedder,
+      { data: [{ id: 'victim', content: 'x' }], overwrite: true },
+      'tenant-a',
+    );
+    const fresh = await handleImport(
+      db,
+      embedder,
+      { data: [{ id: 'a-brand-new-id', content: 'y' }], overwrite: true },
+      'tenant-a',
+    );
+    // counts must be byte-identical so the tally can't disclose foreign ownership.
+    expect({ i: foreign.imported, s: foreign.skipped, e: foreign.errors }).toEqual({
+      i: fresh.imported,
+      s: fresh.skipped,
+      e: fresh.errors,
+    });
+    expect(foreign.imported).toBe(1);
+    expect(foreign.skipped).toBe(0);
+  });
+
+  it('a foreign-id import lands as a FRESH row in the forced namespace (new uuid, not the foreign id)', async () => {
+    insertMemory(db, row('victim', { namespace: 'tenant-b', content: 'secret' }), unit(0));
+    await handleImport(
+      db,
+      embedder,
+      { data: [{ id: 'victim', content: 'mine now' }], overwrite: true },
+      'tenant-a',
+    );
+    const mine = db
+      .prepare("SELECT id, namespace FROM memories WHERE content = 'mine now'")
+      .get() as { id: string; namespace: string };
+    expect(mine.namespace).toBe('tenant-a'); // imported into the forced tenant
+    expect(mine.id).not.toBe('victim'); // fresh uuid — the foreign id is NOT reused
   });
 
   it('a forced tenant CAN still re-import (overwrite) an id it OWNS', async () => {
