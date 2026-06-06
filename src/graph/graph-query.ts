@@ -219,10 +219,27 @@ export async function queryGraph(
   });
 
   // Filter to currently-valid memories (bi-temporal): skip retracted rows.
+  // battle-v9 rebattle-4 (HIGH cross-tenant CONTENT leak): the BFS walks the
+  // SHARED memory_links table (getOutgoingLinks/getBacklinks filter by id only),
+  // so a single cross-namespace link let a foreign tenant's title + content
+  // snippet cross the boundary into a namespace-forced query's rendered context.
+  // The seeds are partition-scoped (hybridSearch is), but walked neighbours are
+  // not — so gate every rendered node to the SAME partition the query is pinned
+  // to, mirroring hybrid's scope/namespace + scope!='user' privacy logic. A
+  // foreign node may still be TRAVERSED (for hop structure) but is never emitted.
+  const inQueryPartition = (row: MemoryRow): boolean => {
+    if (opts.scope) {
+      if (row.scope !== opts.scope) return false;
+    } else if (row.scope === 'user') {
+      return false; // unscoped query never surfaces private user-scoped rows
+    }
+    if (opts.namespace !== undefined && row.namespace !== opts.namespace) return false;
+    return true;
+  };
   const nodeRows: Array<{ row: MemoryRow; state: VisitState }> = [];
   for (const id of ordered) {
     const row = getMemoryById(db, id);
-    if (!row || !isCurrentlyValid(db, id)) continue;
+    if (!row || !isCurrentlyValid(db, id) || !inQueryPartition(row)) continue;
     const state = visited.get(id)!;
     nodeRows.push({ row, state });
   }

@@ -400,6 +400,42 @@ function summarizeFromCommunities(
     for (const r of rows) entityById.set(r.id, r);
   }
 
+  // battle-v9 rebattle-4 (MED side-channel): when namespace-forced, entities.
+  // mention_count is the GLOBAL cross-tenant counter — emitting it in top_entities
+  // discloses a foreign tenant's activity volume. Override with a tenant-local
+  // COUNT(DISTINCT memory) over the forced namespace's own live memories.
+  if (opts.namespace !== undefined) {
+    for (const batch of chunkIds(entityIds)) {
+      const placeholders = batch.map(() => '?').join(',');
+      const rows = db
+        .prepare<string[], { id: string; n: number }>(
+          `SELECT me.entity_id AS id, COUNT(DISTINCT me.memory_id) AS n
+             FROM memory_entities me
+             JOIN memories m ON m.id = me.memory_id
+            WHERE me.entity_id IN (${placeholders})
+              AND m.namespace = ?
+              AND m.parent_id IS NULL AND m.valid_to IS NULL
+              AND m.tx_expired IS NULL AND m.superseded_at IS NULL
+            GROUP BY me.entity_id`,
+        )
+        .all(...batch, opts.namespace);
+      const seen = new Set<string>();
+      for (const r of rows) {
+        const e = entityById.get(r.id);
+        if (e) e.mention_count = r.n;
+        seen.add(r.id);
+      }
+      // An entity with no in-namespace witness gets a 0 local count (not the
+      // global value) so nothing foreign leaks through the count either.
+      for (const id of batch) {
+        if (!seen.has(id)) {
+          const e = entityById.get(id);
+          if (e) e.mention_count = 0;
+        }
+      }
+    }
+  }
+
   // Memories linked to any clustered entity → maps entity to its memories.
   const memoriesByEntity = new Map<string, string[]>();
   for (const batch of chunkIds(entityIds)) {

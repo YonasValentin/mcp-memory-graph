@@ -130,22 +130,33 @@ export function handleGraph(
   // memory in the forced namespace (an entity with no in-tenant memory is
   // dropped). The memory join below additionally filters m.namespace so a shared
   // entity cannot bridge to a foreign memory.
+  // battle-v9 rebattle-4 (MED side-channel): when forced, also override each
+  // entity's mention_count with the TENANT-LOCAL count. The global
+  // entities.mention_count discloses a foreign tenant's activity volume (e.g. an
+  // entity the tenant touched once but another tenant touched 50×). Compute a
+  // per-entity COUNT(DISTINCT memory) over the forced tenant's own live memories.
+  const scopedMentions = new Map<string, number>();
   if (forcedNamespace) {
     const live = liveConditions({ excludeSuperseded: true, topLevelOnly: true })
       .map((c) => `m.${c}`)
       .join(' AND ');
-    const allowed = new Set(
-      db
-        .prepare<[string], { id: string }>(
-          `SELECT DISTINCT me.entity_id AS id
-             FROM memory_entities me
-             JOIN memories m ON m.id = me.memory_id
-            WHERE m.namespace = ? AND ${live}`,
-        )
-        .all(forcedNamespace)
-        .map((r) => r.id),
-    );
-    entityRows = entityRows.filter((e) => allowed.has(e.id));
+    for (const r of db
+      .prepare<[string], { id: string; n: number }>(
+        `SELECT me.entity_id AS id, COUNT(DISTINCT me.memory_id) AS n
+           FROM memory_entities me
+           JOIN memories m ON m.id = me.memory_id
+          WHERE m.namespace = ? AND ${live}
+          GROUP BY me.entity_id`,
+      )
+      .all(forcedNamespace)) {
+      scopedMentions.set(r.id, r.n);
+    }
+    // Drop entities with no in-tenant witness, then override the count + re-rank
+    // by the tenant-local count (the global ORDER BY/LIMIT above is now stale).
+    entityRows = entityRows
+      .filter((e) => scopedMentions.has(e.id))
+      .map((e) => ({ ...e, mention_count: scopedMentions.get(e.id) ?? 0 }))
+      .sort((a, b) => b.mention_count - a.mention_count);
   }
 
   if (entityRows.length === 0) {

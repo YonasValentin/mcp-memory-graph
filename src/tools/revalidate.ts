@@ -36,7 +36,24 @@ export function handleRevalidate(db: Database.Database, input: RevalidateInput):
   if (action === 'preview') {
     if (!input.id) throw new Error('memory_revalidate action=preview requires an id');
     const blast = computeBlastRadius(db, input.id);
-    return { action, blast_radius: blast, count: blast.length };
+    // battle-v9 rebattle-4 (LOW cross-tenant id enumeration): computeBlastRadius
+    // walks the shared memory_links graph (a cross-namespace derived_from IS a
+    // real dependency the WRITE path must still flag), but this READ surface must
+    // not RETURN foreign dependent ids. When forced (input.namespace/scope set by
+    // withForcedNs), drop dependents whose memory is not in the caller's
+    // partition. The seed id is already ownership-guarded at the server.
+    let visible = blast;
+    if ((input.namespace !== undefined || input.scope !== undefined) && blast.length > 0) {
+      const conds: string[] = ['id = ?'];
+      const tail: unknown[] = [];
+      if (input.scope !== undefined) { conds.push('scope = ?'); tail.push(input.scope); }
+      if (input.namespace !== undefined) { conds.push('namespace = ?'); tail.push(input.namespace); }
+      const inPartition = db.prepare<unknown[], { id: string }>(
+        `SELECT id FROM memories WHERE ${conds.join(' AND ')}`,
+      );
+      visible = blast.filter((n) => inPartition.get(n.id, ...tail) !== undefined);
+    }
+    return { action, blast_radius: visible, count: visible.length };
   }
 
   if (action === 'confirm') {

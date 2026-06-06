@@ -112,24 +112,47 @@ export async function hybridSearch(
         partParams.push(options.namespace);
       }
 
-      // battle-v9 rebattle-2 (retired-row starvation, LOW): vec0 retains
-      // retired/superseded rows (as_of) and they're dropped only at the final
-      // fetch — so with a fixed k=oversampleLimit, retired rows nearer than live
-      // ones starve vector recall (masked in hybrid by the keyword/PPR arms, but
-      // it fully bites search_mode='vector' / zero-keyword-overlap paraphrase
-      // recall). Inflate k by the partition's retired-row count so oversampleLimit
-      // LIVE rows still survive, clamped to vec0's hard k-ceiling (past which
-      // degradation is benign).
-      const retiredCount = (
+      // battle-v9 rebattle-2/4 (post-filter starvation): vec0 can only filter
+      // scope+namespace (its sole metadata columns), so EVERY other drop the
+      // final candidate fetch applies — retired/superseded rows AND the requested
+      // secondary filters (access_level/language/department/document_type/tags/
+      // date_from/date_to/expires_at) — happens AFTER the fixed-k vec0 window.
+      // With a plain k=oversampleLimit, a flood of nearer same-partition rows that
+      // pass scope+namespace but FAIL one of those filters fills the window and
+      // starves the matching row out → recall 0 (bites search_mode='vector' and
+      // single-user filtered search, not just multi-tenant). Inflate k by the
+      // count of in-partition rows that would NOT survive the post-filter
+      // (total − keepers), so oversampleLimit genuine keepers still fit. Clamped
+      // to vec0's hard k-ceiling (past which degradation is benign). The common
+      // unfiltered path: keepers≈total → excluded≈0 → vecK=oversampleLimit (no
+      // change, no bench impact).
+      const keepConds: string[] = [...partConds];
+      const keepParams: unknown[] = [...partParams];
+      keepConds.push('parent_id IS NULL', 'valid_to IS NULL', 'tx_expired IS NULL', 'superseded_at IS NULL');
+      if (options.department) { keepConds.push('department = ?'); keepParams.push(options.department); }
+      if (options.document_type) { keepConds.push('document_type = ?'); keepParams.push(options.document_type); }
+      if (options.access_level) { keepConds.push('access_level = ?'); keepParams.push(options.access_level); }
+      if (options.language) { keepConds.push('language = ?'); keepParams.push(options.language); }
+      if (options.tags && options.tags.length > 0) {
+        for (const tag of options.tags) { keepConds.push('tags LIKE ?'); keepParams.push(`%"${tag}"%`); }
+      }
+      if (options.date_from) { keepConds.push('created_at >= ?'); keepParams.push(options.date_from); }
+      if (options.date_to) { keepConds.push('created_at <= ?'); keepParams.push(options.date_to); }
+      keepConds.push(`(expires_at IS NULL OR expires_at > ${NOW_ISO_SQL})`);
+      const total =
         db
           .prepare<unknown[], { c: number }>(
-            `SELECT COUNT(*) AS c FROM memories
-             WHERE ${partConds.join(' AND ')}
-               AND (valid_to IS NOT NULL OR tx_expired IS NOT NULL OR superseded_at IS NOT NULL)`,
+            `SELECT COUNT(*) AS c FROM memories WHERE ${partConds.join(' AND ')} AND parent_id IS NULL`,
           )
-          .get(...partParams)?.c ?? 0
-      );
-      const vecK = Math.min(oversampleLimit + retiredCount, VEC0_MAX_K);
+          .get(...partParams)?.c ?? 0;
+      const keepers =
+        db
+          .prepare<unknown[], { c: number }>(
+            `SELECT COUNT(*) AS c FROM memories WHERE ${keepConds.join(' AND ')}`,
+          )
+          .get(...keepParams)?.c ?? 0;
+      const excluded = Math.max(0, total - keepers);
+      const vecK = Math.min(oversampleLimit + excluded, VEC0_MAX_K);
 
       const rows = db.prepare(
         `SELECT rowid, distance FROM memories_vec

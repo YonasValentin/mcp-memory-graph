@@ -124,23 +124,60 @@ export function handleInsights(
   // UNION ALL of old+new ids, grouped, gives an honest "how often disputed".
   {
     const f = scopeFilter('m', input);
-    const rows = db
-      .prepare<unknown[], { id: string; label: string; n: number }>(
-        `SELECT m.id AS id,
-                COALESCE(m.title, substr(m.content, 1, ${SNIPPET_LEN})) AS label,
-                cnt.n AS n
-           FROM (
-             SELECT mid, COUNT(*) AS n FROM (
-               SELECT old_memory_id AS mid FROM memory_conflicts
-               UNION ALL
-               SELECT new_memory_id AS mid FROM memory_conflicts
-             ) GROUP BY mid
-           ) cnt
-           JOIN memories m ON m.id = cnt.mid
-          WHERE cnt.n >= ${MIN_CONTRADICTIONS} AND ${live('m')}${f.sql}
-          ORDER BY cnt.n DESC, m.id`,
-      )
-      .all(...f.params);
+    const scoped = input.scope !== undefined || input.namespace !== undefined;
+    let rows: Array<{ id: string; label: string; n: number }>;
+    if (scoped) {
+      // battle-v9 rebattle-4 (MED side-channel): the conflict count scanned the
+      // WHOLE memory_conflicts table (no scope column), so a forced tenant saw a
+      // count inflated by FOREIGN conflicts (and a memory false-flagged as
+      // most_contradicted on foreign volume). Count only conflicts BOTH of whose
+      // sides are in the caller's partition — mirroring the questions
+      // tenant_mentions fix. Live store path no longer creates cross-namespace
+      // conflicts; legacy/imported rows can.
+      const co = scopeFilter('co', input);
+      const cn = scopeFilter('cn', input);
+      rows = db
+        .prepare<unknown[], { id: string; label: string; n: number }>(
+          `SELECT m.id AS id,
+                  COALESCE(m.title, substr(m.content, 1, ${SNIPPET_LEN})) AS label,
+                  cnt.n AS n
+             FROM (
+               SELECT mid, COUNT(*) AS n FROM (
+                 SELECT c.old_memory_id AS mid FROM memory_conflicts c
+                   JOIN memories co ON co.id = c.old_memory_id
+                   JOIN memories cn ON cn.id = c.new_memory_id
+                  WHERE 1=1${co.sql}${cn.sql}
+                 UNION ALL
+                 SELECT c.new_memory_id AS mid FROM memory_conflicts c
+                   JOIN memories co ON co.id = c.old_memory_id
+                   JOIN memories cn ON cn.id = c.new_memory_id
+                  WHERE 1=1${co.sql}${cn.sql}
+               ) GROUP BY mid
+             ) cnt
+             JOIN memories m ON m.id = cnt.mid
+            WHERE cnt.n >= ${MIN_CONTRADICTIONS} AND ${live('m')}${f.sql}
+            ORDER BY cnt.n DESC, m.id`,
+        )
+        .all(...co.params, ...cn.params, ...co.params, ...cn.params, ...f.params);
+    } else {
+      rows = db
+        .prepare<unknown[], { id: string; label: string; n: number }>(
+          `SELECT m.id AS id,
+                  COALESCE(m.title, substr(m.content, 1, ${SNIPPET_LEN})) AS label,
+                  cnt.n AS n
+             FROM (
+               SELECT mid, COUNT(*) AS n FROM (
+                 SELECT old_memory_id AS mid FROM memory_conflicts
+                 UNION ALL
+                 SELECT new_memory_id AS mid FROM memory_conflicts
+               ) GROUP BY mid
+             ) cnt
+             JOIN memories m ON m.id = cnt.mid
+            WHERE cnt.n >= ${MIN_CONTRADICTIONS} AND ${live('m')}${f.sql}
+            ORDER BY cnt.n DESC, m.id`,
+        )
+        .all(...f.params);
+    }
     for (const r of rows) {
       insights.push({
         type: 'most_contradicted',
