@@ -169,12 +169,16 @@ describe('migrate v14 — graph tenancy backfill', () => {
     // whole upgrade back, stranding the user at v13. The migration must merge the
     // duplicates (repoint FKs, sum mention_count) before building the index.
     const db = v13Db();
+    // e-other is a DISTINCT entity (not in the postgresql merge group) so the
+    // repointed edge does NOT collapse into a self-loop — it must survive,
+    // pointing at the survivor, proving the FK was repointed (not dropped).
     db.exec(`
       INSERT INTO entities (id, name, normalized_name, type, mention_count) VALUES
         ('e-dup-a','PostgreSQL','postgresql','tool',3),
-        ('e-dup-b','postgres','postgresql','concept',5);
+        ('e-dup-b','postgres','postgresql','concept',5),
+        ('e-other','Redis','redis','tool',2);
       INSERT INTO entity_relationships (id, source_entity_id, target_entity_id, type)
-        VALUES ('r-dup','e-dup-b','e1','related_to');
+        VALUES ('r-dup','e-dup-b','e-other','related_to');
       INSERT INTO entity_aliases (id, entity_id, alias, normalized_alias, source)
         VALUES ('al-2','e-dup-b','pg','pg','auto');
     `);
@@ -196,5 +200,25 @@ describe('migrate v14 — graph tenancy backfill', () => {
       entity_id: string;
     };
     expect(alias.entity_id).toBe(survivors[0].id);
+  });
+
+  it('does not create self-loop relationships when two merged duplicates had an edge between them', () => {
+    // battle-v14 re-battle (LOW): the dup-merge repoints BOTH endpoints of an edge
+    // BETWEEN two duplicates onto the same survivor → a degenerate (survivor,
+    // survivor) self-loop. Pre-v14 the graph held no self-loops; the migration must
+    // drop the degenerate edge, not persist it.
+    const db = v13Db();
+    db.exec(`
+      INSERT INTO entities (id, name, normalized_name, type, mention_count) VALUES
+        ('e-dup-a','PostgreSQL','postgresql','tool',3),
+        ('e-dup-b','postgres','postgresql','concept',5);
+      INSERT INTO entity_relationships (id, source_entity_id, target_entity_id, type)
+        VALUES ('r-between','e-dup-a','e-dup-b','related_to');
+    `);
+    migrateDatabase(db);
+    const selfLoops = db
+      .prepare('SELECT id FROM entity_relationships WHERE source_entity_id = target_entity_id')
+      .all();
+    expect(selfLoops).toEqual([]); // no degenerate edge survives the merge
   });
 });

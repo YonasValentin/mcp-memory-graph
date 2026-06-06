@@ -497,6 +497,15 @@ const migrations: Migration[] = [
           }
           db.prepare('DELETE FROM entities WHERE id = ?').run(d.id);
         }
+        // battle-v14 re-battle (LOW): if two merged duplicates had an edge BETWEEN
+        // them, repointing both endpoints onto the one survivor produced a
+        // degenerate (survivor, survivor) self-loop — the target was rewritten to
+        // the survivor above, and the loser-id DELETE no longer matched it. Pre-v14
+        // the graph held no self-loops; drop them so the merge is a clean
+        // data-quality no-op rather than a regression.
+        if (tableExists('entity_relationships')) {
+          db.exec('DELETE FROM entity_relationships WHERE source_entity_id = target_entity_id');
+        }
       }
       if (tableExists('entity_aliases')) {
         // Drop duplicate aliases sharing (normalized_alias, namespace), keeping the
