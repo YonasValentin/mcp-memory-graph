@@ -26,7 +26,7 @@ function v13Db(): Database.Database {
       id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, normalized_name TEXT NOT NULL,
       type TEXT NOT NULL DEFAULT 'concept', mention_count INTEGER NOT NULL DEFAULT 1
     );
-    CREATE UNIQUE INDEX idx_alias_x ON entities(normalized_name);
+    CREATE INDEX idx_entities_normalized ON entities(normalized_name);
     CREATE TABLE entity_aliases (
       id TEXT PRIMARY KEY NOT NULL, entity_id TEXT NOT NULL, alias TEXT NOT NULL,
       normalized_alias TEXT NOT NULL, source TEXT DEFAULT 'auto'
@@ -130,5 +130,41 @@ describe('migrate v14 — graph tenancy backfill', () => {
       value: string;
     };
     expect(v.value).toBe('14');
+  });
+
+  it('dedupes pre-existing duplicate normalized_name/alias rows so the new UNIQUE index can build', () => {
+    // A pre-v14 DB MAY hold two entities with the same normalized_name (the old
+    // idx_entities_normalized was NOT unique). After backfill both land at
+    // (name,'global','') — the new UNIQUE identity index would THROW and roll the
+    // whole upgrade back, stranding the user at v13. The migration must merge the
+    // duplicates (repoint FKs, sum mention_count) before building the index.
+    const db = v13Db();
+    db.exec(`
+      INSERT INTO entities (id, name, normalized_name, type, mention_count) VALUES
+        ('e-dup-a','PostgreSQL','postgresql','tool',3),
+        ('e-dup-b','postgres','postgresql','concept',5);
+      INSERT INTO entity_relationships (id, source_entity_id, target_entity_id, type)
+        VALUES ('r-dup','e-dup-b','e1','related_to');
+      INSERT INTO entity_aliases (id, entity_id, alias, normalized_alias, source)
+        VALUES ('al-2','e-dup-b','pg','pg','auto');
+    `);
+    expect(() => migrateDatabase(db)).not.toThrow();
+    // Exactly one 'postgresql' entity survives, the losers' mention_count summed.
+    const survivors = db
+      .prepare("SELECT id, mention_count FROM entities WHERE normalized_name = 'postgresql'")
+      .all() as Array<{ id: string; mention_count: number }>;
+    expect(survivors.length).toBe(1);
+    // e1 (mc=1, from v13Db) + e-dup-a (3) + e-dup-b (5) all merge into the survivor.
+    expect(survivors[0].mention_count).toBe(9);
+    // The relationship FK was repointed to the survivor (not dangling).
+    const rel = db.prepare("SELECT source_entity_id FROM entity_relationships WHERE id = 'r-dup'").get() as {
+      source_entity_id: string;
+    };
+    expect(rel.source_entity_id).toBe(survivors[0].id);
+    // The loser's alias was repointed to the survivor (not orphaned/dropped).
+    const alias = db.prepare("SELECT entity_id FROM entity_aliases WHERE normalized_alias = 'pg'").get() as {
+      entity_id: string;
+    };
+    expect(alias.entity_id).toBe(survivors[0].id);
   });
 });

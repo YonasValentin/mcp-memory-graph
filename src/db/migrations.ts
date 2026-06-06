@@ -443,6 +443,64 @@ const migrations: Migration[] = [
         `);
       }
 
+      // Before building the UNIQUE identity indexes, MERGE any pre-existing
+      // duplicates the old (non-unique) shapes allowed — otherwise CREATE UNIQUE
+      // INDEX throws and the whole upgrade rolls back, stranding the DB at v13.
+      // Pre-v14 the entities table had only a NON-unique index on normalized_name,
+      // so two rows could share a normalized_name (e.g. an LLM-typed 'tool' and a
+      // regex 'concept'); after backfill they collide at (name,'global',''). Keep
+      // the lowest-rowid survivor, repoint every FK to it, sum mention_count, and
+      // delete the losers. Same for aliases (old unique was on normalized_alias
+      // alone). All inside the migration transaction → atomic.
+      if (tableExists('entities')) {
+        // Map each duplicate entity id -> the survivor id for its identity group.
+        const dupEntities = db
+          .prepare<[], { id: string; survivor: string; mention_count: number }>(
+            `SELECT e.id AS id, s.survivor AS survivor, e.mention_count AS mention_count
+               FROM entities e
+               JOIN (
+                 SELECT normalized_name, scope, namespace, MIN(rowid) AS keep_rowid
+                   FROM entities GROUP BY normalized_name, scope, namespace
+                  HAVING COUNT(*) > 1
+               ) g ON g.normalized_name = e.normalized_name AND g.scope = e.scope AND g.namespace = e.namespace
+               JOIN entities k ON k.rowid = g.keep_rowid
+               JOIN (SELECT rowid, id AS survivor FROM entities) s ON s.rowid = g.keep_rowid
+              WHERE e.rowid <> g.keep_rowid`,
+          )
+          .all();
+        for (const d of dupEntities) {
+          // Sum the loser's mention_count into the survivor.
+          db.prepare('UPDATE entities SET mention_count = mention_count + ? WHERE id = ?').run(
+            d.mention_count,
+            d.survivor,
+          );
+          // Repoint FKs (INSERT OR IGNORE-style: avoid PK/dup collisions on the join table).
+          if (tableExists('memory_entities')) {
+            db.prepare('UPDATE OR IGNORE memory_entities SET entity_id = ? WHERE entity_id = ?').run(d.survivor, d.id);
+            db.prepare('DELETE FROM memory_entities WHERE entity_id = ?').run(d.id);
+          }
+          if (tableExists('entity_relationships')) {
+            db.prepare('UPDATE OR IGNORE entity_relationships SET source_entity_id = ? WHERE source_entity_id = ?').run(d.survivor, d.id);
+            db.prepare('UPDATE OR IGNORE entity_relationships SET target_entity_id = ? WHERE target_entity_id = ?').run(d.survivor, d.id);
+            db.prepare('DELETE FROM entity_relationships WHERE source_entity_id = ? OR target_entity_id = ?').run(d.id, d.id);
+          }
+          if (tableExists('entity_aliases')) {
+            db.prepare('UPDATE OR IGNORE entity_aliases SET entity_id = ? WHERE entity_id = ?').run(d.survivor, d.id);
+            db.prepare('DELETE FROM entity_aliases WHERE entity_id = ?').run(d.id);
+          }
+          db.prepare('DELETE FROM entities WHERE id = ?').run(d.id);
+        }
+      }
+      if (tableExists('entity_aliases')) {
+        // Drop duplicate aliases sharing (normalized_alias, scope, namespace),
+        // keeping the lowest rowid, so the rebuilt unique alias index can build.
+        db.exec(`
+          DELETE FROM entity_aliases
+           WHERE rowid NOT IN (
+             SELECT MIN(rowid) FROM entity_aliases GROUP BY normalized_alias, scope, namespace
+           )`);
+      }
+
       // Rebuild the unique indexes to include the tenancy dimension. The old
       // global-unique shapes (idx_alias_normalized on normalized_alias alone;
       // no entity-identity index) would now reject two tenants sharing a name.
