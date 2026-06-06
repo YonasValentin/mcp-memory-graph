@@ -4,7 +4,7 @@
  * endpoints live in different namespaces is refused at the source, so a forced
  * tenant's graph walk can never hop to a foreign memory.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type Database from 'better-sqlite3';
 import { createTestDb } from '../../testing/test-db.js';
 import { insertMemory } from '../../db/repository.js';
@@ -35,6 +35,10 @@ function row(id: string, over: Partial<MemoryRow> = {}): MemoryRow {
 }
 
 describe('v14 — memory_links stamp + same-tenant constraint', () => {
+  afterEach(() => {
+    delete process.env.MCP_API_NAMESPACE;
+  });
+
   it('an edge between two same-namespace memories carries that partition', () => {
     insertMemory(db, row('a', { scope: 'project', namespace: 'projA' }), unit(0));
     insertMemory(db, row('b', { scope: 'project', namespace: 'projA' }), unit(1));
@@ -47,13 +51,32 @@ describe('v14 — memory_links stamp + same-tenant constraint', () => {
     expect(e).toEqual({ scope: 'project', namespace: 'projA' });
   });
 
-  it('refuses an edge whose endpoints are in different namespaces', () => {
+  it('refuses a cross-namespace edge UNDER A FORCED NAMESPACE (multi-tenant)', () => {
+    process.env.MCP_API_NAMESPACE = 'projA';
     insertMemory(db, row('a', { scope: 'project', namespace: 'projA' }), unit(0));
     insertMemory(db, row('b', { scope: 'project', namespace: 'projB' }), unit(1));
     const id = createMemoryLink(db, { sourceId: 'a', targetId: 'b', relation: 'links_to' });
     expect(id).toBe('');
     const count = db.prepare('SELECT COUNT(*) c FROM memory_links').get() as { c: number };
     expect(count.c).toBe(0);
+  });
+
+  it('SINGLE-USER (unforced): links two SAME-namespace memories even if scope differs (vault round-trip regression)', () => {
+    // A vault round-trip writes scope:global into frontmatter (writer.ts), so a
+    // global-scope note and a project-scope note coexist in one vault namespace.
+    // A [[wikilink]] between them is a legitimate user edge and must be created —
+    // v14's original (scope AND namespace) guard wrongly dropped it.
+    insertMemory(db, row('g', { scope: 'global', namespace: 'myvault' }), unit(0));
+    insertMemory(db, row('p', { scope: 'project', namespace: 'myvault' }), unit(1));
+    const id = createMemoryLink(db, { sourceId: 'g', targetId: 'p', sourceKind: 'wikilink' });
+    expect(id).not.toBe('');
+  });
+
+  it('SINGLE-USER (unforced): does NOT refuse a cross-namespace edge (pre-v14 behaviour preserved)', () => {
+    insertMemory(db, row('a', { scope: 'project', namespace: 'projA' }), unit(0));
+    insertMemory(db, row('b', { scope: 'project', namespace: 'projB' }), unit(1));
+    const id = createMemoryLink(db, { sourceId: 'a', targetId: 'b', sourceKind: 'wikilink' });
+    expect(id).not.toBe('');
   });
 });
 

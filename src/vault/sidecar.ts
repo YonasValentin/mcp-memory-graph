@@ -6,6 +6,7 @@ import { createMemoryLink } from '../graph/memory-links.js';
 import { confineToVault } from './writer.js';
 import { getVaultEgress } from '../config/loader.js';
 import { buildIntegrityManifest } from '../tools/manifest.js';
+import { forcedNamespace } from '../lib/tenancy.js';
 
 /**
  * The graph sidecar (`.memory/graph.json`) holds the resolved memory↔memory
@@ -26,7 +27,11 @@ export function writeGraphSidecar(db: Database.Database, vaultRoot: string): str
   if (!abs) return null;
   // battle-v9 CLASS 5: apply the same egress cap the .md write-through enforces,
   // so a confidential/restricted memory never leaks into the git-shared sidecar.
-  const artifact = exportGraph(db, {}, getVaultEgress());
+  // battle-v14 F1: under a forced namespace, scope the graph artifact to the
+  // pinned tenant so a multi-tenant CLI sync never egresses foreign entity
+  // names/links into the tenant's vault. Unforced → whole graph (single-user).
+  const fns = forcedNamespace();
+  const artifact = exportGraph(db, fns ? { namespace: fns } : {}, getVaultEgress());
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, JSON.stringify(artifact, null, 2), 'utf-8');
   return abs;
@@ -48,13 +53,18 @@ export function writeManifestSidecar(
   db: Database.Database,
   vaultRoot: string,
   generatedAt: string,
+  filter?: { scope?: string; namespace?: string },
 ): string | null {
   fs.mkdirSync(vaultRoot, { recursive: true });
   const root = fs.realpathSync(vaultRoot);
   const abs = confineToVault(root, MANIFEST_SIDECAR_REL);
   /* c8 ignore next */
   if (!abs) return null;
-  const manifest = buildIntegrityManifest(db, generatedAt);
+  // battle-v14 F1: default to the forced namespace so EVERY sidecar path (MCP
+  // export-vault, CLI sync/vault-init) fingerprints only the pinned tenant when
+  // MCP_API_NAMESPACE is set; unset (single-user) → whole corpus, unchanged.
+  const effective = filter ?? (forcedNamespace() ? { namespace: forcedNamespace() } : undefined);
+  const manifest = buildIntegrityManifest(db, generatedAt, effective);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, JSON.stringify(manifest, null, 2), 'utf-8');
   return abs;

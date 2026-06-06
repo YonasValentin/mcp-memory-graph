@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import { chunkIds } from './communities.js';
+import { forcedNamespace } from '../lib/tenancy.js';
 
 /** Provenance of an inferred edge — graphify's honest audit model. */
 export type EdgeConfidence = 'EXTRACTED' | 'INFERRED' | 'AMBIGUOUS';
@@ -41,14 +42,15 @@ export function createMemoryLink(db: Database.Database, input: MemoryLinkInput):
   if (input.sourceId === input.targetId) return '';
   const relation = input.relation ?? 'links_to';
 
-  // v14 multi-tenancy: an edge carries the partition of its endpoint memories,
-  // and the endpoints MUST live in the same (scope, namespace). A memory link
-  // expresses a relationship between two memories; across tenants that is
-  // meaningless and — under a forced namespace — would let a graph walk hop to a
-  // foreign memory. Refuse the edge at the source. (Single-user impact is nil:
-  // co-occurrence edges already only form within a partition, since entity
-  // identity is per-tenant; cross-project wikilinks do not arise.)
-  const partition = sameTenantPartition(db, input.sourceId, input.targetId);
+  // v14 multi-tenancy: an edge carries the partition of its endpoint memories.
+  // The tenant boundary is NAMESPACE (scope is an intra-tenant dimension —
+  // global/project/user can legitimately coexist and be linked within one
+  // vault/user). Under a FORCED namespace, refuse an edge whose endpoints cross
+  // namespaces, so a forced tenant's graph walk can never hop to a foreign
+  // memory. When UNFORCED (single-user), never refuse — a user's own wikilinks
+  // (incl. a global-scope note linking a project note round-tripped through the
+  // vault) are legitimate, exactly as pre-v14 (battle-v14 F2 regression fix).
+  const partition = edgePartition(db, input.sourceId, input.targetId);
   if (!partition) return '';
 
   const existing = db
@@ -89,12 +91,16 @@ export function createMemoryLink(db: Database.Database, input: MemoryLinkInput):
 }
 
 /**
- * v14 — the shared (scope, namespace) of two memories, or null if either is
- * missing or they belong to different tenants. namespace NULL is normalized to
- * '' to match the graph-table sentinel. A missing endpoint (should not happen
- * under the memories FK) returns null so no orphan edge is stamped.
+ * v14 — the (scope, namespace) to stamp on a new edge, derived from the SOURCE
+ * memory, or null when the edge must be refused. namespace NULL → '' sentinel.
+ *
+ * Refusal rule: only when a tenant namespace is FORCED and the two endpoints
+ * live in DIFFERENT namespaces (a cross-tenant hop). When unforced (single-user)
+ * the edge is always allowed and stamped with the source's partition — a missing
+ * endpoint (shouldn't happen under the FK) still returns null so no orphan edge
+ * is stamped.
  */
-function sameTenantPartition(
+function edgePartition(
   db: Database.Database,
   sourceId: string,
   targetId: string,
@@ -107,7 +113,9 @@ function sameTenantPartition(
   if (!s || !t) return null;
   const sNs = s.namespace ?? '';
   const tNs = t.namespace ?? '';
-  if (s.scope !== t.scope || sNs !== tNs) return null;
+  // Under a forced namespace, an edge crossing namespaces is a cross-tenant hop —
+  // refuse it. Scope differences within one namespace are fine (intra-tenant).
+  if (forcedNamespace() && sNs !== tNs) return null;
   return { scope: s.scope, namespace: sNs };
 }
 

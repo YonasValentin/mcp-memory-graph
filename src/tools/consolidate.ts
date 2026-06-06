@@ -198,11 +198,15 @@ export async function handleConsolidate(
       // namespace-forced consolidate rewrote importance_score for ALL tenants.
       report.scores_updated = updateQualityScores(db, filterClause, filterParams);
     } else {
+      // battle-v14 F5: the dry_run preview must apply the SAME namespace/scope
+      // filter the live updateQualityScores path uses — an unfiltered COUNT here
+      // disclosed the GLOBAL top-level memory total to a namespace-forced tenant
+      // (and could never match the real run's scoped count).
       const countRow = db
         .prepare<unknown[], { cnt: number }>(
-          'SELECT COUNT(*) as cnt FROM memories WHERE parent_id IS NULL',
+          `SELECT COUNT(*) as cnt FROM memories WHERE parent_id IS NULL${filterClause}`,
         )
-        .get();
+        .get(...filterParams);
       report.scores_updated = countRow?.cnt ?? 0;
     }
   } catch (err) /* c8 ignore start */ {
