@@ -11,6 +11,9 @@ import { insertMemory } from '../../db/repository.js';
 import { buildIntegrityManifest } from '../../tools/manifest.js';
 import { handleConsolidate } from '../../tools/consolidate.js';
 import { handleStats } from '../../tools/stats.js';
+import { handleImport } from '../../tools/import.js';
+import { handleGraph } from '../../tools/graph.js';
+import { findOrCreateEntity, linkEntityToMemory } from '../../graph/entity-store.js';
 import { scopeToNamespace } from '../../lib/tenancy.js';
 import type { MemoryRow } from '../../types.js';
 
@@ -118,5 +121,93 @@ describe('battle-v14 G4 — cross-namespace links/conflicts do not leak to a for
     process.env.MCP_API_NAMESPACE = 'tenant-a';
     const h = handleHealth(db, { namespace: 'tenant-a' });
     expect(h.conflicts.unresolved).toBe(0); // the new side is foreign → not tenant-a's
+  });
+});
+
+describe('battle-v14 #2 — memory_import cannot claim/overwrite a foreign-namespace id under forcing', () => {
+  it("a forced tenant importing an item carrying a foreign id does NOT modify the foreign row", async () => {
+    insertMemory(db, row('victim', { namespace: 'tenant-b', content: 'tenant-b secret' }), unit(0));
+    // tenant-a is pinned and tries to overwrite tenant-b's row by carrying its id.
+    const res = await handleImport(
+      db,
+      embedder,
+      { data: [{ id: 'victim', content: 'STOLEN by tenant-a' }], overwrite: true },
+      'tenant-a',
+    );
+    const after = db
+      .prepare('SELECT content, namespace FROM memories WHERE id = ?')
+      .get('victim') as { content: string; namespace: string };
+    expect(after.content).toBe('tenant-b secret'); // content untouched
+    expect(after.namespace).toBe('tenant-b'); // NOT claimed into tenant-a
+    expect(res.imported).toBe(0); // nothing imported
+    expect(res.skipped).toBe(1); // foreign id skipped
+  });
+
+  it('a forced tenant CAN still re-import (overwrite) an id it OWNS', async () => {
+    insertMemory(db, row('mine', { namespace: 'tenant-a', content: 'old' }), unit(0));
+    const res = await handleImport(
+      db,
+      embedder,
+      { data: [{ id: 'mine', content: 'updated' }], overwrite: true },
+      'tenant-a',
+    );
+    const after = db.prepare('SELECT content FROM memories WHERE id = ?').get('mine') as {
+      content: string;
+    };
+    expect(after.content).toBe('updated');
+    expect(res.imported).toBe(1);
+  });
+
+  it('unforced (single-user) import overwrite-by-id is unchanged', async () => {
+    insertMemory(db, row('x', { namespace: 'projA', content: 'old' }), unit(0));
+    const res = await handleImport(
+      db,
+      embedder,
+      { data: [{ id: 'x', content: 'new' }], overwrite: true },
+      undefined,
+    );
+    const after = db.prepare('SELECT content FROM memories WHERE id = ?').get('x') as {
+      content: string;
+    };
+    expect(after.content).toBe('new');
+    expect(res.imported).toBe(1);
+  });
+});
+
+describe('battle-v14 #1 — memory_graph browse is not starved by foreign high-mention entities', () => {
+  /** Seed an entity in a namespace, set its mention_count, link it to a live memory. */
+  function seedEntity(name: string, ns: string, mentions: number, memId: string): void {
+    insertMemory(db, row(memId, { namespace: ns }), unit(0));
+    const eid = findOrCreateEntity(db, name, 'tool', { scope: 'project', namespace: ns });
+    db.prepare('UPDATE entities SET mention_count = ? WHERE id = ?').run(mentions, eid);
+    linkEntityToMemory(db, memId, eid, 'mention', 'regex', 0.9);
+  }
+
+  it('a forced tenant sees its OWN entities even when another tenant owns the global top-k', () => {
+    // tenant-b owns the 30 highest-mention entities (the global top-k window).
+    for (let i = 0; i < 30; i++) seedEntity(`b-tool-${i}`, 'tenant-b', 100 + i, `mb-${i}`);
+    // tenant-a owns 2 low-mention entities (outside any global top-k window).
+    seedEntity('a-tool-1', 'tenant-a', 1, 'ma-1');
+    seedEntity('a-tool-2', 'tenant-a', 2, 'ma-2');
+
+    process.env.MCP_API_NAMESPACE = 'tenant-a';
+    const res = handleGraph(db, { limit: 20 }, 'tenant-a');
+    const names = res.entities.map((e) => e.name).sort();
+    expect(names).toEqual(['a-tool-1', 'a-tool-2']); // own graph, not empty
+  });
+
+  it('a forced browse never discloses a foreign entity name', () => {
+    seedEntity('secret-foreign-tool', 'tenant-b', 999, 'mb-0');
+    seedEntity('a-tool', 'tenant-a', 1, 'ma-0');
+    process.env.MCP_API_NAMESPACE = 'tenant-a';
+    const res = handleGraph(db, { limit: 20 }, 'tenant-a');
+    expect(res.entities.some((e) => e.name === 'secret-foreign-tool')).toBe(false);
+  });
+
+  it('single-user (unforced) browse is unchanged — sees the whole graph', () => {
+    seedEntity('t1', 'projA', 5, 'm1');
+    seedEntity('t2', 'projB', 3, 'm2');
+    const res = handleGraph(db, { limit: 20 }); // no forced namespace
+    expect(res.entities.length).toBe(2);
   });
 });

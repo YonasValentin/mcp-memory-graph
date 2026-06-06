@@ -108,6 +108,17 @@ export async function handleImport(
         const existing = existingId ? getMemoryById(db, existingId) : null;
 
         if (existing) {
+          // battle-v14 #2: TENANCY GUARD. getMemoryById is namespace-blind, so on
+          // a forced deployment an item carrying ANOTHER tenant's id would hit
+          // the overwrite branch and — because we REMAP item.namespace to the
+          // forced value above — both rewrite its content AND drag the row into
+          // the importing tenant (cross-tenant row theft). Refuse to touch a row
+          // owned by a different namespace; skip it (existence non-confirmation).
+          // Unforced (single-user) imports are unaffected.
+          if (forcedNamespace !== undefined && existing.namespace !== forcedNamespace) {
+            skipped++;
+            continue;
+          }
           if (input.overwrite) {
             const updates: Partial<MemoryRow> = {
               content: item.content,
