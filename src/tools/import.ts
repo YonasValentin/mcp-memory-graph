@@ -120,6 +120,14 @@ export async function handleImport(
               expires_at: item.expires_at ?? existing.expires_at,
             };
 
+            // battle-v9 rebattle: the new-row branch preserves importance_score /
+            // confidence_score, but the OVERWRITE branch dropped them — so
+            // restoring a backup ONTO an existing id silently kept the stale
+            // trust/criticality. Carry an explicitly-provided score through the
+            // update too (a backup export always emits both).
+            if (item.importance_score != null) updates.importance_score = item.importance_score;
+            if (item.confidence_score != null) updates.confidence_score = item.confidence_score;
+
             // REMAP on overwrite: a forced namespace must also rewrite the row's
             // namespace, else an attacker could pin a foreign-namespace export to
             // an existing id and drag the row out of the forced tenant. item.namespace

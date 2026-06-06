@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import { cosineSimFromL2 } from '../search/scoring.js';
 import { NOW_ISO_SQL } from '../db/predicates.js';
+import { vecRowCount } from '../db/repository.js';
 
 export type ConflictType = 'superseded' | 'contradicted' | 'duplicate';
 
@@ -72,21 +73,35 @@ export function detectConflicts(
   // the (scope, namespace) predicate INTO the vec0 KNN so a flood of foreign-tenant
   // rows can't starve a same-tenant conflict candidate out of the k window. vec0
   // stores a null namespace as ''. k stays 10; non-partitioned callers unchanged.
-  const candidates = partition
-    ? db
-        .prepare<[Buffer, number, string, string], { rowid: number; distance: number }>(
-          `SELECT rowid, distance FROM memories_vec
-           WHERE embedding MATCH ? AND k = ? AND scope = ? AND namespace = ?
-           ORDER BY distance`,
-        )
-        .all(Buffer.from(newEmbedding.buffer), 10, partition.scope, partition.namespace ?? '')
-    : db
-        .prepare<[Buffer, number], { rowid: number; distance: number }>(
-          `SELECT rowid, distance FROM memories_vec
-           WHERE embedding MATCH ? AND k = ?
-           ORDER BY distance`,
-        )
-        .all(Buffer.from(newEmbedding.buffer), 10);
+  // battle-v9 rebattle: adaptive widening. vec0 retains retired/superseded rows
+  // (as_of) and chunk children, all of which are SKIPPED in the post-filter below
+  // but still consume a fixed-k window — so ~k nearer retired rows in the same
+  // partition could starve a LIVE duplicate/contradiction out (the same item-13
+  // hazard, on the per-store detectConflicts path). Widen k until a returned row
+  // exceeds the conflict distance (sorted → all nearer in-range rows are now in
+  // the window) or the partition is exhausted / fully scanned. Common case (no
+  // retired crowding) returns on the first pass at k=10 — no extra query.
+  const buf = Buffer.from(newEmbedding.buffer);
+  const sql = partition
+    ? `SELECT rowid, distance FROM memories_vec WHERE embedding MATCH ? AND k = ? AND scope = ? AND namespace = ? ORDER BY distance`
+    : `SELECT rowid, distance FROM memories_vec WHERE embedding MATCH ? AND k = ? ORDER BY distance`;
+  const knn = db.prepare<unknown[], { rowid: number; distance: number }>(sql);
+  const CONFLICT_DISTANCE = 0.4;
+  const GROWTH = 8;
+  let k = 10;
+  let maxK: number | undefined;
+  let candidates: { rowid: number; distance: number }[] = [];
+  for (;;) {
+    candidates = (
+      partition ? knn.all(buf, k, partition.scope, partition.namespace ?? '') : knn.all(buf, k)
+    ) as { rowid: number; distance: number }[];
+    const reachedBoundary =
+      candidates.length > 0 && candidates[candidates.length - 1].distance > CONFLICT_DISTANCE;
+    if (reachedBoundary || candidates.length < k) break;
+    if (maxK === undefined) maxK = vecRowCount(db, partition);
+    if (k >= maxK) break;
+    k = Math.min(k * GROWTH, maxK);
+  }
 
   const newWords = extractSignificantWords(newContent);
   const results: ConflictResult[] = [];

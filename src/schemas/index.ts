@@ -111,7 +111,7 @@ export const MemoryStoreSchema = z.object({
     .datetime({ message: 'expires_at must be a full ISO-8601 timestamp, e.g. 2026-03-01T00:00:00Z' })
     .optional()
     .describe(
-      'ISO 8601 expiration date (memory auto-excluded from search after this)',
+      'Full ISO-8601 expiration timestamp, e.g. 2026-03-01T00:00:00Z (memory auto-excluded from search after this)',
     ),
   importance_score: z
     .number()
@@ -203,12 +203,12 @@ export const MemorySearchSchema = z.object({
     .string()
     .datetime({ message: 'date_from must be a full ISO-8601 timestamp, e.g. 2026-03-01T00:00:00Z' })
     .optional()
-    .describe('Filter: only memories created after this ISO 8601 date'),
+    .describe('Filter: only memories created at/after this full ISO-8601 timestamp (e.g. 2026-03-01T00:00:00Z)'),
   date_to: z
     .string()
     .datetime({ message: 'date_to must be a full ISO-8601 timestamp, e.g. 2026-03-01T00:00:00Z' })
     .optional()
-    .describe('Filter: only memories created before this ISO 8601 date'),
+    .describe('Filter: only memories created at/before this full ISO-8601 timestamp (e.g. 2026-03-31T23:59:59Z)'),
   min_confidence: z
     .number()
     .min(0)
@@ -323,7 +323,7 @@ export const MemoryUpdateSchema = z.object({
     .datetime({ message: 'expires_at must be a full ISO-8601 timestamp, e.g. 2026-03-01T00:00:00Z' })
     .nullable()
     .optional()
-    .describe('New expiration date, or null to remove'),
+    .describe('New full ISO-8601 expiration timestamp (e.g. 2026-03-01T00:00:00Z), or null to remove'),
   changed_by: z
     .string()
     .optional()

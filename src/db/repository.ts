@@ -730,6 +730,25 @@ export function updateQualityScores(
 
 // ── Duplicate Detection ──────────────────────────────────────────────────
 
+/**
+ * Count rows in memories_vec, optionally within a (scope, namespace) partition.
+ * The TRUE upper bound for an adaptive-widening KNN cap: widening k beyond this
+ * can never surface a new row, and capping AT it guarantees the whole partition
+ * is scanned (so a live near-dup behind any number of retired rows is found).
+ * vec0 supports COUNT with a metadata filter (verified). battle-v9 rebattle: the
+ * earlier fixed MAX_K=4096 re-introduced starvation past 4096 retired rows.
+ */
+export function vecRowCount(db: Database.Database, partition?: MemoryPartition): number {
+  const row = partition
+    ? db
+        .prepare<[string, string], { c: number }>(
+          'SELECT COUNT(*) AS c FROM memories_vec WHERE scope = ? AND namespace = ?',
+        )
+        .get(partition.scope, partition.namespace ?? '')
+    : db.prepare<[], { c: number }>('SELECT COUNT(*) AS c FROM memories_vec').get();
+  return row?.c ?? 0;
+}
+
 export function findNearDuplicates(
   db: Database.Database,
   embedding: Float32Array,
@@ -758,13 +777,16 @@ export function findNearDuplicates(
   // post-filter below could drop a still-live near-dup that sits just past k.
   // Widen k geometrically until we have `limit` LIVE rows, or the partition is
   // exhausted (vec0 returned < k), or all further rows exceed the distance
-  // threshold, or a safety cap. The common case (few/no retired rows) satisfies
-  // `limit` on the first pass — no extra query, no perf change.
+  // threshold, or k reaches the partition's TRUE row count (computed lazily only
+  // when widening is actually needed — the common no-retired path satisfies
+  // `limit` on the first pass, so no extra query/perf change). Capping at the
+  // real row count (not an arbitrary 4096) means retired rows can NEVER starve a
+  // live near-dup, regardless of how many there are (battle-v9 rebattle LOW).
   const GROWTH = 8;
-  const MAX_K = 4096;
 
   const find = db.transaction(() => {
     let k = Math.max(1, limit);
+    let maxK: number | undefined; // lazily computed on the first widen
     let results: Array<{ rowid: number; id: string; distance: number }> = [];
     for (;;) {
       const rows = (
@@ -786,8 +808,10 @@ export function findNearDuplicates(
         if (results.length >= limit) break;
       }
 
-      if (results.length >= limit || hitThreshold || rows.length < k || k >= MAX_K) break;
-      k = Math.min(k * GROWTH, MAX_K);
+      if (results.length >= limit || hitThreshold || rows.length < k) break;
+      if (maxK === undefined) maxK = vecRowCount(db, partition);
+      if (k >= maxK) break;
+      k = Math.min(k * GROWTH, maxK);
     }
     return results.slice(0, limit);
   });

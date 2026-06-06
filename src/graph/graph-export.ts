@@ -1,8 +1,9 @@
 import type Database from 'better-sqlite3';
 import { readFileSync, writeFileSync } from 'node:fs';
-import type { MemoryRow, AccessLevel } from '../types.js';
+import path from 'node:path';
+import type { MemoryRow } from '../types.js';
 import { rowToMemory } from '../db/repository.js';
-import { accessLevelExceedsCap, type EgressPolicy } from '../vault/writer.js';
+import { isEgressBlocked, safeVaultFilename, safeSubdir, type EgressPolicy } from '../vault/writer.js';
 import type { EdgeConfidence, LinkSourceKind, MemoryLinkRow } from './memory-links.js';
 
 /**
@@ -113,10 +114,21 @@ export function exportGraph(
     )
     .all(...params);
 
-  const cap = egress?.max_access_level;
-  const rows = cap
-    ? allRows.filter((r) => !accessLevelExceedsCap(r.access_level as AccessLevel, cap))
+  // battle-v9 rebattle: use the FULL egress predicate (max_access_level AND
+  // deny_globs) the .md write-through applies — the prior cap-only filter let a
+  // deny_glob-blocked memory (a deny_globs-only policy is valid: see
+  // getVaultEgress) leak content + entity names into the git-shared sidecar.
+  // Compute each memory's would-be vault relPath the SAME way write-through does
+  // so the sidecar suppression matches the .md tree exactly.
+  const rows = egress
+    ? allRows.filter((r) => {
+        const m = rowToMemory(r);
+        const subdir = m.namespace ? safeSubdir(m.namespace) : '';
+        const relPath = subdir ? path.join(subdir, safeVaultFilename(m)) : safeVaultFilename(m);
+        return !isEgressBlocked(m, relPath, egress);
+      })
     : allRows;
+  const dropped = rows.length !== allRows.length;
 
   const memories: ExportedMemory[] = rows.map((row) => {
     const m = rowToMemory(row);
@@ -166,9 +178,9 @@ export function exportGraph(
       'SELECT id, name, normalized_name, type, mention_count FROM entities',
     )
     .all();
-  if (cap) {
+  if (dropped) {
     // Keep only entities still linked to a surviving (non-blocked) memory, so an
-    // entity name mentioned ONLY by confidential content does not leak.
+    // entity name mentioned ONLY by blocked content does not leak.
     const keepEntity = new Set<string>();
     for (const link of db
       .prepare<[], { memory_id: string; entity_id: string }>(
