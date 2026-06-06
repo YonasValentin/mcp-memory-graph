@@ -2,7 +2,17 @@
 
 const command = process.argv[2];
 
+/** Commands that start a long-running server (stdio MCP or REST). */
+const SERVER_COMMANDS = new Set([undefined, 'serve', 'http']);
+
 async function main(): Promise<void> {
+  // battle-v9 gate: warn once at startup if the experimental multi-tenant
+  // (MCP_API_NAMESPACE shared-DB) mode is enabled. Only for server-starting
+  // commands — one-off CLI commands stay quiet.
+  if (SERVER_COMMANDS.has(command)) {
+    const { warnIfExperimentalTenancy } = await import('./lib/tenancy.js');
+    warnIfExperimentalTenancy();
+  }
   switch (command) {
     case 'init': {
       const { runInit } = await import('./cli/init.js');

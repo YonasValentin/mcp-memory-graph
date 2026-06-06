@@ -30,6 +30,31 @@ export function forcedNamespace(): string | undefined {
 }
 
 /**
+ * EXPERIMENTAL-MODE GATE (battle-v9, session 10). Single-user / local mode
+ * (MCP_API_NAMESPACE unset) is the SUPPORTED, hardened production mode. Pinning a
+ * shared DB to one namespace for MULTI-TENANT isolation is EXPERIMENTAL: four
+ * adversarial battle waves proved the per-tool tenancy enforcement does not fully
+ * converge, because the shared knowledge-graph tables (entities, memory_links,
+ * memory_conflicts, communities) carry no namespace column. The durable fix is
+ * architectural (a namespace dimension on those tables) and is not yet shipped.
+ *
+ * Emit a one-time startup warning so an operator who enables it understands the
+ * boundary. Called from the server-starting entry points only (not per request,
+ * not in tests). No-op when scoping is off.
+ */
+export function warnIfExperimentalTenancy(): void {
+  const ns = forcedNamespace();
+  if (!ns) return;
+  // eslint-disable-next-line no-console
+  console.error(
+    `[mcp-memory] WARNING: MCP_API_NAMESPACE='${ns}' enables EXPERIMENTAL multi-tenant ` +
+      `mode. Cross-tenant isolation on a shared DB is NOT fully hardened (the shared ` +
+      `knowledge-graph tables lack a namespace column; see docs/MULTI-TENANCY.md). Use ` +
+      `a SEPARATE database file per tenant for a hard isolation boundary.`,
+  );
+}
+
+/**
  * Force the top-level `namespace` option to the configured namespace (the MCP
  * read/query tools carry namespace at the top level). No-op when scoping is off.
  */

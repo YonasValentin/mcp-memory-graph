@@ -71,6 +71,9 @@ Every memory supports rich metadata for cross-department use:
 |-------|---------|---------|
 | `scope` | Isolation level | global, project, user, team, department |
 | `namespace` | Sub-scope grouping | "my-project", "legal-team", "q4-audit" |
+<!-- `scope`/`namespace` group content WITHIN one database. For isolating distinct
+     tenants, use one DB file per tenant — a shared-DB `MCP_API_NAMESPACE` pin is
+     experimental for adversarial isolation. See docs/MULTI-TENANCY.md. -->
 | `department` | Organizational unit | legal, engineering, hr, sales, finance |
 | `document_type` | Content classification | contract, policy, code, incident, decision, report |
 | `access_level` | Data sensitivity | public, internal, confidential, restricted |
