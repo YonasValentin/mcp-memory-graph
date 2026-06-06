@@ -1,6 +1,13 @@
 import type Database from 'better-sqlite3';
 import type { EmbeddingProvider, SearchResult, MemoryRow } from '../types.js';
-import { getMemoryById, getMemoryRowid, rowToMemory, recordAccess } from '../db/repository.js';
+import {
+  getMemoryById,
+  getMemoryRowid,
+  rowToMemory,
+  recordAccess,
+  vecRowCount,
+  VEC0_MAX_K,
+} from '../db/repository.js';
 import { cosineSimFromL2, confidenceLabel, computeGroundedness } from '../search/scoring.js';
 
 interface VecMatch {
@@ -27,16 +34,18 @@ export async function handleRelated(
   const embedding = await embedder.embed(targetRow.content);
   recordAccess(db, [{ memory_id: input.id, access_type: 'related' }]);
 
-  const fetchLimit = input.limit + 20;
   // Confine the neighbour KNN to the target's own (scope, namespace) via the vec0
   // partition pushdown — without it this read leaked other tenants' and private
   // scope='user' memories across the boundary every sibling read tool enforces
   // (battle-v9 cross-tenant read leak). vec0 stores a null namespace as ''.
-  const vecMatches = db
-    .prepare<[Buffer, number, string, string], VecMatch>(
-      'SELECT rowid, distance FROM memories_vec WHERE embedding MATCH ? AND k = ? AND scope = ? AND namespace = ? ORDER BY distance',
-    )
-    .all(Buffer.from(embedding.buffer), fetchLimit, targetRow.scope, targetRow.namespace ?? '');
+  const partition = { scope: targetRow.scope, namespace: targetRow.namespace };
+  const knn = db.prepare<[Buffer, number, string, string], VecMatch>(
+    'SELECT rowid, distance FROM memories_vec WHERE embedding MATCH ? AND k = ? AND scope = ? AND namespace = ? ORDER BY distance',
+  );
+  const rowStmt = db.prepare<
+    [number],
+    MemoryRow & { valid_to: string | null; tx_expired: string | null; superseded_at: string | null }
+  >('SELECT * FROM memories WHERE rowid = ?');
 
   const childRowids = new Set<number>();
   const childRows = db
@@ -47,30 +56,42 @@ export async function handleRelated(
   }
 
   const minSimilarity = input.min_similarity ?? 0;
+
+  // battle-v9 rebattle-2: this is a SINGLE-arm vector read with no keyword/PPR
+  // fallback, so the fixed-k window (was limit+20) filling with RETIRED/superseded
+  // rows (vec0 retains them for as_of) starved live neighbours straight to ZERO.
+  // Widen k geometrically until we have `limit` valid LIVE neighbours, the
+  // partition is exhausted, or vec0's hard k-ceiling — mirroring findNearDuplicates.
+  const buf = Buffer.from(embedding.buffer);
+  const GROWTH = 8;
+  let k = input.limit + 20;
+  let maxK: number | undefined;
+  let valid: Array<{ row: MemoryRow & { valid_to: string | null; tx_expired: string | null; superseded_at: string | null }; similarity: number }> = [];
+  for (;;) {
+    const vecMatches = knn.all(buf, k, partition.scope, partition.namespace ?? '');
+    valid = [];
+    for (const match of vecMatches) {
+      const rowid = Number(match.rowid);
+      if (rowid === targetRowid || childRowids.has(rowid)) continue;
+      const similarity = cosineSimFromL2(match.distance);
+      if (similarity < minSimilarity) continue;
+      const row = rowStmt.get(rowid);
+      /* c8 ignore next */
+      if (!row || row.id === input.id) continue;
+      // vec rows are retained on bitemporal invalidation (for as_of); a
+      // retired/superseded/forgotten memory is not "related" to current work.
+      if (row.valid_to !== null || row.tx_expired !== null || row.superseded_at !== null) continue;
+      valid.push({ row, similarity });
+      if (valid.length >= input.limit) break;
+    }
+    if (valid.length >= input.limit || vecMatches.length < k) break;
+    if (maxK === undefined) maxK = Math.min(vecRowCount(db, partition), VEC0_MAX_K);
+    if (k >= maxK) break;
+    k = Math.min(k * GROWTH, maxK);
+  }
+
   const results: SearchResult[] = [];
-
-  for (const match of vecMatches) {
-    if (results.length >= input.limit) break;
-
-    const rowid = Number(match.rowid);
-    if (rowid === targetRowid || childRowids.has(rowid)) continue;
-
-    const similarity = cosineSimFromL2(match.distance);
-    if (similarity < minSimilarity) continue;
-
-    const row = db
-      .prepare<[number], MemoryRow & { valid_to: string | null; tx_expired: string | null; superseded_at: string | null }>(
-        'SELECT * FROM memories WHERE rowid = ?',
-      )
-      .get(rowid);
-
-    /* c8 ignore next */
-    if (!row) continue;
-    if (row.id === input.id) continue;
-    // vec rows are retained on bitemporal invalidation (for as_of reconstruction);
-    // a retired/superseded/forgotten memory is not "related" to current work.
-    if (row.valid_to !== null || row.tx_expired !== null || row.superseded_at !== null) continue;
-
+  for (const { row, similarity } of valid) {
     const confidence = Math.min(similarity, 1);
     // C2: single source of truth for confidence_level cutoffs. Was 0.8/0.5
     // here, which disagreed with memory_search; use the canonical 0.7/0.4

@@ -108,7 +108,25 @@ export function handleQuestions(
   // valid linked memories — is included instead of being dropped for yielding no
   // join row (G3-F9b).
   {
-    const f = scopeFilter('m', input);
+    // battle-v9 rebattle-2 (HIGH cross-tenant leak): the `entities` table is
+    // GLOBAL (no namespace; one row per normalized_name with a global
+    // mention_count). The old query scanned it with only a global
+    // `e.mention_count >= N` filter, so a forced-namespace deployment surfaced a
+    // FOREIGN-tenant entity name + its global mention_count in a tenant that
+    // never mentioned it (linked=0 passed the HAVING). Mirror the graph/
+    // communities fix: when a scope/namespace IS in play, gate the entity to the
+    // tenant subgraph with an EXISTS over the caller's own memories (live OR
+    // retired — the strongest gap case is "mentioned, but every link is now
+    // retired"). The unforced path keeps the exact original query (no gate), so
+    // mention_count semantics and the 0-live-link surfacing are unchanged.
+    const f = scopeFilter('m', input); // linked subquery (alias m)
+    const scoped = input.namespace !== undefined || input.scope !== undefined;
+    const h = scopeFilter('m2', input); // tenant-membership gate (alias m2)
+    const gate = scoped
+      ? `AND EXISTS (SELECT 1 FROM memory_entities me2
+                       JOIN memories m2 ON m2.id = me2.memory_id
+                      WHERE me2.entity_id = e.id${h.sql})`
+      : '';
     const rows = db
       .prepare<unknown[], { name: string; mention_count: number; linked: number }>(
         `SELECT e.name AS name, e.mention_count AS mention_count,
@@ -119,11 +137,12 @@ export function handleQuestions(
                     AND ${live('m')}${f.sql}) AS linked
            FROM entities e
           WHERE e.mention_count >= ${MIN_MENTIONS}
+          ${gate}
           GROUP BY e.id
          HAVING linked <= ${MAX_LINKED_MEMORIES}
           ORDER BY e.name`,
       )
-      .all(...f.params);
+      .all(...f.params, ...(scoped ? h.params : []));
     for (const r of rows) {
       questions.push({
         type: 'gap',

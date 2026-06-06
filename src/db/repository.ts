@@ -731,12 +731,22 @@ export function updateQualityScores(
 // ── Duplicate Detection ──────────────────────────────────────────────────
 
 /**
+ * vec0's HARD ceiling on `k` in a KNN query — a MATCH with k>4096 throws
+ * "k value in knn query too large". An adaptive-widening cap must never exceed
+ * this (battle-v9 rebattle-2 HIGH: capping at the raw partition count crashed
+ * detectConflicts/findNearDuplicates — and memory_store's NLI path — on any
+ * partition with >4096 vec rows). Past 4096 nearer retired rows in ONE partition,
+ * starvation degrades BENIGNLY (no crash, no data loss); a complete fix needs a
+ * non-vec0 scan path, deferred as a low-value tail (vec0 retains retired/chunk
+ * rows, so a busy partition can reach this over years).
+ */
+export const VEC0_MAX_K = 4096;
+
+/**
  * Count rows in memories_vec, optionally within a (scope, namespace) partition.
- * The TRUE upper bound for an adaptive-widening KNN cap: widening k beyond this
- * can never surface a new row, and capping AT it guarantees the whole partition
- * is scanned (so a live near-dup behind any number of retired rows is found).
- * vec0 supports COUNT with a metadata filter (verified). battle-v9 rebattle: the
- * earlier fixed MAX_K=4096 re-introduced starvation past 4096 retired rows.
+ * The upper bound for an adaptive-widening KNN cap (clamped to {@link VEC0_MAX_K}
+ * by callers): widening k beyond the partition's row count can never surface a
+ * new row. vec0 supports COUNT with a metadata filter (verified).
  */
 export function vecRowCount(db: Database.Database, partition?: MemoryPartition): number {
   const row = partition
@@ -809,7 +819,9 @@ export function findNearDuplicates(
       }
 
       if (results.length >= limit || hitThreshold || rows.length < k) break;
-      if (maxK === undefined) maxK = vecRowCount(db, partition);
+      // Clamp to vec0's hard k-ceiling so a >4096-row partition can't crash the
+      // KNN (rebattle-2 HIGH); past that, retired-row starvation is benign.
+      if (maxK === undefined) maxK = Math.min(vecRowCount(db, partition), VEC0_MAX_K);
       if (k >= maxK) break;
       k = Math.min(k * GROWTH, maxK);
     }

@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import { cosineSimFromL2 } from '../search/scoring.js';
 import { NOW_ISO_SQL } from '../db/predicates.js';
-import { vecRowCount } from '../db/repository.js';
+import { vecRowCount, VEC0_MAX_K } from '../db/repository.js';
 
 export type ConflictType = 'superseded' | 'contradicted' | 'duplicate';
 
@@ -98,7 +98,8 @@ export function detectConflicts(
     const reachedBoundary =
       candidates.length > 0 && candidates[candidates.length - 1].distance > CONFLICT_DISTANCE;
     if (reachedBoundary || candidates.length < k) break;
-    if (maxK === undefined) maxK = vecRowCount(db, partition);
+    // Clamp to vec0's hard k-ceiling (rebattle-2 HIGH) — never request k>4096.
+    if (maxK === undefined) maxK = Math.min(vecRowCount(db, partition), VEC0_MAX_K);
     if (k >= maxK) break;
     k = Math.min(k * GROWTH, maxK);
   }

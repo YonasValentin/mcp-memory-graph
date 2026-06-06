@@ -1,9 +1,16 @@
 import type Database from 'better-sqlite3';
 import fs from 'node:fs';
+import path from 'node:path';
 import type { MemoryRow } from '../types.js';
 import { rowToMemory } from '../db/repository.js';
 import { getLinksAmong, type MemoryLinkRow, type LinkSourceKind } from '../graph/memory-links.js';
-import { confineToVault } from './writer.js';
+import {
+  confineToVault,
+  isEgressBlocked,
+  safeVaultFilename,
+  safeSubdir,
+  type EgressPolicy,
+} from './writer.js';
 
 /**
  * Pillar 6 (T17): JSON Canvas 1.0 export. Render the agent's memory graph as a
@@ -92,6 +99,13 @@ function snippet(content: string): string {
 export function buildCanvas(
   db: Database.Database,
   opts: { scope?: string; namespace?: string; limit?: number },
+  // battle-v9 rebattle-2 (HIGH): the .canvas board emits each memory's title +
+  // content snippet to a vault file (a free caller path → can land in the
+  // git-shared vault), but unlike the .md write-through and the graph.json
+  // sidecar it skipped the egress cap. Apply the SAME isEgressBlocked predicate
+  // (max_access_level + deny_globs) so a confidential/deny-globbed memory's
+  // content never reaches the board. Undefined = no filtering (unchanged).
+  egress?: EgressPolicy,
 ): JsonCanvas {
   const limit = opts.limit ?? DEFAULT_LIMIT;
 
@@ -106,11 +120,23 @@ export function buildCanvas(
     params.push(opts.namespace);
   }
 
-  const rows = db
+  const fetched = db
     .prepare<unknown[], MemoryRow>(
       `SELECT * FROM memories WHERE ${conditions.join(' AND ')} ORDER BY created_at ASC LIMIT ?`,
     )
     .all(...params, limit);
+
+  // Drop egress-blocked memories before they become nodes; edges are confined to
+  // the surviving node set by getLinksAmong below, so dropped memories' edges
+  // fall out automatically.
+  const rows = egress
+    ? fetched.filter((r) => {
+        const m = rowToMemory(r);
+        const subdir = m.namespace ? safeSubdir(m.namespace) : '';
+        const relPath = subdir ? path.join(subdir, safeVaultFilename(m)) : safeVaultFilename(m);
+        return !isEgressBlocked(m, relPath, egress);
+      })
+    : fetched;
 
   const n = rows.length;
   const cols = n > 0 ? Math.ceil(Math.sqrt(n)) : 1;

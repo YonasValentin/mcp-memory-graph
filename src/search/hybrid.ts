@@ -3,7 +3,7 @@ import type { EmbeddingProvider, SearchOptions, SearchResult, SearchResultSummar
 import { applyTemporalDecay } from './temporal.js';
 import { computeConfidence, confidenceLabel, computeGroundedness } from './scoring.js';
 import { NOW_ISO_SQL } from '../db/predicates.js';
-import { rowToMemory } from '../db/repository.js';
+import { rowToMemory, VEC0_MAX_K } from '../db/repository.js';
 import { extractEntitiesRegex } from '../graph/entity-extractor.js';
 import { normalizeName, entityIdsByNameOrAlias } from '../graph/entity-store.js';
 import { rankMemoriesByPPR } from '../graph/pagerank.js';
@@ -97,23 +97,45 @@ export async function hybridSearch(
       // 0.1.10-alpha.4 declares scope/namespace as filterable metadata columns
       // and supports `=`/`!=` on them (verified), so the same predicate the
       // post-filter applies is pushed down here, mirroring findNearDuplicates.
-      const vecClauses: string[] = ['embedding MATCH ?', 'k = ?'];
-      const vecParams: unknown[] = [Buffer.from(queryEmb.buffer), oversampleLimit];
+      // The same partition/privacy predicate, built once for BOTH the vec0 MATCH
+      // and the retired-row count below.
+      const partConds: string[] = [];
+      const partParams: unknown[] = [];
       if (options.scope) {
-        vecClauses.push('scope = ?');
-        vecParams.push(options.scope);
+        partConds.push('scope = ?');
+        partParams.push(options.scope);
       } else {
-        vecClauses.push("scope != 'user'");
+        partConds.push("scope != 'user'");
       }
       if (options.namespace) {
-        vecClauses.push('namespace = ?');
-        vecParams.push(options.namespace);
+        partConds.push('namespace = ?');
+        partParams.push(options.namespace);
       }
+
+      // battle-v9 rebattle-2 (retired-row starvation, LOW): vec0 retains
+      // retired/superseded rows (as_of) and they're dropped only at the final
+      // fetch — so with a fixed k=oversampleLimit, retired rows nearer than live
+      // ones starve vector recall (masked in hybrid by the keyword/PPR arms, but
+      // it fully bites search_mode='vector' / zero-keyword-overlap paraphrase
+      // recall). Inflate k by the partition's retired-row count so oversampleLimit
+      // LIVE rows still survive, clamped to vec0's hard k-ceiling (past which
+      // degradation is benign).
+      const retiredCount = (
+        db
+          .prepare<unknown[], { c: number }>(
+            `SELECT COUNT(*) AS c FROM memories
+             WHERE ${partConds.join(' AND ')}
+               AND (valid_to IS NOT NULL OR tx_expired IS NOT NULL OR superseded_at IS NOT NULL)`,
+          )
+          .get(...partParams)?.c ?? 0
+      );
+      const vecK = Math.min(oversampleLimit + retiredCount, VEC0_MAX_K);
+
       const rows = db.prepare(
         `SELECT rowid, distance FROM memories_vec
-         WHERE ${vecClauses.join(' AND ')}
+         WHERE embedding MATCH ? AND k = ?${options.scope ? ' AND scope = ?' : " AND scope != 'user'"}${options.namespace ? ' AND namespace = ?' : ''}
          ORDER BY distance`
-      ).all(...vecParams) as { rowid: number; distance: number }[];
+      ).all(Buffer.from(queryEmb.buffer), vecK, ...partParams) as { rowid: number; distance: number }[];
 
       for (const row of rows) {
         vectorResults.set(row.rowid, row.distance);
