@@ -235,6 +235,8 @@ importance = 0.3 * current_score + 0.4 * normalized_access_frequency + 0.3 * rec
 
 Memories that are never accessed gradually lose importance. Auto-extracted memories start with a lower score and get pruned if they are never useful.
 
+> **Note on access reinforcement.** The formula above is the periodic recompute run by the `consolidate` **Score** stage. In addition, each read (`memory_get` / `memory_search` / `memory_related`) applies a small immediate reinforcement (`importance_score += 0.03`, capped at 1.0) so a frequently-surfaced memory ranks a little higher (search uses importance as a mild rank multiplier, `1 + importance * 0.5`). A memory read ~20+ times therefore approaches the 1.0 ceiling from reads alone, and `consolidate` re-baselines it on the next run. This is intentional recency/popularity weighting — set an explicit `importance_score` on `memory_store`/`memory_update` if you want a fixed value that reads don't drift.
+
 ### Knowledge Gap Detection
 
 When a search returns zero results, the query is logged. During the dream cycle's gap detection stage, these zero-result queries are surfaced so you can identify what knowledge is missing from the memory store.
