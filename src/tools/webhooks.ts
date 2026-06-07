@@ -49,6 +49,14 @@ function safeView(t: WebhookTargetRow): Record<string, unknown> {
 export async function handleWebhook(
   db: Database.Database,
   input: WebhookInput,
+  // battle-v16 WH-TENANCY: on a namespace-pinned deployment (MCP_API_NAMESPACE /
+  // forcedApiNamespace) the caller may only manage targets in its own tenant.
+  // Without this a pinned tenant could (a) register a NULL-namespace target,
+  // which the dispatcher treats as a WILDCARD that catches EVERY tenant's event
+  // metadata (emitter.ts), or a foreign-tenant target; and (b) list/delete other
+  // tenants' targets. When undefined (single-tenant / unforced) behaviour is
+  // unchanged.
+  forcedNamespace?: string,
 ): Promise<Record<string, unknown>> {
   const action = input.action ?? 'list';
 
@@ -64,17 +72,26 @@ export async function handleWebhook(
     case 'register': {
       if (!input.url) throw new Error('memory_webhook action=register requires a url');
       // registerWebhookTarget runs the SSRF guard and throws on a bad URL.
+      // Under forcing the namespace is pinned (caller input cannot widen it to
+      // null/all or point at another tenant).
       const t = registerWebhookTarget(db, {
         url: input.url,
         secret: input.secret,
         events: input.events,
         scope: input.scope,
-        namespace: input.namespace,
+        namespace: forcedNamespace ?? input.namespace,
       });
       return { action, enabled: true, target: safeView(t) };
     }
     case 'delete': {
       if (!input.id) throw new Error('memory_webhook action=delete requires an id');
+      // Under forcing, only a target owned by the pinned tenant may be deleted.
+      if (forcedNamespace !== undefined) {
+        const owned = listWebhookTargets(db).some(
+          (t) => t.id === input.id && t.namespace === forcedNamespace,
+        );
+        if (!owned) return { action, enabled: true, deleted: false };
+      }
       return { action, enabled: true, deleted: deleteWebhookTarget(db, input.id) };
     }
     case 'dispatch': {
@@ -82,7 +99,12 @@ export async function handleWebhook(
       return { action, enabled: true, dispatch: result };
     }
     case 'list':
-    default:
-      return { action: 'list', enabled: true, targets: listWebhookTargets(db).map(safeView) };
+    default: {
+      // Under forcing, only the pinned tenant's targets are visible.
+      const targets = listWebhookTargets(db).filter(
+        (t) => forcedNamespace === undefined || t.namespace === forcedNamespace,
+      );
+      return { action: 'list', enabled: true, targets: targets.map(safeView) };
+    }
   }
 }

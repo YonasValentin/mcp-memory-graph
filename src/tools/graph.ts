@@ -76,7 +76,10 @@ export function handleGraph(
     // Resolve through entity_aliases (shared resolver): a registered alias maps
     // to its entity's canonical normalized_name; a direct entity-name match
     // takes precedence — an alias never shadows a real entity.
-    const normalized = resolveToCanonicalName(db, normalizeName(input.entity));
+    // battle-v16 ALIAS-NS: scope alias/entity resolution to the forced tenant so
+    // a colliding alias can't resolve to a FOREIGN tenant's canonical name (which
+    // the nsFilter selection below would then drop → empty graph for the owner).
+    const normalized = resolveToCanonicalName(db, normalizeName(input.entity), forcedNamespace);
 
     if (depth === 1) {
       // Direct neighbors only. Under forcing, confine BOTH the anchor and the

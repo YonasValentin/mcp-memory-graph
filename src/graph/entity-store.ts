@@ -52,21 +52,38 @@ function djb2(s: string): string {
  * Resolve a single normalized name to its canonical entity normalized_name,
  * following entity_aliases only when the name is not itself an entity. Returns
  * the input unchanged when nothing resolves. Used by the memory_graph lookup.
+ *
+ * battle-v16 ALIAS-NS: when a namespace is given (a pinned/forced deployment),
+ * BOTH the direct-entity and the alias lookup are scoped to it. Without this the
+ * `LIMIT 1` over a shared DB picked whichever tenant inserted first, so a tenant
+ * querying its OWN alias (e.g. "pg") that collides with another tenant's alias
+ * resolved to the FOREIGN canonical name — and the ns-filtered selection in
+ * handleGraph then found nothing (the querying tenant saw an empty graph). Same
+ * wrong-altitude class as battle-v15 PPR-1, which namespaced the PageRank seed
+ * but left this direct alias resolver global.
  */
-export function resolveToCanonicalName(db: Database.Database, normalized: string): string {
+export function resolveToCanonicalName(
+  db: Database.Database,
+  normalized: string,
+  namespace?: string,
+): string {
+  const nsClause = namespace !== undefined ? ' AND namespace = ?' : '';
+  const directParams = namespace !== undefined ? [normalized, namespace] : [normalized];
   const direct = db
-    .prepare<[string], { x: number }>(
-      'SELECT 1 AS x FROM entities WHERE normalized_name = ? LIMIT 1',
+    .prepare<unknown[], { x: number }>(
+      `SELECT 1 AS x FROM entities WHERE normalized_name = ?${nsClause} LIMIT 1`,
     )
-    .get(normalized);
+    .get(...directParams);
   if (direct) return normalized;
+  const aliasNsClause = namespace !== undefined ? ' AND a.namespace = ?' : '';
+  const aliasParams = namespace !== undefined ? [normalized, namespace] : [normalized];
   const alias = db
-    .prepare<[string], { normalized_name: string }>(
+    .prepare<unknown[], { normalized_name: string }>(
       `SELECT e.normalized_name FROM entity_aliases a
        JOIN entities e ON e.id = a.entity_id
-       WHERE a.normalized_alias = ? LIMIT 1`,
+       WHERE a.normalized_alias = ?${aliasNsClause} LIMIT 1`,
     )
-    .get(normalized);
+    .get(...aliasParams);
   return alias ? alias.normalized_name : normalized;
 }
 

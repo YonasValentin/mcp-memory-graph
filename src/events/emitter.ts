@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { enqueueDelivery, listWebhookTargets, targetWantsEvent } from './store.js';
 import { logger } from '../lib/logger.js';
+import { forcedNamespace } from '../lib/tenancy.js';
 
 /**
  * Event emitter for the active-infrastructure bus (M3.1). Mutation tool handlers
@@ -63,11 +64,24 @@ export function emitMemoryEvent(
       timestamp: new Date().toISOString(),
     });
 
+    // battle-v16 re-battle WH-2: on a namespace-pinned deployment a target with
+    // namespace=NULL is a dangerous cross-tenant WILDCARD — it would catch EVERY
+    // tenant's event metadata (and register-forcing can't retire a wildcard that
+    // pre-dates forcing). Under forcing, require an EXACT match to the pinned
+    // namespace, dropping wildcards AND foreign targets; this per-process scoping
+    // also means no foreign delivery is ever enqueued, so the shared dispatch
+    // queue carries nothing cross-tenant (closes the WH-1 dispatch trigger too).
+    // Unforced (single-tenant) behaviour is unchanged: NULL = match-all.
+    const fns = forcedNamespace();
     let enqueued = 0;
     for (const t of targets) {
       if (!targetWantsEvent(t, eventType)) continue;
       if (t.scope != null && t.scope !== (payload.scope ?? null)) continue;
-      if (t.namespace != null && t.namespace !== (payload.namespace ?? null)) continue;
+      if (fns !== undefined) {
+        if (t.namespace !== fns) continue;
+      } else if (t.namespace != null && t.namespace !== (payload.namespace ?? null)) {
+        continue;
+      }
       if (enqueueDelivery(db, t.id, eventType, body) !== null) enqueued += 1;
     }
     return enqueued;
