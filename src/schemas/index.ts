@@ -515,8 +515,19 @@ export const MemoryQueryStructuredSchema = z.object({
       language: z.string().optional(),
       tags: z.array(z.string()).optional().describe('All listed tags must be present (AND)'),
       min_importance: z.number().min(0).max(1).optional(),
-      created_after: z.string().optional().describe('created_at >= this ISO instant'),
-      created_before: z.string().optional().describe('created_at <= this ISO instant'),
+      // battle-v15 F2: validate like as_of/date_from — an unvalidated date
+      // string reaches a lexicographic range slice and silently mis-filters
+      // (space-format wrongly includes same-day rows; garbage returns empty).
+      created_after: z
+        .string()
+        .datetime({ message: 'created_after must be a full ISO-8601 timestamp, e.g. 2026-03-01T00:00:00Z' })
+        .optional()
+        .describe('created_at >= this ISO instant'),
+      created_before: z
+        .string()
+        .datetime({ message: 'created_before must be a full ISO-8601 timestamp, e.g. 2026-03-01T00:00:00Z' })
+        .optional()
+        .describe('created_at <= this ISO instant'),
     })
     .optional(),
   sort: z

@@ -132,6 +132,22 @@ describe('dangling-symlink LEAF target confinement (battle-v5 round-2, CONFIRMED
     expect(fs.existsSync(out)).toBe(true);
     expect(out.startsWith(realVault + path.sep)).toBe(true);
   });
+
+  it('battle-v15 GT-2: throws instead of following a symlink planted at the FALLBACK path', () => {
+    const realVault = fs.realpathSync(vaultDir);
+    const realOutside = fs.realpathSync(outsideDir);
+    // Plant a dangling symlink at exactly the hardcoded fallback name. The name
+    // 'memory canvas' sanitizes to stem 'memory-canvas' → primary relPath is the
+    // SAME 'memory-canvas.canvas' → confineToVault rejects it (symlink leaf) →
+    // the old code fell back to that very path and followed the symlink out.
+    fs.symlinkSync(path.join(realOutside, 'pwned.canvas'), path.join(realVault, 'memory-canvas.canvas'));
+    expect(() => writeCanvasFile({ nodes: [], edges: [] }, realVault, 'memory canvas')).toThrow(
+      /escapes the vault/,
+    );
+    // Nothing was written through the symlink to the outside dir.
+    expect(fs.existsSync(path.join(realOutside, 'pwned.canvas'))).toBe(false);
+    expect(fs.readdirSync(realOutside).length).toBe(0);
+  });
 });
 
 describe('mixed-case tags round-trip losslessly', () => {
