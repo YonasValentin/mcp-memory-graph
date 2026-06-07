@@ -12,6 +12,7 @@
 import { describe, it, expect } from 'vitest';
 import { createTestDb } from '../../testing/test-db.js';
 import { exportGraph, mergeGraphs, type ExportedEntity } from '../../graph/graph-export.js';
+import type { EgressPolicy } from '../../vault/writer.js';
 
 type DB = ReturnType<typeof createTestDb>;
 
@@ -59,6 +60,34 @@ describe('exportGraph entity tenancy (EGR-1/GT-1)', () => {
     seed(db, 'alpha', 'm-alpha', 'e-alpha', 'AlphaThing', 1);
     const artifact = exportGraph(db, { namespace: 'alpha' });
     expect(artifact.entities[0]?.namespace).toBe('alpha');
+  });
+
+  it('rebattle: keeps an entity referenced only by an ingested CHILD chunk when egress drops an unrelated memory', () => {
+    const db = createTestDb();
+    // Public parent doc + a child chunk that is the SOLE mention of entity E.
+    db.prepare(
+      `INSERT INTO memories (id, scope, namespace, content, access_level, created_at, updated_at, valid_from)
+       VALUES ('parent-1', 'project', '', 'parent doc', 'public', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO memories (id, scope, namespace, content, access_level, parent_id, chunk_index, created_at, updated_at, valid_from)
+       VALUES ('child-1', 'project', '', 'chunk mentioning PgChunkEntity', 'public', 'parent-1', 0, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO entities (id, name, normalized_name, type, mention_count, scope, namespace)
+       VALUES ('e-pg', 'PgChunkEntity', 'pgchunkentity', 'concept', 1, 'project', '')`,
+    ).run();
+    db.prepare(`INSERT INTO memory_entities (memory_id, entity_id) VALUES ('child-1', 'e-pg')`).run();
+    // An UNRELATED confidential memory that an egress cap will block (dropped=true).
+    db.prepare(
+      `INSERT INTO memories (id, scope, namespace, content, access_level, created_at, updated_at, valid_from)
+       VALUES ('secret-1', 'project', '', 'unrelated secret', 'confidential', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+    ).run();
+
+    const egress: EgressPolicy = { max_access_level: 'public' };
+    const artifact = exportGraph(db, {}, egress);
+    // The child-chunk-only entity must survive (its parent was not blocked).
+    expect(artifact.entities.map((e) => e.name)).toContain('PgChunkEntity');
   });
 });
 

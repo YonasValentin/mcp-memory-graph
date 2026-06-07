@@ -37,13 +37,36 @@ export interface ParsedMemoryFile {
  * a raw string (no disk) so it is reusable by `memory rebuild` and unit tests.
  */
 /**
- * battle-v15 GT-4: true if the body carries git 3-way conflict markers. Requires
- * BOTH a `<<<<<<<` and a `>>>>>>>` line so a legitimate setext H1 underline
- * (`=======` alone) or ordinary prose with `<`/`>` is never misflagged. Git
- * writes exactly 7 marker chars optionally followed by a label.
+ * battle-v15 GT-4 (+ rebattle FP fix): true if the body carries an UNRESOLVED
+ * git 3-way conflict. Requires the full ordered triple — a `<<<<<<<` line, then
+ * a `=======` separator, then a `>>>>>>>` line — and IGNORES any markers inside
+ * a fenced code block (``` / ~~~). This distinguishes a real accidentally-
+ * committed conflict (markers at column 0, outside any fence) from a legitimate
+ * knowledge note that DOCUMENTS conflict resolution by showing a conflict block
+ * inside a code fence — the latter must NOT be quarantined (that was silent data
+ * loss). A setext H1 underline (`=======` alone) and prose with `<`/`>` are also
+ * never flagged. Git writes exactly 7 marker chars optionally followed by a label;
+ * diff3 (`|||||||`) and CRLF conflicts are still detected.
  */
 export function hasGitConflictMarkers(content: string): boolean {
-  return /^<{7}(?:[ \t].*)?$/m.test(content) && /^>{7}(?:[ \t].*)?$/m.test(content);
+  let inFence = false;
+  let sawStart = false;
+  let sawSep = false;
+  for (const line of content.split(/\r?\n/)) {
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    if (/^<{7}(?:[ \t].*)?$/.test(line)) {
+      sawStart = true;
+    } else if (sawStart && /^={7}(?:[ \t].*)?$/.test(line)) {
+      sawSep = true;
+    } else if (sawSep && /^>{7}(?:[ \t].*)?$/.test(line)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function parseMemoryFile(raw: string): ParsedMemoryFile {

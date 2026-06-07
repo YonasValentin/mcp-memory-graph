@@ -31,6 +31,37 @@ describe('hasGitConflictMarkers', () => {
   it('does NOT flag ordinary prose containing < and > characters', () => {
     expect(hasGitConflictMarkers('use a <div> and compare a > b carefully')).toBe(false);
   });
+
+  it('rebattle FP: does NOT flag a note DOCUMENTING a conflict inside a code fence', () => {
+    const tutorial = [
+      'How to resolve a git merge conflict:',
+      '',
+      '```',
+      '<<<<<<< HEAD',
+      'const timeout = 30;',
+      '=======',
+      'const timeout = 60;',
+      '>>>>>>> feature/timeout',
+      '```',
+      '',
+      'Pick the right side, then delete the markers.',
+    ].join('\n');
+    expect(hasGitConflictMarkers(tutorial)).toBe(false);
+  });
+
+  it('still detects a diff3-style conflict (||||||| base section)', () => {
+    const body = '<<<<<<< HEAD\nours\n||||||| base\nbase\n=======\ntheirs\n>>>>>>> branch';
+    expect(hasGitConflictMarkers(body)).toBe(true);
+  });
+
+  it('still detects a CRLF conflict', () => {
+    const body = '<<<<<<< HEAD\r\nours\r\n=======\r\ntheirs\r\n>>>>>>> branch\r\n';
+    expect(hasGitConflictMarkers(body)).toBe(true);
+  });
+
+  it('does NOT flag a partial fragment missing the >>>>>>> close (already being resolved)', () => {
+    expect(hasGitConflictMarkers('<<<<<<< HEAD\nours\n=======\ntheirs')).toBe(false);
+  });
 });
 
 describe('rebuildFromVault quarantines a conflicted .md (GT-4)', () => {

@@ -757,14 +757,19 @@ Get usage statistics about stored memories.
 
 ### 11. `memory_export`
 
-Export memories as JSON for backup or migration.
+Export the current memory **content** as JSON for portability/migration. This is
+**not a full backup**: it serializes only currently-live, top-level memories —
+it omits edit history (`memory_versions`), the knowledge graph (entities/links),
+condense-undo originals, ingested document child chunks, and soft-forgotten/
+retired rows. For a true disaster-recovery backup, copy the SQLite file
+(`cp ~/.mcp-memory/memory.db …`, see the RUNBOOK); embeddings are recomputed
+deterministically on import.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `scope` | enum | — | Filter export |
 | `namespace` | string | — | Filter export |
 | `department` | string | — | Filter export |
-| `include_embeddings` | boolean | `false` | Include raw vectors (large) |
 
 Max 1000 records per export.
 

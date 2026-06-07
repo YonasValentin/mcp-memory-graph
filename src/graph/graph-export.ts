@@ -207,13 +207,27 @@ export function exportGraph(
   if (dropped) {
     // Keep only entities still linked to a surviving (non-blocked) memory, so an
     // entity name mentioned ONLY by blocked content does not leak.
+    // battle-v15 rebattle: a SURVIVOR is a surviving top-level memory OR a child
+    // chunk whose parent survived — memory_extract_entities links entities to
+    // child-chunk ids too (idSet is top-level only, parent_id IS NULL), so
+    // without rolling chunks up to their parent an entity mentioned ONLY by an
+    // ingested child chunk was wrongly dropped from the artifact the moment
+    // egress blocked ANY memory (completeness defect).
+    const survivors = new Set<string>(idSet);
+    for (const c of db
+      .prepare<[], { id: string; parent_id: string | null }>(
+        'SELECT id, parent_id FROM memories WHERE parent_id IS NOT NULL',
+      )
+      .all()) {
+      if (c.parent_id && idSet.has(c.parent_id)) survivors.add(c.id);
+    }
     const keepEntity = new Set<string>();
     for (const link of db
       .prepare<[], { memory_id: string; entity_id: string }>(
         'SELECT memory_id, entity_id FROM memory_entities',
       )
       .all()) {
-      if (idSet.has(link.memory_id)) keepEntity.add(link.entity_id);
+      if (survivors.has(link.memory_id)) keepEntity.add(link.entity_id);
     }
     entityRows = entityRows.filter((e) => keepEntity.has(e.id));
   }
