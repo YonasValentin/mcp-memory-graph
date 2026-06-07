@@ -9,7 +9,7 @@ import { extractEntitiesRegex } from '../graph/entity-extractor.js';
 import { storeExtractedEntities } from '../graph/entity-store.js';
 import { forcedNamespace } from '../lib/tenancy.js';
 import { buildSimilarityEdges } from '../graph/similarity-edges.js';
-import { parseMemoryFile, type ParsedMemoryFile } from './memory-file.js';
+import { parseMemoryFile, hasGitConflictMarkers, type ParsedMemoryFile } from './memory-file.js';
 import { loadGraphSidecar, restoreLinksFromSidecar } from './sidecar.js';
 import {
   memoryLeafHash,
@@ -40,6 +40,12 @@ export interface RebuildResult {
   memories: number;
   /** memory↔memory links restored from the .memory/graph.json sidecar. */
   linksRestored: number;
+  /**
+   * battle-v15 GT-4: count of .md files quarantined because their body carried
+   * git conflict markers (a sloppily-resolved 3-way merge) — skipped instead of
+   * indexing the markers as live memory content.
+   */
+  conflicted: number;
 }
 
 /** Vault-relative path of the integrity-manifest sidecar (M2.6). */
@@ -165,11 +171,22 @@ export async function rebuildFromVault(
   assertVaultIntegrity(vaultRoot, files);
 
   const indexed: Array<{ id: string; embedding: Float32Array }> = [];
+  let conflicted = 0;
 
   for (const abs of files) {
     const parsed = parseMemoryFile(fs.readFileSync(abs, 'utf-8'));
     // Skip files that aren't our format (no id frontmatter) — e.g. a stray note.
     if (!parsed.id) continue;
+
+    // battle-v15 GT-4: quarantine a file whose body carries git conflict markers
+    // (an accidentally-committed 3-way merge) rather than indexing the markers as
+    // live memory content. The post-merge rebuild hook deletes the integrity
+    // manifest first, so this is the only line of defense for the git-team flow.
+    if (hasGitConflictMarkers(parsed.content)) {
+      conflicted++;
+      logger.warn({ event: 'rebuild_conflict_markers_skipped', id: parsed.id, file: abs });
+      continue;
+    }
 
     const row = rowFromParsed(parsed);
     const embedding = await embedder.embed(
@@ -217,8 +234,8 @@ export async function rebuildFromVault(
   const sidecar = loadGraphSidecar(vaultRoot);
   if (sidecar) linksRestored = restoreLinksFromSidecar(db, sidecar);
 
-  logger.info({ event: 'rebuild_complete', memories: indexed.length, links_restored: linksRestored, vault: vaultRoot });
-  return { memories: indexed.length, linksRestored };
+  logger.info({ event: 'rebuild_complete', memories: indexed.length, links_restored: linksRestored, conflicted, vault: vaultRoot });
+  return { memories: indexed.length, linksRestored, conflicted };
 }
 
 /** Build a MemoryRow from parsed authored fields; derived columns get defaults. */

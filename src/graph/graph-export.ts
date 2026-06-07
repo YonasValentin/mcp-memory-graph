@@ -55,6 +55,13 @@ export interface ExportedEntity {
   normalized_name: string;
   type: string;
   mention_count: number;
+  /**
+   * The owning tenant partition (v14). Optional so a legacy artifact written
+   * before this field is read back as the shared partition (`''`). The merge
+   * collapse keys on (normalized_name, namespace) so two tenants' same-named
+   * entities stay distinct — matching the v14 entities identity.
+   */
+  namespace?: string;
 }
 
 export interface GraphArtifact {
@@ -70,6 +77,7 @@ interface EntityRow {
   normalized_name: string;
   type: string;
   mention_count: number;
+  namespace: string;
 }
 
 // ── Export (pure read; deterministic — no Date/Math.random) ──────────────────
@@ -173,21 +181,53 @@ export function exportGraph(
     : [];
   sortLinks(links);
 
+  // battle-v15 EGR-1/GT-1: the entity SELECT must carry the SAME (scope,
+  // namespace) partition the memory SELECT does. v14 added the namespace column
+  // to entities but this read ignored it, so a forced-namespace sidecar leaked
+  // EVERY tenant's entity names + mention_count (activity volume) into the
+  // pinned tenant's git-committed graph.json. Filter here so the leak is closed
+  // structurally; unforced (single-user) opts.namespace is undefined → whole
+  // graph, unchanged.
+  const entityConds: string[] = [];
+  const entityParams: unknown[] = [];
+  if (opts.scope !== undefined) {
+    entityConds.push('scope = ?');
+    entityParams.push(opts.scope);
+  }
+  if (opts.namespace !== undefined) {
+    entityConds.push('namespace = ?');
+    entityParams.push(opts.namespace);
+  }
+  const entityWhere = entityConds.length ? ` WHERE ${entityConds.join(' AND ')}` : '';
   let entityRows = db
-    .prepare<[], EntityRow>(
-      'SELECT id, name, normalized_name, type, mention_count FROM entities',
+    .prepare<unknown[], EntityRow>(
+      `SELECT id, name, normalized_name, type, mention_count, namespace FROM entities${entityWhere}`,
     )
-    .all();
+    .all(...entityParams);
   if (dropped) {
     // Keep only entities still linked to a surviving (non-blocked) memory, so an
     // entity name mentioned ONLY by blocked content does not leak.
+    // battle-v15 rebattle: a SURVIVOR is a surviving top-level memory OR a child
+    // chunk whose parent survived — memory_extract_entities links entities to
+    // child-chunk ids too (idSet is top-level only, parent_id IS NULL), so
+    // without rolling chunks up to their parent an entity mentioned ONLY by an
+    // ingested child chunk was wrongly dropped from the artifact the moment
+    // egress blocked ANY memory (completeness defect).
+    const survivors = new Set<string>(idSet);
+    for (const c of db
+      .prepare<[], { id: string; parent_id: string | null }>(
+        'SELECT id, parent_id FROM memories WHERE parent_id IS NOT NULL',
+      )
+      .all()) {
+      if (c.parent_id && idSet.has(c.parent_id)) survivors.add(c.id);
+    }
     const keepEntity = new Set<string>();
     for (const link of db
       .prepare<[], { memory_id: string; entity_id: string }>(
         'SELECT memory_id, entity_id FROM memory_entities',
       )
       .all()) {
-      if (idSet.has(link.memory_id)) keepEntity.add(link.entity_id);
+      if (survivors.has(link.memory_id)) keepEntity.add(link.entity_id);
     }
     entityRows = entityRows.filter((e) => keepEntity.has(e.id));
   }
@@ -197,6 +237,7 @@ export function exportGraph(
     normalized_name: e.normalized_name,
     type: e.type,
     mention_count: e.mention_count,
+    namespace: e.namespace,
   }));
   entities.sort((a, b) => cmp(a.id, b.id));
 
@@ -255,10 +296,16 @@ export function mergeGraphs(a: GraphArtifact, b: GraphArtifact): GraphArtifact {
     const cur = entById.get(e.id);
     if (!cur || preferEntity(e, cur)) entById.set(e.id, e);
   }
+  // battle-v15 GT-3: collapse on (normalized_name, namespace) — NOT
+  // normalized_name alone. v14 makes the same concept in two tenants two
+  // distinct entities; collapsing by name alone silently dropped one tenant's
+  // entity. A legacy artifact with no namespace field coalesces to the shared
+  // partition ('') so same-namespace devs still union (the git-team use case).
   const byNorm = new Map<string, ExportedEntity>();
   for (const e of [...entById.values()].sort((x, y) => cmp(x.id, y.id))) {
-    const cur = byNorm.get(e.normalized_name);
-    if (!cur || preferEntity(e, cur)) byNorm.set(e.normalized_name, e);
+    const key = `${e.normalized_name} ${e.namespace ?? ''}`;
+    const cur = byNorm.get(key);
+    if (!cur || preferEntity(e, cur)) byNorm.set(key, e);
   }
   const entities = [...byNorm.values()].sort((x, y) => cmp(x.id, y.id));
 

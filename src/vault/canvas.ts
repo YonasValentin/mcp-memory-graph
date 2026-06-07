@@ -196,12 +196,31 @@ export function writeCanvasFile(canvas: JsonCanvas, vaultPath: string, name: str
       .replace(/ /g, '-') || 'memory-canvas';
 
   const relPath = `${stem}.canvas`;
-  const absTarget = confineToVault(vaultRoot, relPath);
-  // Defence in depth: sanitization above already prevents escape, so the guard
-  // never returns null here in practice.
-  /* c8 ignore next */
-  const target = absTarget ?? `${vaultRoot}/memory-canvas.canvas`;
+  // battle-v15 GT-2: the old `?? \`${vaultRoot}/memory-canvas.canvas\`` fallback
+  // wrote to a HARDCODED path WITHOUT re-running the lstat confinement guard, so
+  // a planted dangling symlink at exactly that fallback path (reached when the
+  // primary stem sanitizes to 'memory-canvas' and is itself a rejected symlink)
+  // was followed OUTSIDE the vault. Route the fallback through confineToVault too
+  // and THROW if neither resolves — never write to an unconfined path.
+  const FALLBACK_REL = 'memory-canvas.canvas';
+  const absTarget = confineToVault(vaultRoot, relPath) ?? confineToVault(vaultRoot, FALLBACK_REL);
+  if (!absTarget) {
+    throw new Error('canvas write target escapes the vault (symlinked path rejected)');
+  }
 
-  fs.writeFileSync(target, JSON.stringify(canvas, null, 2), 'utf-8');
-  return target;
+  // O_NOFOLLOW closes the lstat→write TOCTOU: if the leaf is swapped for a
+  // symlink between the guard and the write, open fails (ELOOP) instead of
+  // following it. A normal regular-file overwrite is unaffected. openSync takes
+  // the numeric flag set directly (writeFileSync's flag option is typed string).
+  const fd = fs.openSync(
+    absTarget,
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW,
+    0o644,
+  );
+  try {
+    fs.writeFileSync(fd, JSON.stringify(canvas, null, 2), 'utf-8');
+  } finally {
+    fs.closeSync(fd);
+  }
+  return absTarget;
 }

@@ -437,9 +437,22 @@ export async function handleConsolidate(
   report.knowledge_gaps = readKnowledgeGaps();
 
   // ── Rotate old access log entries ─────────────────────────────────────
+  // battle-v15 BYID-2: under a forced namespace this DELETE was globally
+  // unscoped, so one tenant's consolidate pruned ANOTHER tenant's >90d
+  // access-log rows (cross-tenant write). Restrict to the consolidated
+  // partition's own memories when scoped; unforced (filterClause empty) keeps
+  // the original store-wide rotation (and still prunes orphaned log rows).
   if (!dryRun) {
     try {
-      db.prepare("DELETE FROM memory_access_log WHERE accessed_at < datetime('now', '-90 days')").run();
+      if (filterClause) {
+        db.prepare(
+          `DELETE FROM memory_access_log
+            WHERE accessed_at < datetime('now', '-90 days')
+              AND memory_id IN (SELECT id FROM memories WHERE 1=1${filterClause})`,
+        ).run(...filterParams);
+      } else {
+        db.prepare("DELETE FROM memory_access_log WHERE accessed_at < datetime('now', '-90 days')").run();
+      }
     } catch (err) /* c8 ignore start */ {
       report.errors.push(
         `Access log rotation failed: ${err instanceof Error ? err.message : String(err)}`,

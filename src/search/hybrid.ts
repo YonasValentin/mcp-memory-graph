@@ -60,7 +60,7 @@ export interface HybridSearchResponse {
  * "Kubernetes"). Returns deduped entity ids; empty when nothing links (caller
  * then skips PPR). Exported for direct seed-path testing.
  */
-export function linkQueryEntities(db: Database.Database, query: string): string[] {
+export function linkQueryEntities(db: Database.Database, query: string, namespace?: string): string[] {
   const candidates = new Set<string>();
   for (const token of query.split(/\s+/)) {
     const n = normalizeName(token);
@@ -70,7 +70,9 @@ export function linkQueryEntities(db: Database.Database, query: string): string[
     const n = normalizeName(entity.name);
     if (n.length > 0) candidates.add(n);
   }
-  return entityIdsByNameOrAlias(db, [...candidates]);
+  // battle-v15 PPR-1: scope the seed resolution to the forced namespace so the
+  // PPR graph seeds only in-tenant entities.
+  return entityIdsByNameOrAlias(db, [...candidates], namespace);
 }
 
 export async function hybridSearch(
@@ -203,12 +205,12 @@ export async function hybridSearch(
   const pprRanking = new Map<number, number>();
   const pprRowids: number[] = [];
   if (options.use_graph) {
-    const seeds = linkQueryEntities(db, options.query);
+    const seeds = linkQueryEntities(db, options.query, options.namespace);
     if (seeds.length > 0) {
       const memoryIdToRowid = db.prepare<[string], { rowid: number }>(
         'SELECT rowid FROM memories WHERE id = ?',
       );
-      const ranked = rankMemoriesByPPR(db, seeds, { limit: oversampleLimit });
+      const ranked = rankMemoriesByPPR(db, seeds, { limit: oversampleLimit, namespace: options.namespace });
       let rank = 0;
       for (const { memory_id } of ranked) {
         const row = memoryIdToRowid.get(memory_id);

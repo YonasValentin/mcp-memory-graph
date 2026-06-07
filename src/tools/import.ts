@@ -5,6 +5,31 @@ import { insertMemory, getMemoryById, updateMemory } from '../db/repository.js';
 import { computeContentSignal } from '../search/content-signals.js';
 import { notify, rowToEventPayload } from '../events/hooks.js';
 
+/**
+ * battle-v15 F1: normalize an imported timestamp to canonical ISO-Z. A restore
+ * tool must REPAIR a legacy/space-format timestamp rather than reject the whole
+ * backup item — but it MUST NOT persist a space-separated timestamp verbatim,
+ * because space (0x20) sorts before 'T' (0x54), so a future expires_at on the
+ * same calendar day as NOW would collate < NOW_ISO and silently hide the live
+ * row from default search/list. Space-format → ISO-Z; an unparseable value →
+ * the fallback (caller's `now` for created/updated, `null` for expires_at).
+ */
+export function normalizeImportTimestamp(
+  ts: string | null | undefined,
+  fallback: string | null,
+): string | null {
+  if (ts == null || ts === '') return fallback;
+  let s = ts;
+  // 'YYYY-MM-DD HH:MM:SS[.fff]' (SQLite space format) → ISO; append Z if no zone.
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(s)) {
+    s = s.replace(' ', 'T');
+    if (!/[Zz]$|[+-]\d{2}:?\d{2}$/.test(s)) s += 'Z';
+  }
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return fallback;
+  return d.toISOString();
+}
+
 interface ImportItem {
   id?: string;
   content: string;
@@ -82,6 +107,19 @@ export async function handleImport(
     for (const item of validItems) {
       item.namespace = forcedNamespace;
       remapped++;
+      // battle-v15 BYID-1: REMAP relabels the row's OWN namespace, but a copied
+      // parent_id is an edge OUT of the forced tenant. An item whose parent_id
+      // points at another tenant's document would (a) surface as a "chunk" of
+      // that doc via memory_get(include_chunks) and (b) be FK-cascade-deleted
+      // when the foreign parent is removed. Drop any parent_id that doesn't
+      // resolve to a memory in the forced namespace (same treatment as a
+      // foreign-owned id below) so no cross-tenant parent edge is ever stored.
+      if (item.parent_id != null) {
+        const parent = getMemoryById(db, item.parent_id);
+        if (!parent || parent.namespace !== forcedNamespace) {
+          item.parent_id = null;
+        }
+      }
     }
   }
 
@@ -136,7 +174,10 @@ export async function handleImport(
                 /* c8 ignore next */
                 ? JSON.stringify(item.metadata)
                 : existing.metadata,
-              expires_at: item.expires_at ?? existing.expires_at,
+              expires_at:
+                item.expires_at != null
+                  ? normalizeImportTimestamp(item.expires_at, existing.expires_at)
+                  : existing.expires_at,
             };
 
             // battle-v9 rebattle: the new-row branch preserves importance_score /
@@ -188,10 +229,12 @@ export async function handleImport(
           // Preserve the original timestamps on restore (fall back to now only
           // when the source omitted them) so temporal decay / age / as_of stay
           // truthful; agent_id keeps multi-actor attribution across backup/restore.
-          created_at: item.created_at ?? now,
-          updated_at: item.updated_at ?? now,
+          // battle-v15 F1: normalize to ISO-Z so a space-format backup can't
+          // mis-collate (created_at is also written to valid_from on insert).
+          created_at: normalizeImportTimestamp(item.created_at, now)!,
+          updated_at: normalizeImportTimestamp(item.updated_at, now)!,
           agent_id: item.agent_id ?? null,
-          expires_at: item.expires_at ?? null,
+          expires_at: normalizeImportTimestamp(item.expires_at, null),
           access_count: 0,
           last_accessed_at: null,
           // Preserve an explicitly-set importance_score (export emits it) so a

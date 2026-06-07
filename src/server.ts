@@ -431,6 +431,13 @@ export function createServer(): McpServer {
     MemoryVerifySchema.shape,
     instrument('memory_verify', async (input) => {
       const parsed = MemoryVerifySchema.parse(input);
+      // battle-v15 RT-1: by-id verify must refuse a foreign-namespace id like
+      // every other by-id read tool (memory_get/versions). Without this guard a
+      // pinned tenant could confirm a foreign memory EXISTS and read its signed-
+      // integrity status (verified/unsigned/tampered/untrusted) — an existence +
+      // provenance oracle across the v14 boundary. Batch mode (no id) is already
+      // scoped by withForcedNs.
+      if (parsed.id && !idInForcedNs(parsed.id)) throw new Error('Memory not found');
       return handleVerify(getDb(), withForcedNs(parsed));
     }),
   );

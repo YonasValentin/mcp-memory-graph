@@ -35,11 +35,15 @@ export function handleGet(
     return { memory, links, backlinks };
   }
 
+  // battle-v15 BYID-1 (defense-in-depth): a document's chunks share its
+  // (scope,namespace) — ingest always creates them that way. Scope the chunk
+  // read to the parent's partition so a hostile row that planted parent_id at a
+  // foreign document can never surface as one of its chunks.
   const chunkRows = db
-    .prepare<[string], MemoryRow>(
-      'SELECT *, rowid FROM memories WHERE parent_id = ? ORDER BY chunk_index',
+    .prepare<[string, string, string | null], MemoryRow>(
+      'SELECT *, rowid FROM memories WHERE parent_id = ? AND scope = ? AND namespace IS ? ORDER BY chunk_index',
     )
-    .all(input.id);
+    .all(input.id, row.scope, row.namespace ?? null);
 
   const chunks = chunkRows.map(rowToMemory);
   return { memory, chunks, links, backlinks };
