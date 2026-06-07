@@ -36,6 +36,16 @@ export interface ParsedMemoryFile {
  * lossless round-trip the vault-as-source-of-truth model depends on. Operates on
  * a raw string (no disk) so it is reusable by `memory rebuild` and unit tests.
  */
+/**
+ * battle-v15 GT-4: true if the body carries git 3-way conflict markers. Requires
+ * BOTH a `<<<<<<<` and a `>>>>>>>` line so a legitimate setext H1 underline
+ * (`=======` alone) or ordinary prose with `<`/`>` is never misflagged. Git
+ * writes exactly 7 marker chars optionally followed by a label.
+ */
+export function hasGitConflictMarkers(content: string): boolean {
+  return /^<{7}(?:[ \t].*)?$/m.test(content) && /^>{7}(?:[ \t].*)?$/m.test(content);
+}
+
 export function parseMemoryFile(raw: string): ParsedMemoryFile {
   const { frontmatter: fm, body } = splitFrontmatter(raw);
   // memoryToMarkdown strips trailing whitespace and appends one "\n" as the
