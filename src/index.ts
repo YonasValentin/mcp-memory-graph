@@ -6,12 +6,13 @@ const command = process.argv[2];
 const SERVER_COMMANDS = new Set([undefined, 'serve', 'http']);
 
 async function main(): Promise<void> {
-  // battle-v9 gate: warn once at startup if the experimental multi-tenant
-  // (MCP_API_NAMESPACE shared-DB) mode is enabled. Only for server-starting
+  // battle-v14: note once at startup which tenancy mode is active when the
+  // shared-DB multi-tenant mode (MCP_API_NAMESPACE) is enabled, pointing at the
+  // strongest boundary (separate DB per tenant). Only for server-starting
   // commands — one-off CLI commands stay quiet.
   if (SERVER_COMMANDS.has(command)) {
-    const { warnIfExperimentalTenancy } = await import('./lib/tenancy.js');
-    warnIfExperimentalTenancy();
+    const { noteTenancyMode } = await import('./lib/tenancy.js');
+    noteTenancyMode();
   }
   switch (command) {
     case 'init': {

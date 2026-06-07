@@ -2,31 +2,33 @@
 
 ## TL;DR
 
-- **Single-user / local (default — `MCP_API_NAMESPACE` unset): SUPPORTED, hardened.** This is the production mode. One user (or one trusted project) per database file. All recall, privacy (`scope='user'`), and bitemporal guarantees hold.
-- **Multiple isolated tenants → one database file per tenant.** A separate DB file is a hard, structural isolation boundary with no shared state. This is the recommended way to serve multiple tenants.
-- **Shared DB pinned to one namespace via `MCP_API_NAMESPACE` (multi-tenant on a SHARED database): EXPERIMENTAL — not hardened for adversarial cross-tenant isolation.** A startup warning is emitted when it is enabled.
+- **Single-user / local (default — `MCP_API_NAMESPACE` unset): supported, hardened.** This is the everyday production mode. One user (or one trusted project) per database file. All recall, privacy (`scope='user'`), and bitemporal guarantees hold, and the entity/knowledge-graph behaves exactly as before v14 (one node per concept, cross-project bridge intact).
+- **Shared DB pinned to one namespace via `MCP_API_NAMESPACE` (multi-tenant on a SHARED database): supported (schema v14, per-namespace isolation).** Every request is forced to the pinned namespace and a clean adversarial convergence battle confirmed cross-tenant isolation across the corpus *and* the knowledge graph. A non-alarming startup note points operators at the strongest boundary.
+- **Strongest possible boundary → one database file per tenant.** A separate DB file is a hard, structural isolation boundary with no shared state at all. Use it for mutually-distrusting tenants or strict compliance.
 
-## Why shared-DB multi-tenancy is experimental
+## What schema v14 changed
 
-`MCP_API_NAMESPACE` pins every request on a shared instance to one namespace and is enforced as a single policy (`src/lib/tenancy.ts`): force the namespace into corpus queries, and refuse by-id reads of another namespace's memory. For the **memory rows themselves** (the `memories` table, which carries `scope`/`namespace`) this is robust and battle-tested.
+Earlier the knowledge-graph tables were global (no namespace column), so a shared-DB deployment had to re-derive tenancy in every reader — and adversarial battles kept surfacing new consumers that missed it. **Schema v14 makes isolation structural:**
 
-The gap is the **knowledge-graph layer**. These tables are GLOBAL — they have no `namespace` column by design (an entity like "PostgreSQL" is one node shared across all content):
+- The five graph tables — `entities`, `entity_aliases`, `entity_relationships`, `memory_links`, `memory_conflicts` — gained a `(scope, namespace)` dimension.
+- **Entity identity is keyed by `(normalized_name, namespace)`** (namespace-only partition; scope never partitions). The same concept in two tenants is two separate rows, and `mention_count` is per-tenant for free.
+- Write paths stamp the owning memory's namespace (`forcedNamespace() ?? ''`). `createMemoryLink` refuses a cross-namespace edge under forcing; conflict rows stamp the writing memory's partition.
+- The v14 migration collapses a pre-v14 graph into the single shared partition (`namespace=''`), merging any duplicate `normalized_name` rows first so the new unique identity index builds.
 
-- `entities`, `entity_relationships`, `entity_aliases`
-- `memory_links`
-- `memory_conflicts`
-- communities (computed on demand over the entity graph)
+### The two deployment modes, precisely
 
-Because the graph is shared, every tool that reads it under a forced namespace must re-derive tenancy per-consumer (scope the entity set to the tenant's memories, filter joins on `namespace`, avoid emitting a global aggregate count, gate a graph walk to the tenant's partition). Four adversarial "battle" waves (session 10, 2026) hardened the known consumers — `memory_search`, `memory_graph`, `memory_communities`, `memory_questions`, `memory_health`, `memory_insights`, `memory_related`, `memory_unlinked_mentions`, `memory_query`, `memory_revalidate`, `memory_canvas`, the vault export surfaces — but the waves did **not** fully converge: per-tool fixes keep surfacing more consumers because the invariant is not enforced structurally.
+- **Single-user (unforced):** all entities live in the shared `''` partition → one row per concept, the global↔project bridge preserved exactly as pre-v14. Behaviour is byte-identical to before v14.
+- **Multi-tenant (forced = `T`):** entities live in namespace `T`; cross-tenant content is separate rows; reads filter `namespace = T`, so a migrated pre-v14 graph (in `''`) is **invisible** to a forced tenant and each tenant rebuilds its own graph on fresh writes. Total isolation — a forced tenant surfaces zero of another tenant's id / name / title / content / relationship / community / count.
 
-**The durable fix is architectural** (a planned milestone): add a `namespace`/`scope` dimension to the shared graph tables (or partition the entity graph per tenant) so isolation is enforced by the schema, not re-implemented in every reader. Until that ships, treat shared-DB `MCP_API_NAMESPACE` as experimental.
+## Verification
 
-## Known residual classes when `MCP_API_NAMESPACE` is forced on a shared DB
+`MCP_API_NAMESPACE` isolation is enforced in one place (`src/lib/tenancy.ts`): force the namespace into corpus queries, refuse by-id reads/mutations of another namespace's memory, and (v14) scope the graph tables structurally. It is exercised by:
 
-1. **Shared-table reads** — a newly added read tool that joins a global graph table without per-namespace scoping can surface another tenant's entity name / memory id / title / relationship.
-2. **Global-aggregate side-channels** — emitting a global counter from a shared table (`entities.mention_count`, conflict counts) can disclose another tenant's *activity volume* even when names are scoped.
+- `scripts/battle/sim-multitenant.mjs` — 3 tenants on one shared DB with overlapping entity names: **0 cross-tenant leaks** across 10 read tools, write isolation held, `collision_exercised: true`.
+- A multi-wave adversarial **convergence battle** (attackers across read-leak / write-partition / single-user-regression / migration / aggregate-side-channel / bitemporal-by-id-REST lenses, each candidate refuted-or-confirmed by 3 independent skeptics) that reached a **clean 0-confirmed wave**.
+- The full real-runtime suite: `sim-solo`, `sim-team`, `sim-longterm` (1400+ writes, cross-ns isolation held), `verify-e2e-hardening` (foreign-id reads/mutations rejected over real `POST /mcp` dispatch), plus build / 1500+ unit tests / bench / coverage.
 
-Both are mitigated in the shipped consumers; the risk is regressions/new consumers until the schema carries namespace.
+> **Honest caveat:** testing proves *bugs-found*, not *bugs-absent*. v14 makes shared-DB isolation structural and battle-converged, but a separate DB file per tenant is still the only boundary with *no shared state to reason about*. Choose it when the cost of a single missed reader outweighs the convenience of one DB.
 
 ## Recommendation
 
@@ -34,6 +36,5 @@ Both are mitigated in the shipped consumers; the risk is regressions/new consume
 |---|---|
 | One user / one project | Default mode. Nothing to configure. |
 | Several teammates sharing recall | Git-shared Obsidian vault (the "Bruno model") — plain `.md` per memory, union-merged. No shared live DB. |
-| Hard isolation between distinct tenants | **One database file per tenant** (separate `MCP_MEMORY_DB` path / separate process). |
-| Single shared DB, many namespaces, mutually trusting | `MCP_API_NAMESPACE` is fine — the corpus-row isolation holds; the graph side-channels matter only against an *adversarial* co-tenant. |
-| Single shared DB, mutually distrusting tenants | **Not yet supported** — wait for the architectural fix, or use one DB per tenant. |
+| Many namespaces on one shared DB | `MCP_API_NAMESPACE` per instance — supported; v14 per-namespace isolation covers corpus + graph. |
+| Mutually-distrusting tenants / strict compliance | **One database file per tenant** (separate `MCP_MEMORY_DB_PATH` / separate process) — the strongest boundary. |
