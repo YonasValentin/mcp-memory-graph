@@ -82,6 +82,19 @@ export async function handleImport(
     for (const item of validItems) {
       item.namespace = forcedNamespace;
       remapped++;
+      // battle-v15 BYID-1: REMAP relabels the row's OWN namespace, but a copied
+      // parent_id is an edge OUT of the forced tenant. An item whose parent_id
+      // points at another tenant's document would (a) surface as a "chunk" of
+      // that doc via memory_get(include_chunks) and (b) be FK-cascade-deleted
+      // when the foreign parent is removed. Drop any parent_id that doesn't
+      // resolve to a memory in the forced namespace (same treatment as a
+      // foreign-owned id below) so no cross-tenant parent edge is ever stored.
+      if (item.parent_id != null) {
+        const parent = getMemoryById(db, item.parent_id);
+        if (!parent || parent.namespace !== forcedNamespace) {
+          item.parent_id = null;
+        }
+      }
     }
   }
 
