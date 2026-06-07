@@ -184,16 +184,27 @@ export function recordConflicts(
      WHERE id = ?`,
   );
   const insertStmt = db.prepare(`
-    INSERT INTO memory_conflicts (id, old_memory_id, new_memory_id, conflict_type, description)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO memory_conflicts (id, old_memory_id, new_memory_id, conflict_type, description, scope, namespace)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
+
+  // v14: the conflict carries the partition of the NEW (writing) memory so a
+  // tenant-scoped conflict read (memory_health/insights) never counts or
+  // surfaces a foreign tenant's conflicts. namespace NULL → '' sentinel.
+  const np = db
+    .prepare<[string], { scope: string; namespace: string | null }>(
+      'SELECT scope, namespace FROM memories WHERE id = ?',
+    )
+    .get(newMemoryId);
+  const nScope = np?.scope ?? 'global';
+  const nNs = np?.namespace ?? '';
 
   for (const c of conflicts) {
     if (c.type === 'superseded') {
       supersedeStmt.run(newMemoryId, c.existing_memory_id);
     }
     if (c.type === 'duplicate' || c.type === 'superseded' || c.type === 'contradicted') {
-      insertStmt.run(randomUUID(), c.existing_memory_id, newMemoryId, c.type, c.description);
+      insertStmt.run(randomUUID(), c.existing_memory_id, newMemoryId, c.type, c.description, nScope, nNs);
     }
   }
 }

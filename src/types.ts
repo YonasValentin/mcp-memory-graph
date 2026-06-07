@@ -287,7 +287,10 @@ export interface MemoryStats {
   by_department: Record<string, number>;
   by_document_type: Record<string, number>;
   total_content_bytes: number;
-  database_size_bytes: number;
+  /** Whole-DB size (page_count * page_size). null on a namespace-forced
+   *  deployment, where a whole-DB metric would leak other tenants' write volume
+   *  (battle-v14 F4). */
+  database_size_bytes: number | null;
   expired_count: number;
   /** M6.2 compute-governor window snapshot — present only when the governor is
    *  enabled (MCP_COMPUTE_GOVERNOR_MODE != off), so warn mode is observable. */

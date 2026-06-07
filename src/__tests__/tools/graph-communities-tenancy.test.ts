@@ -12,7 +12,7 @@
  * (restrict the entity set to the tenant's subgraph AND filter the memory join
  * to the forced namespace, since a shared entity still links foreign memories).
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -29,20 +29,27 @@ const embedder = new MockEmbeddingProvider();
 beforeEach(() => {
   db = createTestDb();
 });
+afterEach(() => {
+  delete process.env.MCP_API_NAMESPACE;
+});
 
 async function seedTwoTenants() {
-  // Both memories mention the shared entity "redis" so the graph links them via
-  // ONE entities row — the cross-tenant bridge.
+  // Each tenant runs a per-tenant FORCED server (G5: the entity graph is
+  // partitioned by the forced namespace), so each gets its OWN "redis" row in its
+  // namespace. A forced read sees only its own; an unforced read browses both.
+  process.env.MCP_API_NAMESPACE = 'tenant-a';
   const a = await handleStore(db, embedder, {
     content: 'Tenant A caches entitlements in redis next to postgres.',
     title: 'A redis',
     namespace: 'tenant-a',
   });
+  process.env.MCP_API_NAMESPACE = 'tenant-b';
   const b = await handleStore(db, embedder, {
     content: 'Tenant B fronts redis with kafka for its event stream.',
     title: 'B redis',
     namespace: 'tenant-b',
   });
+  delete process.env.MCP_API_NAMESPACE;
   return { a: a.memory.id, b: b.memory.id };
 }
 

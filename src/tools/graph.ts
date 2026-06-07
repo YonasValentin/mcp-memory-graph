@@ -62,6 +62,16 @@ export function handleGraph(
 
   let entityRows: Array<{ id: string; name: string; type: string; mention_count: number }>;
 
+  // battle-v14 #1: fixed-k starvation. Every entity-selection path orders by the
+  // GLOBAL `mention_count` and applies `LIMIT`, then the namespace post-filter
+  // below drops foreign rows in JS. When another tenant owns the top-k entities,
+  // the whole `LIMIT` window is foreign and gets dropped → a forced tenant sees
+  // an EMPTY graph of its OWN entities. Push `namespace = ?` INTO the selection
+  // (v14 stamps entities.namespace per the namespace-only identity model) so the
+  // top-k window is drawn from the tenant's own entities before the LIMIT. Unset
+  // (single-user) → no predicate, whole graph as before.
+  const nsFilter = forcedNamespace !== undefined;
+
   if (input.entity) {
     // Resolve through entity_aliases (shared resolver): a registered alias maps
     // to its entity's canonical normalized_name; a direct entity-name match
@@ -69,11 +79,18 @@ export function handleGraph(
     const normalized = resolveToCanonicalName(db, normalizeName(input.entity));
 
     if (depth === 1) {
-      // Direct neighbors only
+      // Direct neighbors only. Under forcing, confine BOTH the anchor and the
+      // expanded neighbor (e2) to the tenant's namespace so the fixed LIMIT
+      // can't be consumed by a foreign tenant's same-named entity + neighbors.
+      const anchorNs = nsFilter ? ' AND e.namespace = ?' : '';
+      const neighborNs = nsFilter ? ' AND e1.namespace = ? AND e2.namespace = ?' : '';
+      const params = nsFilter
+        ? [normalized, forcedNamespace, normalized, forcedNamespace, forcedNamespace, limit]
+        : [normalized, normalized, limit];
       entityRows = db.prepare(`
         SELECT DISTINCT e.id, e.name, e.type, e.mention_count
         FROM entities e
-        WHERE e.normalized_name = ?
+        WHERE e.normalized_name = ?${anchorNs}
         UNION
         SELECT DISTINCT e2.id, e2.name, e2.type, e2.mention_count
         FROM entities e1
@@ -82,14 +99,22 @@ export function handleGraph(
           WHEN er.source_entity_id = e1.id THEN er.target_entity_id
           ELSE er.source_entity_id
         END
-        WHERE e1.normalized_name = ?
+        WHERE e1.normalized_name = ?${neighborNs}
         LIMIT ?
-      `).all(normalized, normalized, limit) as typeof entityRows;
+      `).all(...params) as typeof entityRows;
     } else {
-      // Multi-hop via recursive CTE
+      // Multi-hop via recursive CTE. Anchor the traversal to in-tenant entities
+      // and filter the final projected set to the tenant's namespace before the
+      // ORDER BY mention_count / LIMIT, so foreign entities reached through
+      // (un-namespaced) edge hops can't crowd out the tenant's own rows.
+      const baseNs = nsFilter ? ' AND namespace = ?' : '';
+      const finalNs = nsFilter ? ' WHERE e.namespace = ?' : '';
+      const params = nsFilter
+        ? [normalized, forcedNamespace, depth, forcedNamespace, limit]
+        : [normalized, depth, limit];
       entityRows = db.prepare(`
         WITH RECURSIVE entity_graph(entity_id, depth, path) AS (
-          SELECT id, 0, id FROM entities WHERE normalized_name = ?
+          SELECT id, 0, id FROM entities WHERE normalized_name = ?${baseNs}
           UNION ALL
           SELECT
             CASE WHEN er.source_entity_id = eg.entity_id
@@ -106,19 +131,26 @@ export function handleGraph(
         )
         SELECT DISTINCT e.id, e.name, e.type, e.mention_count
         FROM entity_graph eg
-        JOIN entities e ON e.id = eg.entity_id
+        JOIN entities e ON e.id = eg.entity_id${finalNs}
         ORDER BY e.mention_count DESC
         LIMIT ?
-      `).all(normalized, depth, limit) as typeof entityRows;
+      `).all(...params) as typeof entityRows;
     }
   } else {
     // Browse all entities
     let query = 'SELECT id, name, type, mention_count FROM entities';
+    const where: string[] = [];
     const params: unknown[] = [];
     if (input.entity_type) {
-      query += ' WHERE type = ?';
+      where.push('type = ?');
       params.push(input.entity_type);
     }
+    // Confine the top-k browse window to the tenant's own entities (see above).
+    if (nsFilter) {
+      where.push('namespace = ?');
+      params.push(forcedNamespace);
+    }
+    if (where.length > 0) query += ' WHERE ' + where.join(' AND ');
     query += ' ORDER BY mention_count DESC LIMIT ?';
     params.push(limit);
     entityRows = db.prepare(query).all(...params) as typeof entityRows;
@@ -140,15 +172,21 @@ export function handleGraph(
     const live = liveConditions({ excludeSuperseded: true, topLevelOnly: true })
       .map((c) => `m.${c}`)
       .join(' AND ');
+    // battle-v14 F3: also require the ENTITY's own namespace to match. A
+    // migrated/residual (global,'') entity cross-linked to an in-tenant memory
+    // would otherwise pass the memory-join filter and leak its NAME. v14 entity
+    // identity is per-namespace (fresh writes + the migration split), so a
+    // legitimately in-tenant entity carries en.namespace = forcedNamespace.
     for (const r of db
-      .prepare<[string], { id: string; n: number }>(
+      .prepare<[string, string], { id: string; n: number }>(
         `SELECT me.entity_id AS id, COUNT(DISTINCT me.memory_id) AS n
            FROM memory_entities me
            JOIN memories m ON m.id = me.memory_id
-          WHERE m.namespace = ? AND ${live}
+           JOIN entities en ON en.id = me.entity_id
+          WHERE m.namespace = ? AND en.namespace = ? AND ${live}
           GROUP BY me.entity_id`,
       )
-      .all(forcedNamespace)) {
+      .all(forcedNamespace, forcedNamespace)) {
       scopedMentions.set(r.id, r.n);
     }
     // Drop entities with no in-tenant witness, then override the count + re-rank

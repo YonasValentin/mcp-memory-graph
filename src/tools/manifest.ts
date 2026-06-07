@@ -176,13 +176,28 @@ export function merkleRootFromHashes(hashes: readonly string[]): string {
 export function buildIntegrityManifest(
   db: Database.Database,
   generatedAt: string,
+  filter?: { scope?: string; namespace?: string },
 ): IntegrityManifest {
   const conditions = liveConditions({ topLevelOnly: true });
+  const params: unknown[] = [];
+  // battle-v14 F1: on a namespace-forced deployment the manifest sidecar is
+  // committed INTO the tenant's (git-shared) vault, so it must fingerprint ONLY
+  // the tenant's corpus — an unscoped manifest leaks the global memory count and
+  // a merkle root that moves whenever any other tenant writes. Unscoped (no
+  // filter) is the single-user default and stays whole-corpus.
+  if (filter?.scope !== undefined) {
+    conditions.push('scope = ?');
+    params.push(filter.scope);
+  }
+  if (filter?.namespace !== undefined) {
+    conditions.push('namespace = ?');
+    params.push(filter.namespace);
+  }
   const rows = db
     .prepare<unknown[], { id: string; scope: string; access_level: string; content: string }>(
       `SELECT id, scope, access_level, content FROM memories WHERE ${conditions.join(' AND ')}`,
     )
-    .all();
+    .all(...params);
 
   const hashes = rows.map((r) => memoryLeafHash(r));
 

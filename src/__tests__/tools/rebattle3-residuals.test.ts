@@ -15,6 +15,7 @@ import { handleHealth } from '../../tools/health.js';
 import { handleInsights } from '../../tools/insights.js';
 import { handleQuestions } from '../../tools/questions.js';
 import { findUnlinkedMentions } from '../../graph/unlinked-mentions.js';
+import { contextualizeForEmbedding } from '../../search/contextual.js';
 import type { MemoryRow } from '../../types.js';
 
 const embedder = new MockEmbeddingProvider();
@@ -102,15 +103,39 @@ describe('MED — memory_questions gap count is the tenant\'s own, not the globa
 
 describe('MED — memory_unlinked_mentions widens past superseded neighbours', () => {
   it('a live mention is found behind 40 nearer superseded rows', async () => {
-    const target = randomUUID();
-    insertMemory(db, row(target, { namespace: 'p', content: 'the seed memory about caching' }), unit([[0, 1]]));
+    // findUnlinkedMentions re-embeds the target's (title + content), so the
+    // fixture must place the filler/live vectors relative to that ACTUAL query
+    // vector — hand-picked unit vectors are ignored by the query and made this
+    // test flaky (the random-UUID title changed the query vector run to run, and
+    // the live row tie-broke against the fillers nondeterministically). Use a
+    // FIXED title and derive the fillers/live from the real query vector so the
+    // "40 nearer superseded crowd out the first fetch window, widening finds the
+    // live row behind them" scenario is exact and deterministic.
+    const target = 'target-seed';
+    const targetContent = 'the seed memory about caching';
+    insertMemory(db, row(target, { title: target, namespace: 'p', content: targetContent }), unit([[5, 1]]));
+    const q = await embedder.embed(
+      contextualizeForEmbedding(targetContent, { title: target, document_type: null, namespace: 'p' }),
+    );
+    // 40 superseded fillers sitting EXACTLY on the query vector (distance 0 — the
+    // nearest rows possible), so they fill the first fetch window and get dropped
+    // by the superseded post-filter.
     for (let i = 0; i < 40; i++) {
       const id = `s${i}`;
-      insertMemory(db, row(id, { namespace: 'p', content: `superseded filler ${i}` }), unit([[0, 0.999], [2, 0.04]]));
+      insertMemory(db, row(id, { title: id, namespace: 'p', content: `superseded filler ${i}` }), q);
       db.prepare("UPDATE memories SET superseded_at = '2026-02-01T00:00:00.000Z' WHERE id = ?").run(id);
     }
-    const live = randomUUID();
-    insertMemory(db, row(live, { namespace: 'p', content: 'a live related memory about caching layers' }), unit([[0, 0.97], [1, 0.2]]));
+    // The live row sits just BEHIND the fillers (a small perturbation of q, still
+    // well within the cosine floor), so only widening past the 40 superseded rows
+    // surfaces it.
+    const live = 'live-mention';
+    const liveVec = Float32Array.from(q);
+    liveVec[1] += 0.05;
+    let norm = 0;
+    for (let i = 0; i < liveVec.length; i++) norm += liveVec[i] * liveVec[i];
+    norm = Math.sqrt(norm);
+    for (let i = 0; i < liveVec.length; i++) liveVec[i] /= norm;
+    insertMemory(db, row(live, { title: live, namespace: 'p', content: 'a live related memory about caching layers' }), liveVec);
 
     const mentions = await findUnlinkedMentions(db, embedder, target, { limit: 1, minSimilarity: 0 });
     expect(mentions.map((m) => m.memory.id)).toContain(live);

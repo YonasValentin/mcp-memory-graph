@@ -20,7 +20,13 @@ export function handleExportVault(
   // detects drift/tampering. Fail-soft — a manifest write error must not fail
   // the export itself.
   try {
-    writeManifestSidecar(db, input.vault_path, new Date().toISOString());
+    // battle-v14 F1: scope the integrity manifest to the same (scope, namespace)
+    // the .md export used, so a namespace-forced tenant's vault never carries a
+    // corpus-wide count/merkle root that fingerprints other tenants' content.
+    writeManifestSidecar(db, input.vault_path, new Date().toISOString(), {
+      scope: input.scope,
+      namespace: input.namespace,
+    });
   } catch {
     /* manifest is advisory hardening; never break the export on its IO */
   }

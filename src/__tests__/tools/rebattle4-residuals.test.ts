@@ -84,14 +84,22 @@ describe('HIGH — hybrid vector arm survives a secondary-filter flood (single-u
 
 describe('MED — graph/communities surface the TENANT entity count, not the global one', () => {
   it('a shared entity heavily used by another tenant shows the local count', () => {
-    // 'redis' touched once by acme, 50x by globex (global mention_count=51).
+    // v14: entity identity is per (name, scope, namespace), so acme and globex
+    // each own a SEPARATE 'redis' row (the write path stamps the owning memory's
+    // partition). acme touches redis once, globex 50x — forced acme sees its OWN
+    // redis with count 1 and never the globex row (total isolation; per-tenant
+    // mention_count for free).
     const a = randomUUID();
     insertMemory(db, row(a, { namespace: 'acme', content: 'acme uses redis once' }), unit([[0, 1]]));
-    storeExtractedEntities(db, a, [{ name: 'redis', type: 'tool', confidence: 0.9 }], 'regex');
+    storeExtractedEntities(db, a, [{ name: 'redis', type: 'tool', confidence: 0.9 }], 'regex', {
+      scope: 'project', namespace: 'acme',
+    });
     for (let i = 0; i < 50; i++) {
       const g = `g${i}`;
       insertMemory(db, row(g, { namespace: 'globex', content: `globex redis ${i}` }), unit([[1, 0.5]]));
-      storeExtractedEntities(db, g, [{ name: 'redis', type: 'tool', confidence: 0.9 }], 'regex');
+      storeExtractedEntities(db, g, [{ name: 'redis', type: 'tool', confidence: 0.9 }], 'regex', {
+        scope: 'project', namespace: 'globex',
+      });
     }
     const g = handleGraph(db, { entity: 'redis' }, 'acme');
     const redisG = g.entities.find((e) => e.name.toLowerCase() === 'redis');

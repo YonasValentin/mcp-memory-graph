@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { forcedNamespace } from '../lib/tenancy.js';
 import type { MemoryStats } from '../types.js';
 import { liveConditions, scopeConditions, NOW_ISO_SQL } from '../db/predicates.js';
 import { getComputeGovernor } from '../lib/compute-governor.js';
@@ -101,13 +102,22 @@ export function handleStats(
   // correct for both file-backed and `:memory:` databases — fs.statSync on the
   // env path returned 0 for `:memory:` and could read the wrong file
   // (BATTLE-PLAN #4).
-  let databaseSizeBytes = 0;
-  try {
-    const pageCount = db.pragma('page_count', { simple: true }) as number;
-    const pageSize = db.pragma('page_size', { simple: true }) as number;
-    databaseSizeBytes = pageCount * pageSize;
-  } catch {
-    databaseSizeBytes = 0;
+  // battle-v14 F4: database_size_bytes is a WHOLE-DB metric (page_count *
+  // page_size) — on a shared, namespace-forced deployment it moves whenever ANY
+  // tenant writes, so a forced tenant could poll it to observe another tenant's
+  // write volume. Suppress it (null) when a namespace is forced; single-user
+  // (unforced) keeps the real size.
+  let databaseSizeBytes: number | null = 0;
+  if (forcedNamespace()) {
+    databaseSizeBytes = null;
+  } else {
+    try {
+      const pageCount = db.pragma('page_count', { simple: true }) as number;
+      const pageSize = db.pragma('page_size', { simple: true }) as number;
+      databaseSizeBytes = pageCount * pageSize;
+    } catch {
+      databaseSizeBytes = 0;
+    }
   }
 
   const expiredFilter =

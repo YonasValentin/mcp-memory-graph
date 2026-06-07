@@ -4,7 +4,7 @@ import type Database from 'better-sqlite3';
  * The current schema version baked into this codebase. Updated together with
  * a new entry in `runMigrations`.
  */
-export const CURRENT_SCHEMA_VERSION = 13;
+export const CURRENT_SCHEMA_VERSION = 14;
 
 /**
  * Persistent memory-to-memory edge store (Pillar 1). Edges carry a confidence
@@ -30,12 +30,17 @@ export const MEMORY_LINKS_DDL = `
     metadata TEXT,
     valid_from TEXT,
     valid_to TEXT,
-    tx_expired TEXT
+    tx_expired TEXT,
+    -- v14 multi-tenancy: an edge carries the partition of its endpoint memories.
+    -- Co-occurrence edges never cross tenants; reads filter by namespace directly.
+    scope TEXT NOT NULL DEFAULT 'global',
+    namespace TEXT NOT NULL DEFAULT ''
   );
   CREATE INDEX IF NOT EXISTS idx_mlinks_source ON memory_links(source_memory_id);
   CREATE INDEX IF NOT EXISTS idx_mlinks_target ON memory_links(target_memory_id);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_mlinks_pair
     ON memory_links(source_memory_id, target_memory_id, relation);
+  CREATE INDEX IF NOT EXISTS idx_mlinks_partition ON memory_links(scope, namespace);
 `;
 
 /**
@@ -352,21 +357,38 @@ export function initializeSchema(db: Database.Database): void {
       mention_count INTEGER NOT NULL DEFAULT 1,
       first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
       last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
-      metadata TEXT
+      metadata TEXT,
+      -- v14 multi-tenancy: an entity's identity is per (normalized_name, scope,
+      -- namespace). An entity inherits the owning memory's partition; scope='global'
+      -- + namespace='' is the cross-project shared concept (single-user bridge).
+      -- Under a forced namespace, reads match the tenant's namespace only.
+      scope TEXT NOT NULL DEFAULT 'global',
+      namespace TEXT NOT NULL DEFAULT ''
     );
     CREATE INDEX IF NOT EXISTS idx_entities_normalized ON entities(normalized_name);
     CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type);
     CREATE INDEX IF NOT EXISTS idx_entities_mention_count ON entities(mention_count DESC);
+    -- v14 (battle-v14 G5): identity is per (normalized_name, namespace) — the
+    -- tenant boundary. Scope is informational, never part of identity (it would
+    -- fragment a single user's graph across global/project/user scopes).
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_entities_identity
+      ON entities(normalized_name, namespace);
+    CREATE INDEX IF NOT EXISTS idx_entities_partition ON entities(namespace);
 
     CREATE TABLE IF NOT EXISTS entity_aliases (
       id TEXT PRIMARY KEY NOT NULL,
       entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
       alias TEXT NOT NULL,
       normalized_alias TEXT NOT NULL,
-      source TEXT DEFAULT 'auto'
+      source TEXT DEFAULT 'auto',
+      scope TEXT NOT NULL DEFAULT 'global',
+      namespace TEXT NOT NULL DEFAULT ''
     );
     CREATE INDEX IF NOT EXISTS idx_alias_entity ON entity_aliases(entity_id);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_alias_normalized ON entity_aliases(normalized_alias);
+    -- v14: alias uniqueness is per-tenant (namespace) — two tenants may both
+    -- alias 'pg'→PostgreSQL; within one tenant an alias resolves to one entity.
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_alias_normalized
+      ON entity_aliases(normalized_alias, namespace);
 
     CREATE TABLE IF NOT EXISTS entity_relationships (
       id TEXT PRIMARY KEY NOT NULL,
@@ -377,11 +399,14 @@ export function initializeSchema(db: Database.Database): void {
       evidence_count INTEGER NOT NULL DEFAULT 1,
       first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
       last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
-      metadata TEXT
+      metadata TEXT,
+      scope TEXT NOT NULL DEFAULT 'global',
+      namespace TEXT NOT NULL DEFAULT ''
     );
     CREATE INDEX IF NOT EXISTS idx_rel_source ON entity_relationships(source_entity_id);
     CREATE INDEX IF NOT EXISTS idx_rel_target ON entity_relationships(target_entity_id);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_rel_pair_type ON entity_relationships(source_entity_id, target_entity_id, type);
+    CREATE INDEX IF NOT EXISTS idx_rel_partition ON entity_relationships(scope, namespace);
 
     CREATE TABLE IF NOT EXISTS memory_entities (
       memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
@@ -401,10 +426,14 @@ export function initializeSchema(db: Database.Database): void {
       conflict_type TEXT NOT NULL DEFAULT 'superseded',
       description TEXT,
       resolved_at TEXT,
-      resolved_by TEXT
+      resolved_by TEXT,
+      -- v14 multi-tenancy: a conflict carries the partition of the new memory.
+      scope TEXT NOT NULL DEFAULT 'global',
+      namespace TEXT NOT NULL DEFAULT ''
     );
     CREATE INDEX IF NOT EXISTS idx_conflict_old ON memory_conflicts(old_memory_id);
     CREATE INDEX IF NOT EXISTS idx_conflict_new ON memory_conflicts(new_memory_id);
+    CREATE INDEX IF NOT EXISTS idx_conflict_partition ON memory_conflicts(scope, namespace);
 
     CREATE TABLE IF NOT EXISTS memory_originals (
       memory_id TEXT PRIMARY KEY NOT NULL,

@@ -371,6 +371,177 @@ const migrations: Migration[] = [
       }
     },
   },
+  {
+    version: 14,
+    up: (db) => {
+      // Multi-tenancy structural fix — the shared knowledge-graph tables gain a
+      // (scope, namespace) tenancy dimension so isolation is a SCHEMA invariant.
+      //
+      // Pre-v14 entities/aliases/relationships were GLOBAL (one row per concept,
+      // no owner), so they default to (global, '') — the cross-project shared
+      // partition. This is faithful: a single-user corpus keeps every entity it
+      // had, bridging projects exactly as before. Under a forced namespace the
+      // read path matches the tenant's namespace only, so these global rows are
+      // simply not surfaced to a tenant (total isolation) — no data is lost.
+      //
+      // memory_links / memory_conflicts CAN recover a real namespace: every edge
+      // and conflict has endpoint memories that already carry (scope, namespace).
+      // We backfill from the source/new memory so an existing graph is correctly
+      // partitioned without re-derivation.
+      //
+      // All ADDs are columnExists-guarded for idempotency and the synthetic
+      // from-0 legacy path (a minimal base schema may lack some of these tables;
+      // guard each table independently).
+      const addScopeNs = (table: string) => {
+        // A table may be absent on the minimal from-0 path — skip silently.
+        const exists = db
+          .prepare<[string], { name: string }>(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+          )
+          .get(table);
+        if (!exists) return;
+        if (!columnExists(db, table, 'scope')) {
+          db.exec(`ALTER TABLE ${table} ADD COLUMN scope TEXT NOT NULL DEFAULT 'global'`);
+        }
+        if (!columnExists(db, table, 'namespace')) {
+          db.exec(`ALTER TABLE ${table} ADD COLUMN namespace TEXT NOT NULL DEFAULT ''`);
+        }
+      };
+      for (const t of [
+        'entities',
+        'entity_aliases',
+        'entity_relationships',
+        'memory_links',
+        'memory_conflicts',
+      ]) {
+        addScopeNs(t);
+      }
+
+      // Backfill edge/conflict partition from endpoint memories (only where the
+      // endpoint resolves — orphans keep the global default). memory_links keys
+      // on source_memory_id; memory_conflicts on new_memory_id (the writing side).
+      const tableExists = (t: string) =>
+        db
+          .prepare<[string], { name: string }>(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+          )
+          .get(t) != null;
+      if (tableExists('memory_links') && tableExists('memories')) {
+        db.exec(`
+          UPDATE memory_links
+             SET scope = COALESCE((SELECT m.scope FROM memories m WHERE m.id = memory_links.source_memory_id), scope),
+                 namespace = COALESCE((SELECT m.namespace FROM memories m WHERE m.id = memory_links.source_memory_id), namespace)
+           WHERE EXISTS (SELECT 1 FROM memories m WHERE m.id = memory_links.source_memory_id);
+        `);
+      }
+      if (tableExists('memory_conflicts') && tableExists('memories')) {
+        db.exec(`
+          UPDATE memory_conflicts
+             SET scope = COALESCE((SELECT m.scope FROM memories m WHERE m.id = memory_conflicts.new_memory_id), scope),
+                 namespace = COALESCE((SELECT m.namespace FROM memories m WHERE m.id = memory_conflicts.new_memory_id), namespace)
+           WHERE EXISTS (SELECT 1 FROM memories m WHERE m.id = memory_conflicts.new_memory_id);
+        `);
+      }
+
+      // battle-v14 G5/G2: the entity graph is partitioned by NAMESPACE only (the
+      // tenant boundary), and a MIGRATED pre-v14 graph collapses into the single
+      // shared partition (namespace=''), which is the ALTER default — nothing to
+      // re-stamp. This is correct for BOTH deployment modes:
+      //   • SINGLE-USER (the common/shippable mode): the user's whole graph stays
+      //     in '' exactly as pre-v14 — one entity per concept, mention_count
+      //     intact, the global↔project bridge preserved (NO per-scope/namespace
+      //     fragmentation, which the old split caused).
+      //   • MULTI-TENANT (a forced per-tenant server): every read filters
+      //     namespace = forcedNamespace, so the migrated '' pool is invisible to
+      //     a tenant (total isolation — zero foreign leakage) and each tenant
+      //     repopulates its own per-namespace graph on its next writes.
+      // No entity split, no clones, no relationship/alias re-stamping needed.
+
+      // Before building the UNIQUE identity index, MERGE any pre-existing
+      // duplicates the old NON-unique idx_entities_normalized allowed (two rows
+      // sharing a normalized_name — e.g. an LLM 'tool' + a regex 'concept'). They
+      // now collide at (normalized_name, ''); keep the lowest-rowid survivor,
+      // repoint every FK to it, sum mention_count, delete the losers. Atomic
+      // inside the migration transaction.
+      if (tableExists('entities')) {
+        const dupEntities = db
+          .prepare<[], { id: string; survivor: string; mention_count: number }>(
+            `SELECT e.id AS id, s.survivor AS survivor, e.mention_count AS mention_count
+               FROM entities e
+               JOIN (
+                 SELECT normalized_name, namespace, MIN(rowid) AS keep_rowid
+                   FROM entities GROUP BY normalized_name, namespace
+                  HAVING COUNT(*) > 1
+               ) g ON g.normalized_name = e.normalized_name AND g.namespace = e.namespace
+               JOIN (SELECT rowid, id AS survivor FROM entities) s ON s.rowid = g.keep_rowid
+              WHERE e.rowid <> g.keep_rowid`,
+          )
+          .all();
+        for (const d of dupEntities) {
+          db.prepare('UPDATE entities SET mention_count = mention_count + ? WHERE id = ?').run(
+            d.mention_count,
+            d.survivor,
+          );
+          if (tableExists('memory_entities')) {
+            db.prepare('UPDATE OR IGNORE memory_entities SET entity_id = ? WHERE entity_id = ?').run(d.survivor, d.id);
+            db.prepare('DELETE FROM memory_entities WHERE entity_id = ?').run(d.id);
+          }
+          if (tableExists('entity_relationships')) {
+            db.prepare('UPDATE OR IGNORE entity_relationships SET source_entity_id = ? WHERE source_entity_id = ?').run(d.survivor, d.id);
+            db.prepare('UPDATE OR IGNORE entity_relationships SET target_entity_id = ? WHERE target_entity_id = ?').run(d.survivor, d.id);
+            db.prepare('DELETE FROM entity_relationships WHERE source_entity_id = ? OR target_entity_id = ?').run(d.id, d.id);
+          }
+          if (tableExists('entity_aliases')) {
+            db.prepare('UPDATE OR IGNORE entity_aliases SET entity_id = ? WHERE entity_id = ?').run(d.survivor, d.id);
+            db.prepare('DELETE FROM entity_aliases WHERE entity_id = ?').run(d.id);
+          }
+          db.prepare('DELETE FROM entities WHERE id = ?').run(d.id);
+        }
+        // battle-v14 re-battle (LOW): if two merged duplicates had an edge BETWEEN
+        // them, repointing both endpoints onto the one survivor produced a
+        // degenerate (survivor, survivor) self-loop — the target was rewritten to
+        // the survivor above, and the loser-id DELETE no longer matched it. Pre-v14
+        // the graph held no self-loops; drop them so the merge is a clean
+        // data-quality no-op rather than a regression.
+        if (tableExists('entity_relationships')) {
+          db.exec('DELETE FROM entity_relationships WHERE source_entity_id = target_entity_id');
+        }
+      }
+      if (tableExists('entity_aliases')) {
+        // Drop duplicate aliases sharing (normalized_alias, namespace), keeping the
+        // lowest rowid, so the rebuilt unique alias index can build.
+        db.exec(`
+          DELETE FROM entity_aliases
+           WHERE rowid NOT IN (
+             SELECT MIN(rowid) FROM entity_aliases GROUP BY normalized_alias, namespace
+           )`);
+      }
+
+      // Rebuild the unique indexes on the NAMESPACE-only identity. The old
+      // global-unique shapes (idx_alias_normalized on normalized_alias alone; no
+      // entity-identity index) would reject two tenants sharing a name. DROP+CREATE
+      // is safe inside the migration transaction; IF EXISTS tolerates the from-0 path.
+      if (tableExists('entity_aliases')) {
+        db.exec('DROP INDEX IF EXISTS idx_alias_normalized');
+        db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_alias_normalized
+                   ON entity_aliases(normalized_alias, namespace)`);
+      }
+      if (tableExists('entities')) {
+        db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_entities_identity
+                   ON entities(normalized_name, namespace)`);
+        db.exec('CREATE INDEX IF NOT EXISTS idx_entities_partition ON entities(namespace)');
+      }
+      if (tableExists('entity_relationships')) {
+        db.exec('CREATE INDEX IF NOT EXISTS idx_rel_partition ON entity_relationships(namespace)');
+      }
+      if (tableExists('memory_links')) {
+        db.exec('CREATE INDEX IF NOT EXISTS idx_mlinks_partition ON memory_links(namespace)');
+      }
+      if (tableExists('memory_conflicts')) {
+        db.exec('CREATE INDEX IF NOT EXISTS idx_conflict_partition ON memory_conflicts(namespace)');
+      }
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

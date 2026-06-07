@@ -129,7 +129,11 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
           { source: 'MyEdcApp', target: 'IdentityServer', type: 'uses' },
         ],
       });
-      expect(r.entities_created).toBeGreaterThanOrEqual(3);
+      // v14 G5: a single user's graph is shared (namespace ''), so a concept this
+      // memory names that an EARLIER memory already extracted is UPDATED, not
+      // re-created (cross-project sharing — the intended bridge). Assert all 4 are
+      // present after extraction (created + updated), not that all 4 are brand new.
+      expect(r.entities_created + r.entities_updated).toBeGreaterThanOrEqual(4);
       expect(r.relationships_created).toBe(3);
     });
 

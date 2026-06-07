@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
+import { forcedNamespace } from '../lib/tenancy.js';
 import { randomUUID, createHash } from 'node:crypto';
 import type {
   EmbeddingProvider,
@@ -417,10 +418,17 @@ function buildMemoryRow(
   // randomUUID duplicate under namespace=<vault>. Falls back to vault defaults
   // for hand-authored notes that carry no such frontmatter.
   const fmScope = fmString(fm, 'scope');
+  // battle-v14 G1: under a forced namespace, PIN every synced memory to the forced
+  // tenant — a per-file `namespace:` in frontmatter must NOT let a pinned tenant
+  // plant a row in another tenant's namespace (the vault-path guard only checks
+  // the directory basename). Unforced (single-user), honor frontmatter so a
+  // memory_export_vault → vault_sync round-trip reconciles to the originating
+  // memory instead of minting a duplicate under namespace=<vault>.
+  const forcedNs = forcedNamespace();
   return {
     id: fmString(fm, 'id') ?? randomUUID(),
     scope: fmScope && VALID_SCOPES.has(fmScope) ? fmScope : 'project',
-    namespace: fmString(fm, 'namespace') ?? vaultName,
+    namespace: forcedNs ?? fmString(fm, 'namespace') ?? vaultName,
     title: parsed.title,
     content: parsed.content,
     document_type: fmString(fm, 'document_type') ?? 'note',

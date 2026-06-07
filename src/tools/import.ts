@@ -105,7 +105,26 @@ export async function handleImport(
       const item = validItems[i];
       try {
         const existingId = item.id ?? null;
-        const existing = existingId ? getMemoryById(db, existingId) : null;
+        let existing = existingId ? getMemoryById(db, existingId) : null;
+
+        // battle-v14 #2 (+ round-2 oracle, LOW): TENANCY GUARD. getMemoryById is
+        // namespace-blind, so on a forced deployment an item carrying ANOTHER
+        // tenant's id would hit the overwrite branch and — because we REMAP
+        // item.namespace to the forced value above — both rewrite its content AND
+        // drag the row into the importing tenant (cross-tenant row theft).
+        //
+        // Treat a foreign-owned id EXACTLY like a brand-new id: drop it and fall
+        // through to a fresh insert (new UUID) in the forced namespace. This both
+        // (a) never touches/claims the foreign row, and (b) makes the response
+        // byte-identical to importing a new item — closing the existence/ownership
+        // oracle a plain skip would open (skipped:1 on a foreign id vs imported:1
+        // on a fresh id lets a forced tenant probe whether a guessed UUID belongs
+        // to someone else). Unforced (single-user) imports are unaffected.
+        let effectiveId = existingId;
+        if (existing && forcedNamespace !== undefined && existing.namespace !== forcedNamespace) {
+          existing = null;
+          effectiveId = null;
+        }
 
         if (existing) {
           if (input.overwrite) {
@@ -148,7 +167,9 @@ export async function handleImport(
         }
 
         const row: MemoryRow = {
-          id: existingId ?? randomUUID(),
+          // effectiveId is null for a foreign-owned id under forcing (see guard
+          // above) → fresh UUID, so the foreign id is never reused/collided.
+          id: effectiveId ?? randomUUID(),
           scope: item.scope ?? 'global',
           namespace: item.namespace ?? null,
           title: item.title ?? null,
