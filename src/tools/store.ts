@@ -326,7 +326,11 @@ export async function handleStore(
       // Persist the surviving heuristic verdicts AND the NLI-detected
       // contradictions (already deduped by id in reportedConflicts) so the
       // self-correction is auditable in memory_conflicts, not silent.
-      recordConflicts(db, reportedConflicts, row.id);
+      // battle-v16 SUPERSEDE-BAND: only RETIRE a superseded-band old fact when
+      // the policy actually superseded (on_conflict='supersede'). On the default
+      // 'add' path the conflict is recorded but the prior fact stays live — the
+      // old fact was being silently retired despite op=ADD (single-user data loss).
+      recordConflicts(db, reportedConflicts, row.id, (input.on_conflict ?? 'add') === 'supersede');
     } catch (err) /* c8 ignore start */ {
       logger.error({ event: 'conflict_record_failed', memory_id: row.id, err: err instanceof Error ? err.message : String(err) });
       throw err; // bubble out so the transaction rolls back; caller's catch reports it.
