@@ -80,16 +80,24 @@ export function resolveToCanonicalName(db: Database.Database, normalized: string
 export function entityIdsByNameOrAlias(
   db: Database.Database,
   normalizedNames: string[],
+  // battle-v15 PPR-1: when a namespace is forced, resolve only that tenant's
+  // entities (v14 identity is per-namespace). Unset (single-user) → resolve
+  // across the whole graph, unchanged. entity_aliases carries the same namespace
+  // column (v14), so the alias arm gates on it too.
+  namespace?: string,
 ): string[] {
   if (normalizedNames.length === 0) return [];
   const ph = normalizedNames.map(() => '?').join(',');
-  const rows = db
-    .prepare<string[], { id: string }>(
-      `SELECT id FROM entities WHERE normalized_name IN (${ph})
-       UNION
-       SELECT entity_id AS id FROM entity_aliases WHERE normalized_alias IN (${ph})`,
-    )
-    .all(...normalizedNames, ...normalizedNames);
+  const nsClause = namespace !== undefined ? ' AND namespace = ?' : '';
+  const sql =
+    `SELECT id FROM entities WHERE normalized_name IN (${ph})${nsClause}` +
+    ` UNION ` +
+    `SELECT entity_id AS id FROM entity_aliases WHERE normalized_alias IN (${ph})${nsClause}`;
+  const params =
+    namespace !== undefined
+      ? [...normalizedNames, namespace, ...normalizedNames, namespace]
+      : [...normalizedNames, ...normalizedNames];
+  const rows = db.prepare<unknown[], { id: string }>(sql).all(...params);
   return [...new Set(rows.map((r) => r.id))];
 }
 

@@ -35,6 +35,13 @@ export interface PageRankOptions {
    * mention_count) get damped so they don't swallow the ranking. Default true.
    */
   useSpecificity?: boolean;
+  /**
+   * battle-v15 PPR-1: forced tenant namespace. When set, the graph is built only
+   * from that namespace's entity_relationships and the ranking surfaces only that
+   * namespace's memories — keeping the PPR path namespace-consistent with every
+   * other v14 consumer. Unset (single-user) → whole graph, unchanged.
+   */
+  namespace?: string;
 }
 
 const DEFAULT_DAMPING = 0.5;
@@ -98,6 +105,7 @@ function buildGraph(
   db: Database.Database,
   seedEntityIds: string[],
   useSpecificity: boolean,
+  namespace?: string,
 ): Graph {
   const ids: string[] = [];
   const index = new Map<string, number>();
@@ -116,13 +124,15 @@ function buildGraph(
   // ORDER BY id (a random UUID) is NOT a meaningful order — it exists only to
   // pin the row-processing order, and hence the floating-point summation order,
   // so identical DBs always produce byte-identical scores (determinism).
+  // battle-v15 PPR-1: scope the edge set to the forced namespace when set so the
+  // graph never interns a foreign tenant's entities. Unset → whole table.
   const relationships = db
-    .prepare<[], RelationshipRow>(
+    .prepare<unknown[], RelationshipRow>(
       `SELECT source_entity_id, target_entity_id, evidence_count, strength
-         FROM entity_relationships
+         FROM entity_relationships${namespace !== undefined ? ' WHERE namespace = ?' : ''}
         ORDER BY id`,
     )
-    .all();
+    .all(...(namespace !== undefined ? [namespace] : []));
 
   // First pass: intern every endpoint so node indices are stable and dense.
   for (const rel of relationships) {
@@ -206,7 +216,7 @@ export function personalizedPageRank(
   const maxIterations = opts.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   const useSpecificity = opts.useSpecificity ?? true;
 
-  const graph = buildGraph(db, seedEntityIds, useSpecificity);
+  const graph = buildGraph(db, seedEntityIds, useSpecificity, opts.namespace);
   const n = graph.ids.length;
   if (n === 0) return result;
 
@@ -377,20 +387,24 @@ export function rankMemoriesByPPR(
   // The scored-entity set can exceed SQLite's ~32k bound-parameter limit, so
   // chunk the IN-clause and accumulate the rows (mirrors communities.ts).
   const entityIds = [...entityScores.keys()];
+  // battle-v15 PPR-1: gate the final memory join on the forced namespace too, so
+  // rankMemoriesByPPR never returns a foreign tenant's memory id even if a seed
+  // slipped through. Unset (single-user) → no namespace predicate, unchanged.
+  const nsJoin = opts.namespace !== undefined ? ' AND m.namespace = ?' : '';
   const links: MemoryEntityRow[] = [];
   for (const batch of chunkIds(entityIds)) {
     const placeholders = batch.map(() => '?').join(',');
     const rows = db
-      .prepare<string[], MemoryEntityRow>(
+      .prepare<unknown[], MemoryEntityRow>(
         `SELECT me.memory_id AS memory_id, me.entity_id AS entity_id
            FROM memory_entities me
            JOIN memories m ON m.id = me.memory_id
           WHERE me.entity_id IN (${placeholders})
             AND m.valid_to IS NULL
             AND m.tx_expired IS NULL
-            AND m.superseded_at IS NULL`,
+            AND m.superseded_at IS NULL${nsJoin}`,
       )
-      .all(...batch);
+      .all(...batch, ...(opts.namespace !== undefined ? [opts.namespace] : []));
     links.push(...rows);
   }
 
