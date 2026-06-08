@@ -10,7 +10,7 @@ import { storeExtractedEntities } from '../graph/entity-store.js';
 import { forcedNamespace } from '../lib/tenancy.js';
 import { buildSimilarityEdges } from '../graph/similarity-edges.js';
 import { parseMemoryFile, hasGitConflictMarkers, type ParsedMemoryFile } from './memory-file.js';
-import { loadGraphSidecar, restoreLinksFromSidecar } from './sidecar.js';
+import { loadGraphSidecar, restoreLinksFromSidecar, MANIFEST_SIDECAR_REL } from './sidecar.js';
 import {
   memoryLeafHash,
   merkleRootFromHashes,
@@ -29,9 +29,6 @@ export interface RebuildResult {
    */
   conflicted: number;
 }
-
-/** Vault-relative path of the integrity-manifest sidecar (M2.6). */
-const MANIFEST_SIDECAR = path.join('.memory', 'manifest.json');
 
 /** Drift counts between the trusted manifest and the on-disk vault. */
 export interface IntegrityDiff {
@@ -77,7 +74,7 @@ export class VaultIntegrityError extends Error {
  * blocking — the guard only fires on a definite merkle MISMATCH.
  */
 function loadManifestSidecar(vaultRoot: string): IntegrityManifest | null {
-  const abs = path.join(vaultRoot, MANIFEST_SIDECAR);
+  const abs = path.join(vaultRoot, MANIFEST_SIDECAR_REL);
   if (!fs.existsSync(abs)) return null;
   try {
     const parsed = JSON.parse(fs.readFileSync(abs, 'utf-8')) as IntegrityManifest;
