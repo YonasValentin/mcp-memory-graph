@@ -537,6 +537,12 @@ export function createServer(): McpServer {
       const parsed = MemoryExportVaultSchema.parse(input);
       // battle-v9 CLASS 2: export_vault writes memories OUT to disk; a forced
       // deployment must not let an omitted namespace dump every tenant to .md.
+      // battle-v16 VEG-1: it also WRITES to a caller-supplied vault_path, so it
+      // must honor the same path boundary as vault_sync/status/search — else a
+      // pinned tenant writes its .md into ANOTHER tenant's vault dir tree.
+      if (!vaultPathInForcedNamespace(parsed.vault_path)) {
+        throw new Error('Vault path is outside the pinned namespace');
+      }
       return handleExportVault(getDb(), withForcedNs(parsed));
     }),
   );
@@ -550,6 +556,12 @@ export function createServer(): McpServer {
       const parsed = MemoryCanvasSchema.parse(input);
       // battle-v9 CLASS 2: canvas exports the whole graph; force the namespace
       // so an omitted filter cannot render cross-tenant nodes/links.
+      // battle-v16 VEG-1: when vault_path is given it WRITES a .canvas there, so
+      // the same path boundary applies — a pinned tenant must not write its board
+      // into another tenant's vault dir. (No vault_path = object-only, no write.)
+      if (parsed.vault_path !== undefined && !vaultPathInForcedNamespace(parsed.vault_path)) {
+        throw new Error('Vault path is outside the pinned namespace');
+      }
       return handleCanvas(getDb(), withForcedNs(parsed));
     }),
   );
@@ -844,7 +856,10 @@ export function createServer(): McpServer {
     MemoryWebhookSchema.shape,
     instrument('memory_webhook', async (input) => {
       const parsed = MemoryWebhookSchema.parse(input);
-      return handleWebhook(getDb(), parsed);
+      // battle-v16 WH-TENANCY: pin webhook management to the forced tenant so a
+      // register can't create a wildcard/foreign target and list/delete can't
+      // reach another tenant's targets.
+      return handleWebhook(getDb(), parsed, forcedNamespace());
     }),
   );
 

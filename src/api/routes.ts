@@ -467,8 +467,11 @@ export function registerPublishRoutes(
   // ── M3.1 webhook bus management (gated on MCP_WEBHOOKS inside the handler) ──
   // These sit behind the same bearer middleware as the rest of /api. The handler
   // SSRF-validates any URL before persisting and never returns secrets.
+  // battle-v16 WH-TENANCY: every webhook route is namespace-pinned under a forced
+  // deployment (forcedApiNamespace) — list/register/delete may only touch the
+  // caller's own tenant. Mirrors the MCP memory_webhook boundary.
   router.get('/api/webhooks', asyncHandler('GET /api/webhooks', async (_req, res) => {
-    res.json(await handleWebhook(getDb(), { action: 'list' }));
+    res.json(await handleWebhook(getDb(), { action: 'list' }, forcedApiNamespace()));
   }));
 
   router.post('/api/webhooks', asyncHandler('POST /api/webhooks', async (req, res) => {
@@ -482,7 +485,7 @@ export function registerPublishRoutes(
           events: typeof b.events === 'string' ? b.events : undefined,
           scope: typeof b.scope === 'string' ? b.scope : undefined,
           namespace: typeof b.namespace === 'string' ? b.namespace : undefined,
-        }),
+        }, forcedApiNamespace()),
       );
     } catch (err) {
       throw new HttpError(400, 'INVALID_INPUT', err instanceof Error ? err.message : 'Invalid webhook target');
@@ -490,7 +493,7 @@ export function registerPublishRoutes(
   }));
 
   router.delete('/api/webhooks/:id', asyncHandler('DELETE /api/webhooks/:id', async (req, res) => {
-    res.json(await handleWebhook(getDb(), { action: 'delete', id: param(req, 'id') }));
+    res.json(await handleWebhook(getDb(), { action: 'delete', id: param(req, 'id') }, forcedApiNamespace()));
   }));
 
   router.post('/api/webhooks/dispatch', asyncHandler('POST /api/webhooks/dispatch', async (_req, res) => {

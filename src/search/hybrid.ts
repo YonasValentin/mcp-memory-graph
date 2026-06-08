@@ -178,12 +178,40 @@ export async function hybridSearch(
     try {
       const sanitized = sanitizeFtsQuery(options.query);
       if (sanitized.length > 0) {
+        // battle-v16 FTS-STARVE: memories_fts has NO scope/namespace column, so a
+        // plain `MATCH ... LIMIT oversampleLimit` fills the window with the
+        // highest-BM25 rows GLOBALLY — a busy/foreign tenant (or a scope='user'
+        // flood, or rows that fail a secondary filter) crowds the window and a
+        // quiet same-partition row never reaches the post-fetch filter → keyword
+        // recall silently 0 (the vector-arm CLASS-1 starvation, un-fixed here).
+        // Mirror the vector arm: JOIN memories and apply the SAME partition +
+        // privacy + keep predicate so the LIMIT counts KEEPERS, not the global
+        // ranked set. The candidate fetch below still re-filters; this only
+        // guarantees the right rowids enter the candidate set. Unfiltered
+        // single-tenant search is unaffected (predicate matches every row).
+        const kwConds: string[] = ['memories_fts MATCH ?'];
+        const kwParams: unknown[] = [sanitized];
+        if (options.scope) { kwConds.push('m.scope = ?'); kwParams.push(options.scope); }
+        else { kwConds.push("m.scope != 'user'"); }
+        if (options.namespace) { kwConds.push('m.namespace = ?'); kwParams.push(options.namespace); }
+        kwConds.push('m.parent_id IS NULL', 'm.valid_to IS NULL', 'm.tx_expired IS NULL', 'm.superseded_at IS NULL');
+        if (options.department) { kwConds.push('m.department = ?'); kwParams.push(options.department); }
+        if (options.document_type) { kwConds.push('m.document_type = ?'); kwParams.push(options.document_type); }
+        if (options.access_level) { kwConds.push('m.access_level = ?'); kwParams.push(options.access_level); }
+        if (options.language) { kwConds.push('m.language = ?'); kwParams.push(options.language); }
+        if (options.tags && options.tags.length > 0) {
+          for (const tag of options.tags) { kwConds.push('m.tags LIKE ?'); kwParams.push(`%"${tag}"%`); }
+        }
+        if (options.date_from) { kwConds.push('m.created_at >= ?'); kwParams.push(options.date_from); }
+        if (options.date_to) { kwConds.push('m.created_at <= ?'); kwParams.push(options.date_to); }
+        kwConds.push(`(m.expires_at IS NULL OR m.expires_at > ${NOW_ISO_SQL})`);
         const rows = db.prepare(
-          `SELECT rowid, rank FROM memories_fts
-           WHERE memories_fts MATCH ?
-           ORDER BY rank
+          `SELECT f.rowid AS rowid, f.rank AS rank
+           FROM memories_fts f JOIN memories m ON m.rowid = f.rowid
+           WHERE ${kwConds.join(' AND ')}
+           ORDER BY f.rank
            LIMIT ?`
-        ).all(sanitized, oversampleLimit) as { rowid: number; rank: number }[];
+        ).all(...kwParams, oversampleLimit) as { rowid: number; rank: number }[];
 
         for (const row of rows) {
           keywordResults.set(row.rowid, row.rank);

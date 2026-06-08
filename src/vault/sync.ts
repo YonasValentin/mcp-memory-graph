@@ -538,7 +538,35 @@ async function ingestLargeFile(
 
 /** Normalizes a title / filename / wikilink target to a comparable key. */
 function normalizeLinkKey(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  // battle-v16 WIKILINK-CJK: `[^a-z0-9]` stripped EVERY non-ASCII character, so a
+  // CJK / Cyrillic / Greek / accented title collapsed to '' and ALL such titles
+  // collided to one key — `[[数据库设计]]` resolved to an unrelated CJK note.
+  // Keep any Unicode letter/number; still drop spaces/punctuation so
+  // "Auth Config" and "auth-config" match. (toLowerCase folds cased scripts;
+  // caseless scripts like CJK pass through unchanged.)
+  // battle-v16 re-battle WIKILINK-NFC: NFC-normalize first so the precomposed
+  // (U+00E9 'é') and decomposed (e + U+0301 combining acute, what macOS/editors
+  // emit) forms of the SAME title produce the SAME key — otherwise the combining
+  // mark is stripped on one side and the wikilink silently misses.
+  // battle-v16 re-battle WIKILINK-NUKTA: KEEP combining marks (\p{M}) in the key.
+  // NFC leaves composition-excluded precomposed letters DECOMPOSED (e.g. क़ U+0958
+  // → क U+0915 + nukta U+093C); stripping the mark would collapse क़ onto the base
+  // letter क and mis-resolve the wikilink. With NFC applied first, café still
+  // recomposes (no leftover mark) so the café NFC/NFD pair matches, while क़ keeps
+  // its nukta and stays distinct from क. Callers must skip an EMPTY key (a
+  // symbol/emoji-only title has no letter/number/mark) so such titles never
+  // collide to '' and mis-link.
+  // battle-v16 re-battle WIKILINK-VS16: strip variation selectors (VS1-16
+  // U+FE00–FE0F + astral VS17-256 U+E0100–E01EF). They are category Mn (so the
+  // \p{M} keep below would retain them) but are PRESENTATION-only and carry no
+  // title identity — keeping them makes "❤️" (with VS16) and "❤" (without) hash
+  // to different keys and a wikilink silently miss. Nukta/diacritic marks (real
+  // identity) are still kept.
+  return s
+    .normalize('NFC')
+    .toLowerCase()
+    .replace(/[︀-️\u{E0100}-\u{E01EF}]/gu, '')
+    .replace(/[^\p{L}\p{N}\p{M}]/gu, '');
 }
 
 interface VaultLinkRow {
@@ -577,10 +605,18 @@ function resolveVaultWikilinks(
     }
     if (!meta || meta.vault_path !== vaultPath) continue;
 
-    if (row.title) index.set(normalizeLinkKey(row.title), row.id);
+    // battle-v16 WIKILINK-EMPTYKEY: skip an empty key — a symbol/emoji-only title
+    // has no letter/number, so indexing '' would make every such title collide
+    // and a wikilink resolve to the WRONG note (data corruption, worse than no
+    // link). An un-indexable title simply doesn't resolve by name.
+    if (row.title) {
+      const k = normalizeLinkKey(row.title);
+      if (k) index.set(k, row.id);
+    }
     if (typeof row.source === 'string') {
       const base = row.source.replace(/\.md$/i, '').split('/').pop() ?? row.source;
-      index.set(normalizeLinkKey(base), row.id);
+      const k = normalizeLinkKey(base);
+      if (k) index.set(k, row.id);
     }
 
     const links = Array.isArray(meta.links)
@@ -592,7 +628,9 @@ function resolveVaultWikilinks(
   const apply = db.transaction(() => {
     for (const { id, links } of sources) {
       for (const target of links) {
-        const targetId = index.get(normalizeLinkKey(target));
+        const key = normalizeLinkKey(target);
+        // Empty key (symbol/emoji-only link target) never resolves — see EMPTYKEY.
+        const targetId = key ? index.get(key) : undefined;
         if (targetId && targetId !== id) {
           createMemoryLink(db, {
             sourceId: id,

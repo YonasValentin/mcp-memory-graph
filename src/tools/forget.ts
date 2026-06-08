@@ -125,8 +125,35 @@ export function handleForget(
   propagateSafe(db, input.id);
 
   const erase = db.transaction(() => {
+    // battle-v16 GDPR-ENTITY-RESIDUE: a hard erase FK-cascades the
+    // memory_entities join rows but leaves the `entities` rows — which carry the
+    // PII name — behind. If the erased memory (or its chunk subtree) was the ONLY
+    // mention of an entity, that orphaned name is RTBF residue still surfaced by
+    // memory_graph. Capture the referenced entity ids BEFORE the cascade, then
+    // prune any left with zero mentions after (entity_aliases + relationships
+    // cascade from entities).
+    const referencedEntityIds = db
+      .prepare<[string], { entity_id: string }>(
+        `WITH RECURSIVE sub(id) AS (
+           SELECT ?
+           UNION ALL
+           SELECT m.id FROM memories m JOIN sub ON m.parent_id = sub.id
+         )
+         SELECT DISTINCT me.entity_id FROM memory_entities me JOIN sub ON me.memory_id = sub.id`,
+      )
+      .all(input.id)
+      .map((r) => r.entity_id);
+
     eraseDescendantIndexes(db, input.id);
     deleteMemory(db, input.id);
+
+    const refCount = db.prepare<[string], { c: number }>(
+      'SELECT COUNT(*) AS c FROM memory_entities WHERE entity_id = ?',
+    );
+    const deleteEntity = db.prepare('DELETE FROM entities WHERE id = ?');
+    for (const eid of referencedEntityIds) {
+      if ((refCount.get(eid)?.c ?? 0) === 0) deleteEntity.run(eid);
+    }
   });
   // P9-begin-immediate: erase opens with eraseDescendantIndexes' recursive SELECT
   // then WRITES (FTS/vec/row deletes). BEGIN IMMEDIATE so a concurrent writer makes

@@ -32,21 +32,108 @@ describe('hasGitConflictMarkers', () => {
     expect(hasGitConflictMarkers('use a <div> and compare a > b carefully')).toBe(false);
   });
 
-  it('rebattle FP: does NOT flag a note DOCUMENTING a conflict inside a code fence', () => {
-    const tutorial = [
-      'How to resolve a git merge conflict:',
+  // battle-v16 GT-4-FN: this expectation was REVERSED from the v15 rebattle FP
+  // fix. A note that quotes a COMPLETE conflict block (the full ordered triple,
+  // markers at column 0) is now flagged even inside a code fence — because a real
+  // git merge writes those exact markers inside a fence when two devs edit a
+  // fenced code block, and skipping fences silently indexed the corruption. The
+  // FP cost is bounded: quarantine is non-destructive (the .md stays on disk,
+  // surfaced in errors[]), so a documentation note is recoverable; a real
+  // unflagged conflict is silent index corruption. A note that DISCUSSES markers
+  // without reproducing the full ordered triple at column 0 is still NOT flagged
+  // (covered by the prose / setext / partial-fragment cases above and below).
+  it('GT-4-FN: a full conflict block inside a fence IS flagged (real git output, recoverable FP)', () => {
+    const fencedConflict = [
+      'The token timeout is set in this block:',
       '',
-      '```',
+      '```ts',
       '<<<<<<< HEAD',
-      'const timeout = 30;',
+      'export const TIMEOUT = 30;',
       '=======',
-      'const timeout = 60;',
-      '>>>>>>> feature/timeout',
+      'export const TIMEOUT = 60;',
+      '>>>>>>> feature/longer-timeout',
       '```',
-      '',
-      'Pick the right side, then delete the markers.',
     ].join('\n');
-    expect(hasGitConflictMarkers(tutorial)).toBe(false);
+    expect(hasGitConflictMarkers(fencedConflict)).toBe(true);
+  });
+
+  it('GT-4-FN: a stray/unbalanced fence does NOT mask a later real conflict', () => {
+    const body = [
+      'Some explanation.',
+      '```', // unclosed fence (truncated paste) — must NOT disable detection
+      'a snippet line',
+      '',
+      '<<<<<<< HEAD',
+      'real conflict ours',
+      '=======',
+      'real conflict theirs',
+      '>>>>>>> branch',
+    ].join('\n');
+    expect(hasGitConflictMarkers(body)).toBe(true);
+  });
+
+  it('does NOT flag a note that merely MENTIONS markers without the full ordered triple', () => {
+    // Discussing conflicts in prose (no column-0 <<<<<<< / ======= / >>>>>>> triple).
+    const prose = 'When you see <<<<<<< and >>>>>>> in a file, resolve the conflict.';
+    expect(hasGitConflictMarkers(prose)).toBe(false);
+  });
+
+  // battle-v16 re-battle GT4-MARKERSIZE: git's conflict-marker-size is configurable.
+  it('detects a conflict written with a non-default conflict-marker-size (>7)', () => {
+    const sz10 = [
+      '<<<<<<<<<< HEAD',
+      'retry budget is 5',
+      '==========',
+      'retry budget is 2',
+      '>>>>>>>>>> devb/main',
+    ].join('\n');
+    expect(hasGitConflictMarkers(sz10)).toBe(true);
+  });
+
+  it('detects a nested / re-merged conflict (outer open, sep, inner open, outer close)', () => {
+    const nested = [
+      '<<<<<<< HEAD',
+      'outer ours',
+      '=======',
+      '<<<<<<< nested',
+      'inner',
+      '>>>>>>> nested-branch',
+      '>>>>>>> outer-branch',
+    ].join('\n');
+    expect(hasGitConflictMarkers(nested)).toBe(true);
+  });
+
+  it('still does NOT flag a 7-char setext underline of a 7+ char heading', () => {
+    // No preceding <<<<<<< open, so the ======= (or longer) underline is inert.
+    expect(hasGitConflictMarkers('Overview\n========\nbody')).toBe(false);
+    expect(hasGitConflictMarkers('Title\n==============\nbody')).toBe(false);
+  });
+
+  // battle-v16 re-battle GT4-FP1: a decorative ASCII banner LABELS all three
+  // lines; git's real separator is BARE. The bare-separator rule distinguishes
+  // them, so the banner is NOT quarantined (no false-positive data loss).
+  it('does NOT flag a decorative ASCII banner with labeled separator lines', () => {
+    const banner = [
+      'Deployment reference banner:',
+      '<<<<<<<< STAGING',
+      'run the smoke suite first',
+      '======== PRODUCTION',
+      'require two approvals',
+      '>>>>>>>> ROLLBACK',
+    ].join('\n');
+    expect(hasGitConflictMarkers(banner)).toBe(false);
+  });
+
+  it('still flags a real conflict (bare separator) even at non-default marker size', () => {
+    const real = '<<<<<<<< HEAD\nours\n========\ntheirs\n>>>>>>>> branch';
+    expect(hasGitConflictMarkers(real)).toBe(true);
+  });
+
+  // battle-v16 round-4 GT4-CR-FN: a lone-CR (classic Mac) file is one "line" to
+  // /\r?\n/, hiding the conflict. Split on all three terminators.
+  it('detects a conflict in a lone-CR (\\r) line-ending file', () => {
+    const cr = '<<<<<<< HEAD\rmine\r=======\rtheirs\r>>>>>>> branch\r';
+    expect(hasGitConflictMarkers(cr)).toBe(true);
   });
 
   it('still detects a diff3-style conflict (||||||| base section)', () => {

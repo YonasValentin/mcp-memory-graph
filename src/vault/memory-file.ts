@@ -37,32 +37,53 @@ export interface ParsedMemoryFile {
  * a raw string (no disk) so it is reusable by `memory rebuild` and unit tests.
  */
 /**
- * battle-v15 GT-4 (+ rebattle FP fix): true if the body carries an UNRESOLVED
- * git 3-way conflict. Requires the full ordered triple — a `<<<<<<<` line, then
- * a `=======` separator, then a `>>>>>>>` line — and IGNORES any markers inside
- * a fenced code block (``` / ~~~). This distinguishes a real accidentally-
- * committed conflict (markers at column 0, outside any fence) from a legitimate
- * knowledge note that DOCUMENTS conflict resolution by showing a conflict block
- * inside a code fence — the latter must NOT be quarantined (that was silent data
- * loss). A setext H1 underline (`=======` alone) and prose with `<`/`>` are also
- * never flagged. Git writes exactly 7 marker chars optionally followed by a label;
- * diff3 (`|||||||`) and CRLF conflicts are still detected.
+ * battle-v15 GT-4 (+ v16 GT-4-FN re-fix): true if the body carries an UNRESOLVED
+ * git 3-way conflict. Requires the full ORDERED triple — a `<<<<<<<` line, then a
+ * `=======` separator, then a `>>>>>>>` line, each at column 0 with exactly 7
+ * marker chars (optionally followed by a label). A setext H1 underline
+ * (`=======` alone, no preceding `<<<<<<<`), prose with `<`/`>`, and a
+ * half-resolved fragment missing the `>>>>>>>` close are never flagged; diff3
+ * (`|||||||`) and CRLF conflicts ARE.
+ *
+ * battle-v16 GT-4-FN: detection runs REGARDLESS of markdown code fences. The
+ * v15 rebattle FP fix skipped fenced blocks to spare a note that *documents*
+ * conflict resolution, but git writes real `<<<<<<<`/`=======`/`>>>>>>>` markers
+ * INSIDE a fence whenever two devs edit a fenced code block in a note — and dev
+ * memories routinely contain code blocks. Skipping fences re-opened the exact
+ * GT-4 corruption (markers indexed as live content), and a stray/unbalanced fence
+ * permanently flipped `inFence` and masked EVERY later conflict. A note that
+ * quotes a complete conflict block is now re-flagged, but quarantine is
+ * NON-DESTRUCTIVE (rebuild skips + counts + leaves the .md on disk for the user
+ * to clean up) — a recoverable false positive beats silently indexing corruption.
+ *
+ * battle-v16 re-battle (GT4-MARKERSIZE): match {7,} not exactly {7}. Git's
+ * `conflict-marker-size` gitattribute is configurable (>7), so a real merge can
+ * write longer markers (`<<<<<<<<<< HEAD`); hardcoding 7 silently missed them.
+ * The marker chars (`<`/`=`/`>`) never legitimately repeat 7+ times at column 0
+ * in prose. A setext H1 underline (`=======`) is still safe — it is only tested
+ * AFTER a `<<<<<<<` open, which a heading lacks. The ordered scan does NOT reset
+ * on a fresh open, so a nested/re-merged conflict (outer open, separator, inner
+ * open, …, outer close) is still caught by the first close after any separator.
  */
 export function hasGitConflictMarkers(content: string): boolean {
-  let inFence = false;
   let sawStart = false;
   let sawSep = false;
-  for (const line of content.split(/\r?\n/)) {
-    if (/^\s*(```|~~~)/.test(line)) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) continue;
-    if (/^<{7}(?:[ \t].*)?$/.test(line)) {
+  // battle-v16 re-battle GT4-CR-FN: split on ALL three line terminators. The
+  // `/\r?\n/` form treated a lone-CR (classic Mac) file as ONE line, so a real
+  // conflict in such a file escaped detection (regression vs the pre-rewrite `/m`
+  // regex, which treats lone \r as a terminator). Lone-CR is rare but a genuine
+  // re-opening of the GT-4 corruption class; the fix is one regex.
+  for (const line of content.split(/\r\n|\r|\n/)) {
+    if (/^<{7,}(?:[ \t].*)?$/.test(line)) {
       sawStart = true;
-    } else if (sawStart && /^={7}(?:[ \t].*)?$/.test(line)) {
+    } else if (sawStart && /^={7,}[ \t]*$/.test(line)) {
+      // battle-v16 re-battle GT4-FP1: git's separator line is ALWAYS bare (just
+      // the marker chars + optional trailing whitespace, no label), whereas a
+      // decorative ASCII banner labels all three lines ("======== PRODUCTION").
+      // Requiring a bare separator distinguishes a real conflict from a banner
+      // without re-introducing the configurable-marker-size false negative.
       sawSep = true;
-    } else if (sawSep && /^>{7}(?:[ \t].*)?$/.test(line)) {
+    } else if (sawSep && /^>{7,}(?:[ \t].*)?$/.test(line)) {
       return true;
     }
   }

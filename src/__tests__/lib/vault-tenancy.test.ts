@@ -55,4 +55,15 @@ describe('server.ts guards every vault tool with the forced-namespace boundary (
       );
     },
   );
+
+  // battle-v16 VEG-1: export_vault + canvas also WRITE to a caller-supplied
+  // vault_path and were missing the boundary the other three apply.
+  it.each([
+    ['memory_export_vault', 'handleExportVault'],
+    ['memory_canvas', 'handleCanvas'],
+  ])('%s guards vault_path before dispatch', (tool, handler) => {
+    const block = regBlock(tool);
+    expect(block).toContain('vaultPathInForcedNamespace(parsed.vault_path)');
+    expect(block.indexOf('vaultPathInForcedNamespace')).toBeLessThan(block.indexOf(handler));
+  });
 });

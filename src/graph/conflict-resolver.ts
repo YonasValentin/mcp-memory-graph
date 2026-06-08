@@ -172,6 +172,14 @@ export function recordConflicts(
   db: Database.Database,
   conflicts: ConflictResult[],
   newMemoryId: string,
+  // battle-v16 SUPERSEDE-BAND: only RETIRE (stamp superseded_at/valid_to on) the
+  // old fact when the write policy actually chose to supersede. On the DEFAULT
+  // on_conflict='add' path decideWriteOperation returns ADD (keep both), so a
+  // heuristic superseded-band overlap (0.75–0.85) must be RECORDED (audit row)
+  // but must NOT silently retire the prior fact. The explicit supersede path
+  // retires its chosen target via handleStore's invalidateMemory(deleteTargetId);
+  // passing retireSuperseded=true keeps superseded_at stamped on that path.
+  retireSuperseded = true,
 ): void {
   if (conflicts.length === 0) return;
 
@@ -200,7 +208,7 @@ export function recordConflicts(
   const nNs = np?.namespace ?? '';
 
   for (const c of conflicts) {
-    if (c.type === 'superseded') {
+    if (c.type === 'superseded' && retireSuperseded) {
       supersedeStmt.run(newMemoryId, c.existing_memory_id);
     }
     if (c.type === 'duplicate' || c.type === 'superseded' || c.type === 'contradicted') {

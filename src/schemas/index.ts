@@ -354,9 +354,15 @@ export const MemoryDeleteSchema = z
         document_type: documentTypeField().optional(),
         before_date: z
           .string()
+          // battle-v16 DEL-DATE: gate like the F2-fixed created_before sibling.
+          // This value flows raw into `created_at < ?` (a DESTRUCTIVE delete) and
+          // created_at is stored canonical ISO-Z, so a space-format or garbage
+          // date lexically mis-collates — silently under-deleting the intended
+          // rows or (digits sort before letters) deleting EVERYTHING.
+          .datetime({ message: 'before_date must be a full ISO-8601 timestamp, e.g. 2026-03-01T00:00:00Z' })
           .optional()
           .describe(
-            'Delete memories created before this ISO 8601 date',
+            'Delete memories created before this full ISO-8601 timestamp (UTC, e.g. 2026-03-01T00:00:00Z)',
           ),
         expired_only: z
           .boolean()
