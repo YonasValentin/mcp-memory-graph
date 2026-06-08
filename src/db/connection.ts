@@ -1,8 +1,8 @@
 import Database from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import path from 'node:path';
-import os from 'node:os';
 import fs from 'node:fs';
+import { resolveDbPath } from './db-path.js';
 
 let cachedDb: Database.Database | null = null;
 
@@ -50,11 +50,7 @@ export function getDatabase(dbPath?: string): Database.Database {
     return cachedDb;
   }
 
-  const resolvedPath =
-    dbPath ??
-    process.env.MCP_MEMORY_DB_PATH ??
-    /* c8 ignore next */
-    path.join(os.homedir(), '.mcp-memory', 'memory.db');
+  const resolvedPath = resolveDbPath(dbPath);
 
   const dir = path.dirname(resolvedPath);
   if (!fs.existsSync(dir)) {

@@ -39,8 +39,7 @@ import { logger } from '../lib/logger.js';
 // T1: shared MCP_API_NAMESPACE tenancy policy (one source for MCP + REST).
 import { forcedNamespace, idIsInForcedNamespace } from '../lib/tenancy.js';
 import { ReloadGate, maybeBustGraphCache } from '../lib/hot-reload.js';
-import path from 'node:path';
-import os from 'node:os';
+import { resolveDbPath } from '../db/db-path.js';
 import { metrics } from './metrics.js';
 
 type GetDb = () => Database.Database;
@@ -60,8 +59,7 @@ const graphCache = new Map<string, { ts: number; payload: unknown }>();
 // `git pull`), this gate detects it by (mtime_ns, size) and busts the cache —
 // without reopening the connection. Resolve the path once: if env is unset and
 // the default file is absent, the gate is a no-op (shouldReload stays false).
-const dbFilePath =
-  process.env.MCP_MEMORY_DB_PATH ?? path.join(os.homedir(), '.mcp-memory', 'memory.db');
+const dbFilePath = resolveDbPath();
 const graphReloadGate = new ReloadGate(dbFilePath);
 
 // Public /publish search cost bounds. The /publish surface is unauthenticated

@@ -1,6 +1,5 @@
-import path from 'node:path';
-import os from 'node:os';
 import fs from 'node:fs';
+import { resolveDbPath } from '../db/db-path.js';
 import { getDatabase, closeDatabase } from '../db/connection.js';
 import { initializeSchema } from '../db/schema.js';
 import { runMigrations } from '../db/migrations.js';
@@ -40,8 +39,7 @@ export async function runRebuild(argv: string[]): Promise<void> {
     return;
   }
 
-  const dbPath =
-    process.env.MCP_MEMORY_DB_PATH ?? path.join(os.homedir(), '.mcp-memory', 'memory.db');
+  const dbPath = resolveDbPath();
 
   // Throw the existing index away so the rebuild starts from an empty DB.
   closeDatabase();

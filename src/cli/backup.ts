@@ -1,5 +1,4 @@
-import path from 'node:path';
-import os from 'node:os';
+import { resolveDbPath } from '../db/db-path.js';
 import { getReadOnlyDb } from '../lib/direct-access.js';
 import { backupDatabase } from '../db/backup.js';
 
@@ -25,8 +24,7 @@ function parseFlags(args: string[]): Record<string, string> {
  */
 export async function runBackup(argv: string[]): Promise<void> {
   const flags = parseFlags(argv);
-  const dbPath =
-    process.env.MCP_MEMORY_DB_PATH ?? path.join(os.homedir(), '.mcp-memory', 'memory.db');
+  const dbPath = resolveDbPath();
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const out = flags.out || `${dbPath}.backup-${stamp}`;
 
