@@ -33,7 +33,7 @@ function memoryAgeDays(updatedAt: string): number {
   return Math.max(0, Math.floor((Date.now() - new Date(updatedAt).getTime()) / 86_400_000));
 }
 
-function freshnessWarning(ageDays: number): string | null {
+export function freshnessWarning(ageDays: number): string | null {
   if (ageDays > 90) return `This memory is ${ageDays} days old. Verify against current state before asserting as fact.`;
   if (ageDays > 30) return `This memory is ${ageDays} days old. Information may be outdated.`;
   return null;
