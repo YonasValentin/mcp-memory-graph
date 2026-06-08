@@ -4,10 +4,7 @@
  * which produces identical vectors for identical content, so two stores
  * of the same string are guaranteed to look like duplicates.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { writeFileSync, mkdirSync, rmSync, mkdtempSync } from 'node:fs';
-import { tmpdir, homedir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect, beforeEach } from 'vitest';
 import type Database from 'better-sqlite3';
 import { createTestDb } from '../../testing/test-db.js';
 import { MockEmbeddingProvider } from '../../testing/mock-embedder.js';
@@ -75,43 +72,46 @@ describe('handleConsolidate dedup-merge', () => {
   });
 });
 
-describe('handleConsolidate knowledge_gaps', () => {
-  let cfgDir: string;
+describe('handleConsolidate search_log rotation', () => {
+  // (gap-surfacing + tenancy-scoped reads live in consolidate-knowledge-gaps-db.test.ts.)
+  function seedRow(
+    database: Database.Database,
+    opts: { query: string; namespace?: string; created_at?: string },
+  ): void {
+    if (opts.created_at) {
+      database
+        .prepare(
+          `INSERT INTO search_log (query, results_count, scope, namespace, created_at)
+             VALUES (?, 0, 'global', ?, ?)`,
+        )
+        .run(opts.query, opts.namespace ?? '', opts.created_at);
+    } else {
+      database
+        .prepare(
+          `INSERT INTO search_log (query, results_count, scope, namespace, created_at)
+             VALUES (?, 0, 'global', ?, datetime('now'))`,
+        )
+        .run(opts.query, opts.namespace ?? '');
+    }
+  }
 
-  beforeEach(() => {
-    cfgDir = mkdtempSync(join(tmpdir(), 'mcp-gaps-'));
-    process.env.HOME = cfgDir; // homedir() reads $HOME on POSIX
-    mkdirSync(join(cfgDir, '.mcp-memory'), { recursive: true });
-    // Two zero-result entries with the same query → counts as a gap.
-    const log = [
-      { query: 'unanswered topic', results: 0, timestamp: '2026-01-01T00:00:00Z' },
-      { query: 'unanswered topic', results: 0, timestamp: '2026-01-02T00:00:00Z' },
-      { query: 'has-results', results: 5, timestamp: '2026-01-03T00:00:00Z' },
-      'malformed line',
-    ].map((e) => (typeof e === 'string' ? e : JSON.stringify(e))).join('\n');
-    writeFileSync(join(cfgDir, '.mcp-memory', 'search-log.jsonl'), log);
+  it('prunes search_log rows older than 90 days on a non-dry run', async () => {
+    seedRow(db, { query: 'ancient miss', created_at: '2020-01-01T00:00:00Z' });
+    seedRow(db, { query: 'recent miss' });
+    const report = await handleConsolidate(db, embedder, { dry_run: false, prune_expired: false });
+    expect(report.errors.length).toBe(0);
+    const rows = db.prepare('SELECT query FROM search_log').all() as Array<{ query: string }>;
+    expect(rows.some((r) => r.query === 'ancient miss')).toBe(false);
+    expect(rows.some((r) => r.query === 'recent miss')).toBe(true);
   });
 
-  afterEach(() => {
-    rmSync(cfgDir, { recursive: true, force: true });
-    process.env.HOME = homedir();
-  });
-
-  it('surfaces repeated zero-result queries as knowledge_gaps', async () => {
-    const report = await handleConsolidate(db, embedder, { dry_run: true });
-    expect(report.knowledge_gaps.some((g) => g.includes('unanswered topic'))).toBe(true);
-  });
-
-  it('surfaces gaps written in the REAL hook shape (results_count, not results)', async () => {
-    // src/hooks/memory-post-search.ts writes the key `results_count`. The reader
-    // must honor that real shape — not just the legacy `results` test fixture.
-    const log = [
-      { query: 'production gap', results_count: 0, timestamp: '2026-01-01T00:00:00Z' },
-      { query: 'production gap', results_count: 0, timestamp: '2026-01-02T00:00:00Z' },
-    ].map((e) => JSON.stringify(e)).join('\n');
-    writeFileSync(join(cfgDir, '.mcp-memory', 'search-log.jsonl'), log);
-    const report = await handleConsolidate(db, embedder, { dry_run: true });
-    expect(report.knowledge_gaps.some((g) => g.includes('production gap'))).toBe(true);
+  it('a scoped consolidation rotates only its own partition (no cross-tenant write)', async () => {
+    seedRow(db, { query: 'old a', namespace: 'tenant-a', created_at: '2020-01-01T00:00:00Z' });
+    seedRow(db, { query: 'old b', namespace: 'tenant-b', created_at: '2020-01-01T00:00:00Z' });
+    await handleConsolidate(db, embedder, { dry_run: false, prune_expired: false, namespace: 'tenant-a' });
+    const rows = db.prepare('SELECT query FROM search_log').all() as Array<{ query: string }>;
+    expect(rows.some((r) => r.query === 'old a')).toBe(false);
+    expect(rows.some((r) => r.query === 'old b')).toBe(true);
   });
 });
 

@@ -687,6 +687,41 @@ export function recordAccess(
   record();
 }
 
+export interface SearchLogRecord {
+  query: string;
+  results_count: number;
+  top_confidence?: number;
+  scope?: string;
+  namespace?: string;
+  cwd?: string | null;
+}
+
+/**
+ * Best-effort search telemetry (v15). One row per user-facing search — the raw
+ * material for tenancy-scoped knowledge-gap detection in the dream cycle. Stores
+ * the EFFECTIVE (scope, namespace) the search ran under (post scopeToNamespace /
+ * forcedNamespace) so gaps partition like every other table. NEVER throws into
+ * the search path: a telemetry failure (un-migrated DB, lock) must not fail a
+ * user's search. Supersedes the pre-v15 ~/.mcp-memory/search-log.jsonl file.
+ */
+export function recordSearch(db: Database.Database, rec: SearchLogRecord): void {
+  try {
+    db.prepare(
+      `INSERT INTO search_log (query, results_count, top_confidence, scope, namespace, cwd, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
+    ).run(
+      rec.query,
+      rec.results_count,
+      rec.top_confidence ?? null,
+      rec.scope ?? 'global',
+      rec.namespace ?? '',
+      rec.cwd ?? null,
+    );
+  } catch {
+    // Telemetry is best-effort — a log failure must never break a search.
+  }
+}
+
 // ── Quality Scoring ──────────────────────────────────────────────────────
 
 /**

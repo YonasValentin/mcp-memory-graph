@@ -8,6 +8,7 @@ import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import { migrateDatabase } from '../../db/migrations.js';
+import { CURRENT_SCHEMA_VERSION } from '../../db/schema.js';
 
 /** Build a minimal pre-v14 DB: memories + the 5 graph tables in their OLD shape
  *  (no scope/namespace columns), stamped at schema_version 13. */
@@ -128,13 +129,14 @@ describe('migrate v14 — graph tenancy backfill', () => {
     expect(() => migrateDatabase(db)).not.toThrow();
   });
 
-  it('stamps schema_version 14', () => {
+  it('stamps schema_version up to CURRENT', () => {
+    // migrateDatabase brings a DB all the way to CURRENT (>= 14), not just v14.
     const db = v13Db();
     migrateDatabase(db);
     const v = db.prepare("SELECT value FROM schema_meta WHERE key='schema_version'").get() as {
       value: string;
     };
-    expect(v.value).toBe('14');
+    expect(v.value).toBe(String(CURRENT_SCHEMA_VERSION));
   });
 
   it('a migrated pre-v14 shared entity collapses into the single shared partition (no fragmentation)', () => {

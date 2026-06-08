@@ -1,7 +1,4 @@
 import type Database from 'better-sqlite3';
-import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import path from 'node:path';
 import { NOW_ISO_SQL } from '../db/predicates.js';
 import type { ConsolidationReport, EmbeddingProvider, MemoryRow } from '../types.js';
 import {
@@ -64,45 +61,37 @@ function buildFilterClause(
   return { clause, params };
 }
 
-interface SearchLogEntry {
-  query: string;
-  /** Real key written by src/hooks/memory-post-search.ts. */
-  results_count?: number;
-  /** Legacy key from older logs — kept for backward compatibility. */
-  results?: number;
-  timestamp: string;
-}
-
-function readKnowledgeGaps(): string[] {
-  const logPath = path.join(homedir(), '.mcp-memory', 'search-log.jsonl');
-  let lines: string[];
+/**
+ * Knowledge gaps = queries that repeatedly returned nothing (an unmet
+ * information need), read from the `search_log` table (v15) — NOT a global
+ * homedir file. Scoped through {@link buildFilterClause} so a consolidation
+ * sees only its own (scope, namespace) partition; an unforced consolidation
+ * reads store-wide. Normalizing (lower + trim) collapses casing/padding
+ * variants of one question into a single gap.
+ */
+function readKnowledgeGaps(
+  db: Database.Database,
+  scope?: string,
+  namespace?: string,
+): string[] {
+  const { clause, params } = buildFilterClause(scope, namespace);
+  let rows: Array<{ q: string; cnt: number }>;
   try {
-    lines = readFileSync(logPath, 'utf-8').split('\n').filter(Boolean);
+    rows = db
+      .prepare<unknown[], { q: string; cnt: number }>(
+        `SELECT lower(trim(query)) AS q, COUNT(*) AS cnt
+           FROM search_log
+          WHERE results_count = 0${clause}
+          GROUP BY lower(trim(query))
+         HAVING COUNT(*) >= 2
+          ORDER BY cnt DESC, q`,
+      )
+      .all(...params);
   } catch {
+    // search_log absent on a not-yet-migrated DB — no gaps rather than a throw.
     return [];
   }
-
-  const zeroCounts = new Map<string, number>();
-  for (const line of lines) {
-    try {
-      const entry = JSON.parse(line) as SearchLogEntry;
-      const count = entry.results_count ?? entry.results;
-      if (count === 0) {
-        const normalized = entry.query.trim().toLowerCase();
-        zeroCounts.set(normalized, (zeroCounts.get(normalized) ?? 0) + 1);
-      }
-    } catch {
-      // skip malformed lines
-    }
-  }
-
-  const gaps: string[] = [];
-  for (const [query, count] of zeroCounts) {
-    if (count >= 2) {
-      gaps.push(`Knowledge gap: "${query}" (${count} zero-result searches)`);
-    }
-  }
-  return gaps;
+  return rows.map((r) => `Knowledge gap: "${r.q}" (${r.cnt} zero-result searches)`);
 }
 
 export async function handleConsolidate(
@@ -434,7 +423,7 @@ export async function handleConsolidate(
   // Tracked separately from `errors` so callers can distinguish "the dream
   // cycle worked but there are zero-result queries to investigate" from
   // "the dream cycle hit a real failure".
-  report.knowledge_gaps = readKnowledgeGaps();
+  report.knowledge_gaps = readKnowledgeGaps(db, input.scope, input.namespace);
 
   // ── Rotate old access log entries ─────────────────────────────────────
   // battle-v15 BYID-2: under a forced namespace this DELETE was globally
@@ -456,6 +445,25 @@ export async function handleConsolidate(
     } catch (err) /* c8 ignore start */ {
       report.errors.push(
         `Access log rotation failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    /* c8 ignore stop */
+  }
+
+  // ── Rotate old search-telemetry rows ──────────────────────────────────
+  // search_log feeds knowledge-gap detection (Stage 5); bound its growth on the
+  // same 90-day window. search_log carries (scope, namespace) directly, so the
+  // same filterClause applies the SAME tenancy discipline as the access-log
+  // rotation above: a scoped consolidate prunes only its own partition, an
+  // unforced one rotates store-wide.
+  if (!dryRun) {
+    try {
+      db.prepare(
+        `DELETE FROM search_log WHERE created_at < datetime('now', '-90 days')${filterClause}`,
+      ).run(...filterParams);
+    } catch (err) /* c8 ignore start */ {
+      report.errors.push(
+        `Search log rotation failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
     /* c8 ignore stop */
