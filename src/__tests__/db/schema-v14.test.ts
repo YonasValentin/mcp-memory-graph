@@ -48,8 +48,8 @@ function indexColumns(index: string): string[] {
 }
 
 describe('schema v14 — graph-table tenancy columns', () => {
-  it('bumps CURRENT_SCHEMA_VERSION to 14', () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(14);
+  it('includes the v14 tenancy bump in the schema lineage (>= 14)', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(14);
   });
 
   for (const table of GRAPH_TABLES) {

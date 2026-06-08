@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { CURRENT_SCHEMA_VERSION, MEMORY_LINKS_DDL, CORE_MEMORY_DDL, WEBHOOKS_DDL } from './schema.js';
+import { CURRENT_SCHEMA_VERSION, MEMORY_LINKS_DDL, CORE_MEMORY_DDL, WEBHOOKS_DDL, SEARCH_LOG_DDL } from './schema.js';
 
 interface Migration {
   version: number;
@@ -540,6 +540,22 @@ const migrations: Migration[] = [
       if (tableExists('memory_conflicts')) {
         db.exec('CREATE INDEX IF NOT EXISTS idx_conflict_partition ON memory_conflicts(namespace)');
       }
+    },
+  },
+  {
+    version: 15,
+    up: (db) => {
+      // Search telemetry moves OUT of the global ~/.mcp-memory/search-log.jsonl
+      // file and INTO a (scope, namespace)-partitioned table. This makes
+      // knowledge-gap detection read the consolidated DB it was handed — not the
+      // host's home dir — so a tenant's consolidation report can never surface
+      // another tenant's (or another project's) query strings.
+      //
+      // Create-only. The legacy JSONL is intentionally NOT back-imported: its
+      // rows predate reliable effective-partition capture, and re-importing the
+      // host's global history would re-pollute every fresh consolidation with
+      // cross-project queries — the exact leak this migration closes.
+      db.exec(SEARCH_LOG_DDL);
     },
   },
 ];

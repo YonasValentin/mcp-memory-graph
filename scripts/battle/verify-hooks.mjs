@@ -168,101 +168,32 @@ async function testSessionStart() {
   return r;
 }
 
-// ── Test 2: PostSearch (writer↔reader contract with consolidate) ─────────────
+// ── Test 2: PostSearch is an inert no-op shim (v15) ──────────────────────────
+// Search telemetry moved OUT of this hook and INTO the search_log DB table,
+// written server-side by handleSearch where the EFFECTIVE (scope, namespace) is
+// known. The full writer→reader→gap pipeline (and its tenancy isolation) is now
+// owned by vitest: src/__tests__/tools/search-logging.test.ts and
+// consolidate-knowledge-gaps-db.test.ts. The hook's only remaining contract is
+// to stay inert: exit 0 and NOT recreate the global ~/.mcp-memory/
+// search-log.jsonl side-channel that leaked queries across projects.
 async function testPostSearch() {
-  // A memory_search PostToolUse event with a real results payload. Use a query
-  // that returns ZERO results so the consolidate reader (which only counts
-  // results_count===0 queries) can pick it up as a knowledge gap.
-  const GAP_QUERY = 'how do we deploy to kubernetes';
   const event = {
     hook_event_name: 'PostToolUse',
     tool_name: 'memory_search',
     cwd: ROOT,
-    tool_input: { query: GAP_QUERY, scope: 'project', namespace: 'helios' },
+    tool_input: { query: 'how do we deploy to kubernetes', scope: 'project', namespace: 'helios' },
     tool_output: JSON.stringify({ results: [] }),
   };
-
-  // Fire it twice — consolidate only surfaces a gap when a zero-result query
-  // recurs (count >= 2).
   const r1 = await runHook(HOOK.postSearch, event);
   const r2 = await runHook(HOOK.postSearch, event);
 
-  // Also fire one with a non-empty results payload to confirm results_count is
-  // recorded with the actual length.
-  const eventHit = {
-    hook_event_name: 'PostToolUse',
-    tool_name: 'memory_search',
-    cwd: ROOT,
-    tool_input: { query: 'rate limit', scope: 'project', namespace: 'helios' },
-    tool_output: JSON.stringify({ results: [{ confidence: 0.91 }, { confidence: 0.7 }] }),
-  };
-  const r3 = await runHook(HOOK.postSearch, eventHit);
-
-  const exits0 = r1.code === 0 && r2.code === 0 && r3.code === 0;
-
-  let logOk = false;
-  let parsedCount = -1;
-  let hitCount = -1;
-  let lineCount = 0;
-  if (existsSync(SEARCH_LOG)) {
-    const lines = readFileSync(SEARCH_LOG, 'utf-8').split('\n').filter(Boolean);
-    lineCount = lines.length;
-    const parsed = lines.map((l) => JSON.parse(l));
-    // Every line must carry the `results_count` key (the contract key).
-    logOk = parsed.every((e) => Object.prototype.hasOwnProperty.call(e, 'results_count'));
-    const gapEntry = parsed.find((e) => e.query === GAP_QUERY);
-    parsedCount = gapEntry ? gapEntry.results_count : -1;
-    const hitEntry = parsed.find((e) => e.query === 'rate limit');
-    hitCount = hitEntry ? hitEntry.results_count : -1;
-  }
+  const exits0 = r1.code === 0 && r2.code === 0;
+  const wroteNothing = !existsSync(SEARCH_LOG);
 
   record(
-    "PostSearch appends to search-log.jsonl with key 'results_count'",
-    exits0 && logOk && lineCount === 3 && parsedCount === 0 && hitCount === 2,
-    `codes=[${r1.code},${r2.code},${r3.code}] lines=${lineCount} gap.results_count=${parsedCount} hit.results_count=${hitCount} log=${SEARCH_LOG}`,
-  );
-
-  // Now verify the READER (consolidate) actually consumes the key end to end.
-  process.env.MCP_MEMORY_DB_PATH = DB_PATH;
-  process.env.MCP_MEMORY_CONFIG_PATH = CONFIG_PATH;
-  const realHome = homedir();
-  let consolidateGapDetected = false;
-  let consolidateDetail = '';
-  try {
-    // consolidate's readKnowledgeGaps() reads from homedir()/.mcp-memory; it
-    // does NOT honour HOME at import-time the way a subprocess does, because
-    // os.homedir() is evaluated in THIS process. Temporarily steer HOME so the
-    // in-process reader hits our seeded log.
-    process.env.HOME = TMP_HOME;
-    const { createDatabase } = await import(join(DIST, 'db', 'connection.js'));
-    const { initializeSchema } = await import(join(DIST, 'db', 'schema.js'));
-    const { runMigrations } = await import(join(DIST, 'db', 'migrations.js'));
-    const { handleConsolidate } = await import(join(DIST, 'tools', 'consolidate.js'));
-    const db = createDatabase(DB_PATH);
-    initializeSchema(db);
-    runMigrations(db);
-    // Minimal embedder stub — consolidate's gap reader needs no embeddings;
-    // pass a no-op provider so the merge phase (which we don't trigger) is safe.
-    const noopEmbedder = {
-      embed: async () => new Float32Array(384),
-      embedBatch: async (xs) => xs.map(() => new Float32Array(384)),
-      dimensions: 384,
-    };
-    const res = await handleConsolidate(db, noopEmbedder, { scope: 'project', namespace: 'helios' });
-    db.close();
-    const gaps = res?.knowledge_gaps ?? res?.gaps ?? [];
-    const flat = JSON.stringify(res);
-    consolidateGapDetected = flat.includes('Knowledge gap') && flat.toLowerCase().includes('kubernetes');
-    consolidateDetail = `knowledge_gaps=${JSON.stringify(gaps)}`;
-  } catch (err) {
-    consolidateDetail = `consolidate threw: ${err.message}`;
-  } finally {
-    process.env.HOME = realHome;
-  }
-  record(
-    'consolidate READS results_count and surfaces the recurring zero-result gap',
-    consolidateGapDetected,
-    consolidateDetail,
+    'PostSearch is an inert no-op shim: exits 0 and writes no global search-log.jsonl',
+    exits0 && wroteNothing,
+    `codes=[${r1.code},${r2.code}] jsonlExists=${existsSync(SEARCH_LOG)} log=${SEARCH_LOG}`,
   );
 }
 

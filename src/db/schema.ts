@@ -4,7 +4,7 @@ import type Database from 'better-sqlite3';
  * The current schema version baked into this codebase. Updated together with
  * a new entry in `runMigrations`.
  */
-export const CURRENT_SCHEMA_VERSION = 14;
+export const CURRENT_SCHEMA_VERSION = 15;
 
 /**
  * Persistent memory-to-memory edge store (Pillar 1). Edges carry a confidence
@@ -104,6 +104,34 @@ export const WEBHOOKS_DDL = `
   );
   CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_target ON webhook_deliveries(target_id);
   CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_ready ON webhook_deliveries(status, next_attempt_at);
+`;
+
+/**
+ * Search telemetry (v15). One row per user-facing search, written by
+ * {@link handleSearch}. `results_count = 0` rows are the raw material for the
+ * dream-cycle's knowledge-gap detection (a query repeatedly returning nothing
+ * is an unmet information need). Carries the (scope, namespace) the search ran
+ * under — the EFFECTIVE partition after `scopeToNamespace`/`forcedNamespace` —
+ * so gap reads are tenancy-partitioned exactly like every other table.
+ *
+ * Replaces the pre-v15 `~/.mcp-memory/search-log.jsonl` global file, which
+ * bypassed tenancy (one flat stream across every project) and coupled gap
+ * detection to the dev's home dir instead of the consolidated DB. Shared
+ * verbatim by {@link initializeSchema} (fresh DBs) and migration v15.
+ */
+export const SEARCH_LOG_DDL = `
+  CREATE TABLE IF NOT EXISTS search_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    query TEXT NOT NULL,
+    results_count INTEGER NOT NULL DEFAULT 0,
+    top_confidence REAL,
+    scope TEXT NOT NULL DEFAULT 'global',
+    namespace TEXT NOT NULL DEFAULT '',
+    cwd TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_search_log_gaps ON search_log(namespace, scope, results_count);
+  CREATE INDEX IF NOT EXISTS idx_search_log_created ON search_log(created_at);
 `;
 
 /**
@@ -452,6 +480,9 @@ export function initializeSchema(db: Database.Database): void {
 
   // Active-infrastructure event bus (M3.1) — empty unless MCP_WEBHOOKS=1.
   db.exec(WEBHOOKS_DDL);
+
+  // Search telemetry (v15) — feeds tenancy-scoped knowledge-gap detection.
+  db.exec(SEARCH_LOG_DDL);
 
   // Stamp the schema version + embedding dimension for future opens.
   const haveVersion = !!db

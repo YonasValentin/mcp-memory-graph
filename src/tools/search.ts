@@ -11,7 +11,7 @@ import type {
 } from '../types.js';
 import { hybridSearch, toSummary, toIdOnly } from '../search/hybrid.js';
 import { CrossEncoderReranker, type Reranker } from '../search/reranker.js';
-import { recordAccess } from '../db/repository.js';
+import { recordAccess, recordSearch } from '../db/repository.js';
 import { getComputeGovernor } from '../lib/compute-governor.js';
 
 // Module-level singleton so the cross-encoder model loads at most once across
@@ -99,6 +99,17 @@ export async function handleSearch(
       })),
     );
   }
+
+  // v15 search telemetry — one row per user-facing search, partitioned by the
+  // EFFECTIVE (scope, namespace), feeding tenancy-scoped knowledge-gap detection
+  // in the dream cycle. Best-effort (never throws into the search path).
+  recordSearch(db, {
+    query: input.query,
+    results_count: total,
+    top_confidence: results[0]?.score,
+    scope: input.scope,
+    namespace: input.namespace,
+  });
 
   const detailLevel = input.detail_level ?? 'summary';
   let projected: unknown[];
