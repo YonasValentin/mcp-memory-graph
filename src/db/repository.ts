@@ -3,11 +3,89 @@ import type { Memory, MemoryRow, ListOptions, AccessLogEntry, IngestSourceRecord
 import type { MemoryPartition } from '../graph/conflict-resolver.js';
 import { NOW_ISO_SQL } from './predicates.js';
 import { signEnvelope } from '../provenance/envelope.js';
+import type { SignedEnvelope } from '../provenance/envelope.js';
 
 /** Whether to attach a signed provenance envelope on write (M2.2, opt-in). */
 function signingEnabled(): boolean {
   return process.env.MCP_SIGN_MEMORIES === '1' || process.env.MCP_SIGN_MEMORIES === 'true';
 }
+
+// ─── Shadow-index SQL helpers ────────────────────────────────────────────────
+// The memories table has two shadow indexes — memories_fts (FTS5, external
+// content) and memories_vec (vec0 KNN) — that MUST stay row-for-row consistent
+// with it or search corrupts. The reindex SQL is hand-repeated across the write
+// paths (insert / update / delete / bulk-delete). These helpers extract ONLY the
+// byte-identical SQL string; every value (rowid, column values, scope/namespace)
+// is a PARAMETER computed at the call site, so each site keeps its exact current
+// bound values (e.g. one ftsDelete site passes raw column values, others pass
+// `?? ''` — the helper does NOT inject defaults). Statements differing in SQL
+// (updateMemory's `UPDATE memories_vec SET scope/namespace` re-scope path) and the
+// surrounding ed25519 block (guard / valid_from / re-SELECT) are NOT folded in.
+
+/** vec0 hard-delete of a row's KNN shadow. Callers pass `BigInt(rowid)`. */
+function vecDelete(db: Database.Database, rowid: number | bigint): void {
+  db.prepare('DELETE FROM memories_vec WHERE rowid = ?').run(rowid);
+}
+
+/** vec0 (re)index INSERT. Caller computes scope/namespace (e.g. `?? ''`/`|| ''`). */
+function vecInsert(
+  db: Database.Database,
+  rowid: number | bigint,
+  embedding: Float32Array,
+  scope: string,
+  namespace: string,
+): void {
+  db.prepare(
+    'INSERT INTO memories_vec(rowid, embedding, scope, namespace) VALUES (?, ?, ?, ?)',
+  ).run(rowid, Buffer.from(embedding.buffer), scope, namespace);
+}
+
+/** FTS5 (re)index INSERT. Caller passes the column values verbatim. */
+function ftsInsert(
+  db: Database.Database,
+  rowid: number | bigint,
+  title: string | null,
+  content: string,
+  tags: string | null,
+  author: string | null,
+  department: string | null,
+): void {
+  db.prepare(
+    'INSERT INTO memories_fts(rowid, title, content, tags, author, department) VALUES (?, ?, ?, ?, ?, ?)',
+  ).run(rowid, title, content, tags, author, department);
+}
+
+/**
+ * FTS5 external-content `'delete'` shadow-removal. Caller passes the SAME values
+ * it would index, verbatim — the helper does NOT inject `?? ''`, so each site
+ * keeps its exact bound params (one site passes raw column values, others `?? ''`).
+ */
+function ftsDelete(
+  db: Database.Database,
+  rowid: number | bigint,
+  title: string | null,
+  content: string,
+  tags: string | null,
+  author: string | null,
+  department: string | null,
+): void {
+  db.prepare(
+    "INSERT INTO memories_fts(memories_fts, rowid, title, content, tags, author, department) VALUES('delete', ?, ?, ?, ?, ?, ?)",
+  ).run(rowid, title, content, tags, author, department);
+}
+
+/**
+ * Stamp the signed provenance envelope onto the row. This is ONLY the shared
+ * 3-line UPDATE — the `signEnvelope(...)` call, the `wasSigned` guard, the
+ * `valid_from` derivation, and the re-SELECT/return all differ between the
+ * insert and update sites and are kept inline at each call site.
+ */
+function applySignature(db: Database.Database, env: SignedEnvelope, id: string): void {
+  db.prepare(
+    'UPDATE memories SET content_hash = ?, signature = ?, pubkey = ?, signed_at = ? WHERE id = ?',
+  ).run(env.content_hash, env.signature, env.pubkey, env.signed_at, id);
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function insertMemory(
   db: Database.Database,
@@ -51,18 +129,13 @@ export function insertMemory(
         },
         memory.created_at,
       );
-      db.prepare(
-        'UPDATE memories SET content_hash = ?, signature = ?, pubkey = ?, signed_at = ? WHERE id = ?',
-      ).run(env.content_hash, env.signature, env.pubkey, env.signed_at, memory.id);
+      applySignature(db, env, memory.id);
     }
 
-    db.prepare(
-      'INSERT INTO memories_vec(rowid, embedding, scope, namespace) VALUES (?, ?, ?, ?)',
-    ).run(rowid, Buffer.from(embedding.buffer), memory.scope ?? '', memory.namespace ?? '');
+    vecInsert(db, rowid, embedding, memory.scope ?? '', memory.namespace ?? '');
 
-    db.prepare(
-      'INSERT INTO memories_fts(rowid, title, content, tags, author, department) VALUES (?, ?, ?, ?, ?, ?)',
-    ).run(
+    ftsInsert(
+      db,
       rowid,
       memory.title,
       memory.content,
@@ -179,12 +252,11 @@ export function updateMemory(
       updates.content !== undefined && updates.content !== existing.content;
 
     if (contentChanged && newEmbedding) {
-      db.prepare('DELETE FROM memories_vec WHERE rowid = ?').run(BigInt(existing.rowid));
-      db.prepare(
-        'INSERT INTO memories_vec(rowid, embedding, scope, namespace) VALUES (?, ?, ?, ?)',
-      ).run(
+      vecDelete(db, BigInt(existing.rowid));
+      vecInsert(
+        db,
         BigInt(existing.rowid),
-        Buffer.from(newEmbedding.buffer),
+        newEmbedding,
         (updates.scope ?? existing.scope) || '',
         (updates.namespace ?? existing.namespace) || '',
       );
@@ -207,9 +279,8 @@ export function updateMemory(
       }
     }
 
-    db.prepare(
-      "INSERT INTO memories_fts(memories_fts, rowid, title, content, tags, author, department) VALUES('delete', ?, ?, ?, ?, ?, ?)",
-    ).run(
+    ftsDelete(
+      db,
       existing.rowid,
       existing.title,
       existing.content,
@@ -222,9 +293,8 @@ export function updateMemory(
       .prepare<[string], MemoryRow>('SELECT * FROM memories WHERE id = ?')
       .get(id)!;
 
-    db.prepare(
-      'INSERT INTO memories_fts(rowid, title, content, tags, author, department) VALUES (?, ?, ?, ?, ?, ?)',
-    ).run(
+    ftsInsert(
+      db,
       existing.rowid,
       updated.title,
       updated.content,
@@ -253,9 +323,7 @@ export function updateMemory(
         },
         updated.created_at,
       );
-      db.prepare(
-        'UPDATE memories SET content_hash = ?, signature = ?, pubkey = ?, signed_at = ? WHERE id = ?',
-      ).run(env.content_hash, env.signature, env.pubkey, env.signed_at, id);
+      applySignature(db, env, id);
       return db.prepare<[string], MemoryRow>('SELECT * FROM memories WHERE id = ?').get(id)!;
     }
 
@@ -282,11 +350,9 @@ export function deleteMemory(db: Database.Database, id: string): boolean {
       return false;
     }
 
-    db.prepare(
-      "INSERT INTO memories_fts(memories_fts, rowid, title, content, tags, author, department) VALUES('delete', ?, ?, ?, ?, ?, ?)",
-    ).run(row.rowid, row.title ?? '', row.content, row.tags ?? '', row.author ?? '', row.department ?? '');
+    ftsDelete(db, row.rowid, row.title ?? '', row.content, row.tags ?? '', row.author ?? '', row.department ?? '');
 
-    db.prepare('DELETE FROM memories_vec WHERE rowid = ?').run(BigInt(row.rowid));
+    vecDelete(db, BigInt(row.rowid));
 
     db.prepare('DELETE FROM memories WHERE id = ?').run(id);
 
@@ -376,13 +442,13 @@ export function deleteMemoriesByFilter(
       return 0;
     }
 
-    const deleteFts = db.prepare(
-      "INSERT INTO memories_fts(memories_fts, rowid, title, content, tags, author, department) VALUES('delete', ?, ?, ?, ?, ?, ?)",
-    );
-    const deleteVec = db.prepare('DELETE FROM memories_vec WHERE rowid = ?');
-
+    // Per-row helper calls re-prepare each iteration vs the former prepared-once
+    // loop; better-sqlite3 caches by SQL string so the cost is negligible, and
+    // the bound params (raw rowid + `?? ''` column values for FTS, BigINT for vec)
+    // are byte-identical to the prior inline statements.
     for (const row of rows) {
-      deleteFts.run(
+      ftsDelete(
+        db,
         row.rowid,
         row.title ?? '',
         row.content,
@@ -390,7 +456,7 @@ export function deleteMemoriesByFilter(
         row.author ?? '',
         row.department ?? '',
       );
-      deleteVec.run(BigInt(row.rowid));
+      vecDelete(db, BigInt(row.rowid));
     }
 
     const result = db
