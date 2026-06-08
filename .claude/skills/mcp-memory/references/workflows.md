@@ -96,6 +96,16 @@ npx mcp-memory-server uninstall             # reverse
 - The Stop hook spawns `claude -p` headless — the `claude` binary must be on `$PATH` or set `$CLAUDE_BIN`.
 - The hook matcher hardcodes the server name `memory-server` (tool `mcp__memory-server__memory_search`). If you register the server under a different name, the hooks won't match.
 - `init --project` is **not** the same as `--scope project` (known gotcha — verify the resulting scope).
+- `init` (user scope) installs the hooks but does **not** register the MCP server — run `claude mcp add` (below) separately, or use `--scope project` which also writes `.mcp.json`.
+
+**Custom DB location:** the DB file is resolved by the shared `resolveDbPath()` (`src/db/db-path.ts`) — precedence **explicit arg > `MCP_MEMORY_DB_PATH` env > `config.storage.db_path` > `~/.mcp-memory/memory.db`**. The server, CLI, REST API, **and** the SessionStart hook all go through it, so set the location **once** and every process (server + hooks + nightly launchd + CLI) honors it — no per-hook env threading, no launchd edit:
+```bash
+npx mcp-memory-server init                  # answer the "Database path:" prompt with e.g. ~/Documents/.mcp-memory/memory.db
+                                            # → written to config.storage.db_path; read by every process
+claude mcp add memory-server node /path/to/dist/index.js          # register the server (no --env needed — it reads the config)
+claude mcp add -s user memory-server node /path/to/dist/index.js  # for ALL projects
+```
+- Set `MCP_MEMORY_DB_PATH` to **override** the config for a one-off/ad-hoc DB (env wins over `config.storage.db_path`).
 
 ---
 

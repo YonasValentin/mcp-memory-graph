@@ -141,6 +141,15 @@ export function getConfig(): ServerConfig {
 }
 
 /**
+ * Drop the cached config so the next {@link getConfig} re-reads from disk.
+ * Supports config reload and test isolation after `MCP_MEMORY_CONFIG_PATH`
+ * (or the file contents) change within a process.
+ */
+export function clearConfigCache(): void {
+  cachedConfig = null;
+}
+
+/**
  * Resolve the active vault egress policy, or `undefined` when none is configured
  * (the default — no filtering). Reads through the validated config schema so the
  * returned value is the parsed `vault.egress` section. `ServerConfig` (a shared

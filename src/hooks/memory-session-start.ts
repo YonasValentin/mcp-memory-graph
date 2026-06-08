@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type BetterSqlite3 from 'better-sqlite3';
 import { resolveNamespace } from '../config/loader.js';
+import { resolveDbPath } from '../db/db-path.js';
 import { NOW_ISO_SQL } from '../db/predicates.js';
 
 async function main(): Promise<void> {
@@ -28,7 +29,7 @@ async function main(): Promise<void> {
   const cwd = typeof input?.cwd === 'string' ? input.cwd : process.cwd();
 
   // Open SQLite directly — NO embedder
-  const dbPath = process.env.MCP_MEMORY_DB_PATH || join(homedir(), '.mcp-memory', 'memory.db');
+  const dbPath = resolveDbPath();
   if (!existsSync(dbPath)) {
     // No database yet — nothing to report
     process.exit(0);
