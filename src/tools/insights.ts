@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { liveConditions, scopeConditions } from '../db/predicates.js';
 
 const DEFAULT_LIMIT = 20;
 const SNIPPET_LEN = 60;
@@ -26,16 +27,7 @@ function scopeFilter(
   alias: string,
   input: { scope?: string; namespace?: string },
 ): { sql: string; params: unknown[] } {
-  const conditions: string[] = [];
-  const params: unknown[] = [];
-  if (input.scope !== undefined) {
-    conditions.push(`${alias}.scope = ?`);
-    params.push(input.scope);
-  }
-  if (input.namespace !== undefined) {
-    conditions.push(`${alias}.namespace = ?`);
-    params.push(input.namespace);
-  }
+  const { conditions, params } = scopeConditions(input, alias);
   return { sql: conditions.length ? ` AND ${conditions.join(' AND ')}` : '', params };
 }
 
@@ -62,7 +54,7 @@ export function handleInsights(
 ): InsightsResult {
   const limit = input.limit ?? DEFAULT_LIMIT;
   const live = (a: string) =>
-    `${a}.parent_id IS NULL AND ${a}.valid_to IS NULL AND ${a}.tx_expired IS NULL`;
+    liveConditions({ topLevelOnly: true, alias: a }).join(' AND ');
   const insights: Insight[] = [];
 
   // ── 1. unresolved_conflict ──────────────────────────────────────────────────
