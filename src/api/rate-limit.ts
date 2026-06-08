@@ -22,6 +22,7 @@
  * shared limiter (Redis, Cloudflare WAF, NGINX limit_req) in front.
  */
 import type { Request, Response, NextFunction } from 'express';
+import { envInt } from '../lib/env.js';
 
 interface Bucket {
   tokens: number;
@@ -33,13 +34,6 @@ export interface RateLimiterConfig {
   refillPerSec: number;
   /** Optional clock injection for tests. */
   now?: () => number;
-}
-
-function envInt(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (!raw) return fallback;
-  const n = parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
 export function defaultConfig(): RateLimiterConfig {

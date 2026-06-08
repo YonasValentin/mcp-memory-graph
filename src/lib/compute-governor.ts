@@ -36,6 +36,7 @@
  *   MCP_COMPUTE_GOVERNOR_CAPACITY       default 600   burst budget (token units)
  *   MCP_COMPUTE_GOVERNOR_REFILL_PER_SEC default 60    sustained refill
  */
+import { envInt } from './env.js';
 
 /**
  * The heavy ops the governor weights. The free path (vector + FTS) is unmetered.
@@ -102,13 +103,6 @@ export interface ComputeWindow {
   window_seconds: number;
   /** Latched true once any preflight has gone over budget. */
   degraded: boolean;
-}
-
-function envInt(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (!raw) return fallback;
-  const n = parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
 function parseMode(raw: string | undefined): GovernorMode {
