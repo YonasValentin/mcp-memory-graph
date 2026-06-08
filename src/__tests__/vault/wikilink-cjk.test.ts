@@ -141,4 +141,27 @@ describe('v16 i18n: CJK wiki-link resolution', () => {
     const targets = getOutgoingLinks(db, src.id).filter((l) => l.relation === 'links_to').map((l) => l.target_memory_id);
     expect(targets).toContain(tgt.id);
   });
+
+  // battle-v16 round-5 VS-IVS-1: Ideographic Variation Selectors (U+E0100+) are
+  // IDENTITY-bearing (distinct registered CJK glyph variants), unlike emoji
+  // presentation selectors — they must NOT be stripped, so two titles differing
+  // only by an IVS stay distinct and a [[葛︀]] link does not mis-resolve.
+  it('keeps Ideographic Variation Selectors distinct (no cross-variant mis-link)', async () => {
+    const db = createTestDb();
+    const embedder = new MockEmbeddingProvider();
+    const a = '葛\u{E0100}'; // variant A
+    const b = '葛\u{E0101}'; // variant B (same base, different registered glyph)
+    tmp = mkVault({
+      'src.md': `---\ntitle: Linker\n---\n\nSee [[${a}]].\n`,
+      'a.md': `---\ntitle: ${a}\n---\n\nvariant A.\n`,
+      'b.md': `---\ntitle: ${b}\n---\n\nvariant B.\n`,
+    });
+    await syncVault(db, embedder, { vaultPath: tmp, force: true });
+    const src = db.prepare("SELECT id FROM memories WHERE title='Linker' AND parent_id IS NULL").get() as { id: string };
+    const idA = db.prepare('SELECT id FROM memories WHERE title = ? AND parent_id IS NULL').get(a) as { id: string };
+    const idB = db.prepare('SELECT id FROM memories WHERE title = ? AND parent_id IS NULL').get(b) as { id: string };
+    const targets = getOutgoingLinks(db, src.id).filter((l) => l.relation === 'links_to').map((l) => l.target_memory_id);
+    expect(targets).toContain(idA.id);     // resolves to the intended variant A
+    expect(targets).not.toContain(idB.id); // not the distinct variant B
+  });
 });

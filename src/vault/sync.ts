@@ -556,16 +556,20 @@ function normalizeLinkKey(s: string): string {
   // its nukta and stays distinct from क. Callers must skip an EMPTY key (a
   // symbol/emoji-only title has no letter/number/mark) so such titles never
   // collide to '' and mis-link.
-  // battle-v16 re-battle WIKILINK-VS16: strip variation selectors (VS1-16
-  // U+FE00–FE0F + astral VS17-256 U+E0100–E01EF). They are category Mn (so the
-  // \p{M} keep below would retain them) but are PRESENTATION-only and carry no
-  // title identity — keeping them makes "❤️" (with VS16) and "❤" (without) hash
-  // to different keys and a wikilink silently miss. Nukta/diacritic marks (real
-  // identity) are still kept.
+  // battle-v16 re-battle WIKILINK-VS16: strip ONLY the VS1-16 presentation
+  // selectors (U+FE00–FE0F). They are category Mn (so the \p{L}\p{N}\p{M} keep
+  // below would retain them) but carry no title identity — keeping them makes
+  // "❤️" (with VS16) and "❤" (without) hash to different keys and a wikilink
+  // silently miss. battle-v16 round-5 VS-IVS-1: do NOT strip the astral
+  // Ideographic Variation Selectors (U+E0100–E01EF / VS17-256) — per UTS #37
+  // those select genuinely DISTINCT registered CJK glyph variants (identity-
+  // bearing, e.g. disambiguating surname kanji); stripping them collapsed two
+  // distinct titles onto one key (wrong wikilink). They stay, kept by \p{M}.
+  // Nukta/diacritic marks (real identity) are likewise kept.
   return s
     .normalize('NFC')
     .toLowerCase()
-    .replace(/[︀-️\u{E0100}-\u{E01EF}]/gu, '')
+    .replace(/[︀-️]/gu, '')
     .replace(/[^\p{L}\p{N}\p{M}]/gu, '');
 }
 
