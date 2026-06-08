@@ -4,6 +4,7 @@
   "description": "Local-first vector + knowledge-graph memory MCP server: hybrid search, bi-temporal, signed provenance — $0/token, zero cloud",
   "type": "module",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "bin": {
     "mcp-memory-graph": "dist/index.js"
   },
