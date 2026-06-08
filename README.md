@@ -1,8 +1,16 @@
 # MCP Memory Graph
 
+[![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial-1f6feb.svg)](./LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)](./package.json)
+[![MCP server](https://img.shields.io/badge/MCP-server-111111)](https://modelcontextprotocol.io/)
+[![Built for Claude Code](https://img.shields.io/badge/built%20for-Claude%20Code-d97757)](https://docs.anthropic.com/en/docs/claude-code)
+[![Local-first · $0/token](https://img.shields.io/badge/local--first-%240%2Ftoken-2ea043)](#why-this-exists)
+
 Self-improving, local-first vector memory server for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). Store, search, and manage knowledge across any domain — engineering, legal, accounting, HR, sales — with hybrid semantic + keyword search, access tracking, quality scoring, automatic learning extraction, and a "dream cycle" consolidation system, all running entirely on your machine.
 
 > **License:** source-available, **free for noncommercial use** ([PolyForm Noncommercial 1.0.0](./LICENSE)) — personal, hobby, study, research, and charitable / educational / government use. **Commercial use requires a paid license** ([COMMERCIAL.md](./COMMERCIAL.md)).
+
+**Who it's for:** developers who want Claude — or any MCP client (Cursor, Codex, …) — to remember decisions across sessions · solo builders & hobbyists (free under the noncommercial license) · teams sharing a knowledge base over git · anyone replacing a cloud memory service (mem0 / Zep / Letta / Supermemory) with something that runs **100% locally, at $0/token**.
 
 ## Why This Exists
 
@@ -1279,3 +1287,9 @@ see [COMMERCIAL.md](./COMMERCIAL.md).
 
 If you're unsure whether your use is commercial, check the safe harbors in the
 [license](./LICENSE) or just ask: yonasklibi@gmail.com.
+
+## Keywords
+
+MCP memory server · Model Context Protocol · Claude Code memory · persistent AI memory · LLM long-term memory · AI agent memory · local-first memory · $0/token memory · hybrid vector + keyword search · semantic search · knowledge graph · bi-temporal memory · HippoRAG / Personalized PageRank · cross-encoder reranking · RAG memory · SQLite vector database · sqlite-vec · FTS5 / BM25 · local embeddings (all-MiniLM-L6-v2, Transformers.js) · Obsidian vault sync · JSON Canvas · GDPR forget · signed provenance · self-hosted memory.
+
+**Also searched as:** a self-hosted, privacy-first alternative to mem0, Zep, Letta, Cognee, and Supermemory · long-term memory for Claude / Cursor / Codex · an Obsidian-backed knowledge base for AI agents · a local knowledge-graph memory that never leaves your machine.
