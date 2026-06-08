@@ -3,20 +3,9 @@ import { getConfig } from '../config/loader.js';
 import { getReadOnlyDb } from '../lib/direct-access.js';
 import { exportMemoriesToVault } from '../vault/writer.js';
 import { writeGraphSidecar, writeManifestSidecar } from '../vault/sidecar.js';
+import { parseFlags } from './argv.js';
 
 /* c8 ignore start — thin CLI/IO over the tested exportMemoriesToVault + writeGraphSidecar cores. */
-
-function parseFlags(args: string[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a.startsWith('--')) {
-      out[a.slice(2)] = args[i + 1] ?? '';
-      i++;
-    }
-  }
-  return out;
-}
 
 /**
  * `memory sync [--vault <path>]` — write a complete, committable snapshot to the
