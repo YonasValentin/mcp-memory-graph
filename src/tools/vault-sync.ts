@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
-import fs from 'node:fs';
 import type { EmbeddingProvider, VaultSyncResult } from '../types.js';
 import { syncVault } from '../vault/sync.js';
+import { assertVaultDir } from '../vault/guard.js';
 
 export async function handleVaultSync(
   db: Database.Database,
@@ -15,11 +15,7 @@ export async function handleVaultSync(
     exclude_patterns?: string[];
   },
 ): Promise<VaultSyncResult> {
-  const stat = fs.statSync(input.vault_path, { throwIfNoEntry: false });
-  /* c8 ignore next 3 */
-  if (!stat || !stat.isDirectory()) {
-    throw new Error(`Vault path is not a directory: ${input.vault_path}`);
-  }
+  assertVaultDir(input.vault_path);
 
   return syncVault(db, embedder, {
     vaultPath: input.vault_path,

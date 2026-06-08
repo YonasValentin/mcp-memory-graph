@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { liveConditions, scopeConditions } from '../db/predicates.js';
 
 /**
  * Pillar 8 (T23): active "questions to ask" digest.
@@ -43,21 +44,16 @@ export interface QuestionsResult {
   count: number;
 }
 
-/** Build the `m.scope = ? AND m.namespace = ?` tail shared by every query. */
+/**
+ * Build the `m.scope = ? AND m.namespace = ?` tail shared by every query.
+ * Delegates the per-column scope/namespace SQL to the single-source-of-truth
+ * `scopeConditions` (with the table alias), preserving the leading ` AND `.
+ */
 function scopeFilter(
   alias: string,
   input: { scope?: string; namespace?: string },
 ): { sql: string; params: unknown[] } {
-  const conditions: string[] = [];
-  const params: unknown[] = [];
-  if (input.scope !== undefined) {
-    conditions.push(`${alias}.scope = ?`);
-    params.push(input.scope);
-  }
-  if (input.namespace !== undefined) {
-    conditions.push(`${alias}.namespace = ?`);
-    params.push(input.namespace);
-  }
+  const { conditions, params } = scopeConditions(input, alias);
   return { sql: conditions.length ? ` AND ${conditions.join(' AND ')}` : '', params };
 }
 
@@ -70,7 +66,7 @@ export function handleQuestions(
   // Always alias-qualified — memory_links also carries valid_to/tx_expired
   // (bi-temporal v6), so a bare column would be ambiguous in the JOINs below.
   const live = (a: string) =>
-    `${a}.parent_id IS NULL AND ${a}.valid_to IS NULL AND ${a}.tx_expired IS NULL`;
+    liveConditions({ topLevelOnly: true, alias: a }).join(' AND ');
   const questions: Question[] = [];
 
   // ── 1. verify — AMBIGUOUS edges between two in-scope memories. ──────────────

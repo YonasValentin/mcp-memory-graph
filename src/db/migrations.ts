@@ -8,15 +8,6 @@ interface Migration {
 
 export { CURRENT_SCHEMA_VERSION };
 
-/**
- * Run an `ALTER TABLE … ADD COLUMN` that is safe to re-apply. SQLite has no
- * `IF NOT EXISTS` for ADD COLUMN, so on a second run it raises a
- * "duplicate column name" error — the ONLY error this helper swallows (the
- * column is already present, which is the desired end state). Every other
- * error (no such table, malformed SQL, disk I/O, lock failure) is rethrown so
- * a genuine failure aborts the migration transaction instead of silently
- * bumping the schema version past a partially-applied migration.
- */
 /** True when `table` has a column named `col` (for migrations that must tolerate
  *  a minimal/ancient base schema — e.g. the synthetic from-0 upgrade path). */
 function columnExists(db: Database.Database, table: string, col: string): boolean {
@@ -29,6 +20,15 @@ function columnExists(db: Database.Database, table: string, col: string): boolea
   );
 }
 
+/**
+ * Run an `ALTER TABLE … ADD COLUMN` that is safe to re-apply. SQLite has no
+ * `IF NOT EXISTS` for ADD COLUMN, so on a second run it raises a
+ * "duplicate column name" error — the ONLY error this helper swallows (the
+ * column is already present, which is the desired end state). Every other
+ * error (no such table, malformed SQL, disk I/O, lock failure) is rethrown so
+ * a genuine failure aborts the migration transaction instead of silently
+ * bumping the schema version past a partially-applied migration.
+ */
 export function addColumn(db: Database.Database, sql: string): void {
   try {
     db.exec(sql);

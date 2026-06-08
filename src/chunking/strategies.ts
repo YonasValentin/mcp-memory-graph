@@ -4,11 +4,14 @@ export interface ChunkingStrategy {
   chunk(content: string, chunkSize: number): ChunkResult[];
 }
 
-function locateSegments(
-  segments: string[],
-  content: string
-): { text: string; start: number; end: number }[] {
-  const results: { text: string; start: number; end: number }[] = [];
+interface LocatedSegment {
+  text: string;
+  start: number;
+  end: number;
+}
+
+function locateSegments(segments: string[], content: string): LocatedSegment[] {
+  const results: LocatedSegment[] = [];
   let searchFrom = 0;
   for (const segment of segments) {
     const idx = content.indexOf(segment, searchFrom);
@@ -16,6 +19,61 @@ function locateSegments(
     results.push({ text: segment, start: idx, end: idx + segment.length });
     searchFrom = idx + segment.length;
   }
+  return results;
+}
+
+/**
+ * Greedy extend-or-flush accumulator shared by the Paragraph, Sentence, and Code
+ * strategies. Walks `segments` (each a located `{text,start,end}` span over
+ * `content`) and merges adjacent spans into a single chunk while the merged text
+ * still fits `chunkSize`; when the next span would overflow, the current chunk is
+ * flushed and a fresh accumulator starts at that span.
+ *
+ * The text bridging two spans is taken verbatim from the source as
+ * `content.slice(currentEnd, seg.start)`, so the natural inter-segment characters
+ * (paragraph blank lines, sentence whitespace) are preserved exactly. For Code,
+ * whose sections are contiguous `content.slice(start,end)` spans, this bridge is
+ * always the empty string — equivalent to a no-separator join — so all three
+ * strategies share one byte-identical accumulator. `segments` must be non-empty.
+ */
+function mergeSegments(
+  segments: LocatedSegment[],
+  chunkSize: number,
+  content: string
+): ChunkResult[] {
+  const results: ChunkResult[] = [];
+  let currentText = segments[0].text;
+  let currentStart = segments[0].start;
+  let currentEnd = segments[0].end;
+
+  for (let i = 1; i < segments.length; i++) {
+    const seg = segments[i];
+    const separator = content.slice(currentEnd, seg.start);
+    const merged = currentText + separator + seg.text;
+
+    if (merged.length <= chunkSize) {
+      currentText = merged;
+      currentEnd = seg.end;
+    } else {
+      results.push({
+        content: currentText,
+        start_offset: currentStart,
+        end_offset: currentEnd,
+        chunk_index: results.length,
+      });
+      currentText = seg.text;
+      currentStart = seg.start;
+      currentEnd = seg.end;
+    }
+  }
+
+  results.push({
+    content: currentText,
+    start_offset: currentStart,
+    end_offset: currentEnd,
+    chunk_index: results.length,
+  });
+
   return results;
 }
 
@@ -30,40 +88,7 @@ class ParagraphStrategy implements ChunkingStrategy {
         : [];
     }
 
-    const results: ChunkResult[] = [];
-    let currentText = located[0].text;
-    let currentStart = located[0].start;
-    let currentEnd = located[0].end;
-
-    for (let i = 1; i < located.length; i++) {
-      const seg = located[i];
-      const separator = content.slice(currentEnd, seg.start);
-      const merged = currentText + separator + seg.text;
-
-      if (merged.length <= chunkSize) {
-        currentText = merged;
-        currentEnd = seg.end;
-      } else {
-        results.push({
-          content: currentText,
-          start_offset: currentStart,
-          end_offset: currentEnd,
-          chunk_index: results.length,
-        });
-        currentText = seg.text;
-        currentStart = seg.start;
-        currentEnd = seg.end;
-      }
-    }
-
-    results.push({
-      content: currentText,
-      start_offset: currentStart,
-      end_offset: currentEnd,
-      chunk_index: results.length,
-    });
-
-    return results;
+    return mergeSegments(located, chunkSize, content);
   }
 }
 
@@ -89,40 +114,7 @@ class SentenceStrategy implements ChunkingStrategy {
         : [];
     }
 
-    const results: ChunkResult[] = [];
-    let currentText = matches[0].text;
-    let currentStart = matches[0].start;
-    let currentEnd = matches[0].end;
-
-    for (let i = 1; i < matches.length; i++) {
-      const seg = matches[i];
-      const separator = content.slice(currentEnd, seg.start);
-      const merged = currentText + separator + seg.text;
-
-      if (merged.length <= chunkSize) {
-        currentText = merged;
-        currentEnd = seg.end;
-      } else {
-        results.push({
-          content: currentText,
-          start_offset: currentStart,
-          end_offset: currentEnd,
-          chunk_index: results.length,
-        });
-        currentText = seg.text;
-        currentStart = seg.start;
-        currentEnd = seg.end;
-      }
-    }
-
-    results.push({
-      content: currentText,
-      start_offset: currentStart,
-      end_offset: currentEnd,
-      chunk_index: results.length,
-    });
-
-    return results;
+    return mergeSegments(matches, chunkSize, content);
   }
 }
 
@@ -220,39 +212,10 @@ class CodeStrategy implements ChunkingStrategy {
       }
     }
 
-    const results: ChunkResult[] = [];
-    let currentText = sections[0].text;
-    let currentStart = sections[0].start;
-    let currentEnd = sections[0].end;
-
-    for (let i = 1; i < sections.length; i++) {
-      const seg = sections[i];
-      const merged = currentText + seg.text;
-
-      if (merged.length <= chunkSize) {
-        currentText = merged;
-        currentEnd = seg.end;
-      } else {
-        results.push({
-          content: currentText,
-          start_offset: currentStart,
-          end_offset: currentEnd,
-          chunk_index: results.length,
-        });
-        currentText = seg.text;
-        currentStart = seg.start;
-        currentEnd = seg.end;
-      }
-    }
-
-    results.push({
-      content: currentText,
-      start_offset: currentStart,
-      end_offset: currentEnd,
-      chunk_index: results.length,
-    });
-
-    return results;
+    // Code sections are contiguous content.slice(start,end) spans, so the bridge
+    // mergeSegments derives (content.slice(currentEnd, seg.start)) is always '' —
+    // byte-identical to the prior no-separator currentText + seg.text join.
+    return mergeSegments(sections, chunkSize, content);
   }
 
   /* c8 ignore next 4 */

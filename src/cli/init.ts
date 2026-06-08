@@ -11,31 +11,10 @@ import {
   type WizardAnswers,
 } from './init-wizard.js';
 import type { ServerConfig } from '../types.js';
+import { GREEN, CYAN, RESET, success, warn, info, dim } from './cli-output.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const hooksSourceDir = join(__dirname, '..', 'hooks');
-
-const GREEN = '\x1b[32m';
-const YELLOW = '\x1b[33m';
-const CYAN = '\x1b[36m';
-const DIM = '\x1b[2m';
-const RESET = '\x1b[0m';
-
-function success(msg: string): void {
-  console.log(`${GREEN}[ok]${RESET} ${msg}`);
-}
-
-function warn(msg: string): void {
-  console.log(`${YELLOW}[!!]${RESET} ${msg}`);
-}
-
-function info(msg: string): void {
-  console.log(`${CYAN}[->]${RESET} ${msg}`);
-}
-
-function dim(msg: string): void {
-  console.log(`${DIM}    ${msg}${RESET}`);
-}
 
 // Hook scripts run from dist/hooks/ so they can resolve node_modules dependencies.
 // Settings.json references them via absolute path — no copying needed.

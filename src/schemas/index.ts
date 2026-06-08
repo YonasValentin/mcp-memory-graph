@@ -15,7 +15,7 @@ import {
 // Shared field factories — DRY helpers for fields reused across schemas
 // ---------------------------------------------------------------------------
 
-const scopeField = (required: false) =>
+const scopeField = () =>
   z
     .enum(SCOPES)
     .optional()
@@ -148,7 +148,7 @@ export const MemorySearchSchema = z.object({
     .describe(
       'Search query — supports natural language for semantic search and keywords for exact matching',
     ),
-  scope: scopeField(false),
+  scope: scopeField(),
   namespace: namespaceField(),
   department: departmentField(),
   document_type: documentTypeField(),
@@ -345,7 +345,7 @@ export const MemoryDeleteSchema = z
     id: z.string().optional().describe('Delete a specific memory by ID'),
     filter: z
       .object({
-        scope: scopeField(false),
+        scope: scopeField(),
         namespace: namespaceField(),
         department: departmentField(),
         // battle-v8 C3: the repository filter already supports document_type
@@ -381,7 +381,7 @@ export const MemoryDeleteSchema = z
 // ---------------------------------------------------------------------------
 
 export const MemoryListSchema = z.object({
-  scope: scopeField(false),
+  scope: scopeField(),
   namespace: namespaceField(),
   department: departmentField(),
   document_type: documentTypeField(),
@@ -583,7 +583,7 @@ export const MemoryVersionsSchema = z.object({
 // ---------------------------------------------------------------------------
 
 export const MemoryStatsSchema = z.object({
-  scope: scopeField(false),
+  scope: scopeField(),
   namespace: namespaceField(),
   department: departmentField(),
 });
@@ -597,7 +597,7 @@ export const MemoryVerifySchema = z.object({
     .string()
     .optional()
     .describe('Verify a single memory by id. Omit to verify a batch by scope/namespace.'),
-  scope: scopeField(false),
+  scope: scopeField(),
   namespace: namespaceField(),
   limit: z
     .number()
@@ -621,7 +621,7 @@ export const MemoryVerifySchema = z.object({
 // ---------------------------------------------------------------------------
 
 export const MemoryTiersSchema = z.object({
-  scope: scopeField(false),
+  scope: scopeField(),
   namespace: namespaceField(),
 });
 
@@ -630,7 +630,7 @@ export const MemoryTiersSchema = z.object({
 // ---------------------------------------------------------------------------
 
 export const MemoryExportSchema = z.object({
-  scope: scopeField(false),
+  scope: scopeField(),
   namespace: namespaceField(),
   department: departmentField(),
   limit: z
@@ -667,7 +667,7 @@ const MemoryImportItemSchema = z.object({
   // here is `.nullable()` — otherwise the tool's own export format is rejected
   // by its own import and a backup/migration round-trip imports 0 records.
   title: z.string().nullable().optional().describe('Short title for the memory'),
-  scope: scopeField(false),
+  scope: scopeField(),
   namespace: namespaceField().nullable(),
   document_type: documentTypeField().nullable(),
   source: sourceField().nullable(),
@@ -859,7 +859,7 @@ export const MemoryExportVaultSchema = z.object({
       'Absolute path to the target Obsidian vault directory (created if missing). ' +
       'Memories are written as .md files with YAML frontmatter — the reverse of vault_sync.',
     ),
-  scope: scopeField(false),
+  scope: scopeField(),
   namespace: namespaceField(),
 });
 
@@ -868,7 +868,7 @@ export const MemoryExportVaultSchema = z.object({
 // ---------------------------------------------------------------------------
 
 export const MemoryCanvasSchema = z.object({
-  scope: scopeField(false),
+  scope: scopeField(),
   namespace: namespaceField(),
   limit: z
     .number()
@@ -901,7 +901,7 @@ export const MemoryCanvasSchema = z.object({
 // ---------------------------------------------------------------------------
 
 export const MemoryConsolidateSchema = z.object({
-  scope: scopeField(false),
+  scope: scopeField(),
   namespace: namespaceField(),
   similarity_threshold: z
     .number().min(0.5).max(1.0).default(0.85)
@@ -935,7 +935,7 @@ export const MemoryConsolidateSchema = z.object({
 // ---------------------------------------------------------------------------
 
 export const MemoryManifestSchema = z.object({
-  scope: scopeField(false),
+  scope: scopeField(),
   namespace: namespaceField(),
   department: departmentField(),
   document_type: documentTypeField(),
@@ -1099,7 +1099,7 @@ export const MemoryQuerySchema = z.object({
       'Maximum seed memories from the initial search. A gap cutoff drops seeds ' +
       'scoring below 20% of the top seed to keep the traversal focused.',
     ),
-  scope: scopeField(false),
+  scope: scopeField(),
   namespace: namespaceField(),
 });
 
@@ -1150,7 +1150,7 @@ export const MemoryReflectSchema = z.object({
       '(high importance × recent) as material for you to synthesize. "store": ' +
       'persist a synthesized insight back, linked to its source memories.',
     ),
-  scope: scopeField(false),
+  scope: scopeField(),
   namespace: namespaceField(),
   limit: z
     .number()
@@ -1230,7 +1230,7 @@ export const MemorySessionNoteSchema = z.object({
     .string()
     .min(1)
     .describe('Text to capture (created as content, or appended newline-joined to the session note).'),
-  scope: scopeField(false),
+  scope: scopeField(),
   namespace: namespaceField(),
   title: z
     .string()
@@ -1243,7 +1243,7 @@ export const MemorySessionNoteSchema = z.object({
 // ---------------------------------------------------------------------------
 
 export const MemoryAttributionSchema = z.object({
-  scope: scopeField(false),
+  scope: scopeField(),
   namespace: namespaceField(),
 });
 
@@ -1252,7 +1252,7 @@ export const MemoryAttributionSchema = z.object({
 // ---------------------------------------------------------------------------
 
 export const MemoryQuestionsSchema = z.object({
-  scope: scopeField(false),
+  scope: scopeField(),
   namespace: namespaceField(),
   limit: z
     .number()
@@ -1320,7 +1320,7 @@ export const MemoryWebhookSchema = z.object({
 // ---------------------------------------------------------------------------
 
 export const MemoryInsightsSchema = z.object({
-  scope: scopeField(false),
+  scope: scopeField(),
   namespace: namespaceField(),
   limit: z
     .number()
@@ -1332,7 +1332,7 @@ export const MemoryInsightsSchema = z.object({
 });
 
 export const MemoryHealthSchema = z.object({
-  scope: scopeField(false),
+  scope: scopeField(),
   namespace: namespaceField(),
 });
 
@@ -1346,7 +1346,7 @@ export const MemoryRevalidateSchema = z.object({
     .default('list')
     .describe('list stale memories | preview the blast radius of a change to `id` (dry-run) | confirm `id` is current'),
   id: z.string().optional().describe('Memory id (required for preview/confirm).'),
-  scope: scopeField(false),
+  scope: scopeField(),
   namespace: namespaceField(),
   limit: z.number().int().min(1).max(500).default(100).describe('Max stale memories to list.'),
 });
@@ -1358,7 +1358,7 @@ export const MemoryRevalidateSchema = z.object({
 export const MemorySessionStateSchema = z.object({
   action: z.enum(['save', 'resume']).default('resume').describe('save the current session state | resume the latest'),
   session_key: z.string().optional().describe('Stable key for the work thread (defaults to branch, else "default").'),
-  scope: scopeField(false),
+  scope: scopeField(),
   namespace: namespaceField(),
   summary: z.string().optional().describe('Where things stand right now.'),
   next_steps: z.array(z.string()).optional().describe('Ordered list of what to do next.'),
@@ -1385,7 +1385,7 @@ export const MemoryExpertiseSchema = z.object({
 // ---------------------------------------------------------------------------
 
 export const MemoryExportDatasetSchema = z.object({
-  scope: scopeField(false),
+  scope: scopeField(),
   namespace: namespaceField(),
   format: z
     .enum(['pairs', 'chatml', 'alpaca'])

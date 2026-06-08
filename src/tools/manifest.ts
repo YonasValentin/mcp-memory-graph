@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import type { ManifestEntry, MemoryScope, MemoryRow } from '../types.js';
-import { liveConditions } from '../db/predicates.js';
+import { liveConditions, scopeConditions } from '../db/predicates.js';
 import { CURRENT_SCHEMA_VERSION } from '../db/schema.js';
 
 interface ManifestInput {
@@ -18,21 +18,13 @@ export function handleManifest(
   input: ManifestInput,
 ): { entries: ManifestEntry[]; total: number; has_more: boolean } {
   // Top-level, currently-live memories only — agree with list/search/stats.
-  const conditions: string[] = liveConditions({ topLevelOnly: true });
-  const params: unknown[] = [];
+  const scope = scopeConditions(input);
+  const conditions: string[] = [
+    ...liveConditions({ topLevelOnly: true }),
+    ...scope.conditions,
+  ];
+  const params: unknown[] = [...scope.params];
 
-  if (input.scope !== undefined) {
-    conditions.push('scope = ?');
-    params.push(input.scope);
-  }
-  if (input.namespace !== undefined) {
-    conditions.push('namespace = ?');
-    params.push(input.namespace);
-  }
-  if (input.department !== undefined) {
-    conditions.push('department = ?');
-    params.push(input.department);
-  }
   if (input.document_type !== undefined) {
     conditions.push('document_type = ?');
     params.push(input.document_type);
@@ -178,21 +170,14 @@ export function buildIntegrityManifest(
   generatedAt: string,
   filter?: { scope?: string; namespace?: string },
 ): IntegrityManifest {
-  const conditions = liveConditions({ topLevelOnly: true });
-  const params: unknown[] = [];
   // battle-v14 F1: on a namespace-forced deployment the manifest sidecar is
   // committed INTO the tenant's (git-shared) vault, so it must fingerprint ONLY
   // the tenant's corpus — an unscoped manifest leaks the global memory count and
   // a merkle root that moves whenever any other tenant writes. Unscoped (no
   // filter) is the single-user default and stays whole-corpus.
-  if (filter?.scope !== undefined) {
-    conditions.push('scope = ?');
-    params.push(filter.scope);
-  }
-  if (filter?.namespace !== undefined) {
-    conditions.push('namespace = ?');
-    params.push(filter.namespace);
-  }
+  const scope = scopeConditions(filter ?? {});
+  const conditions = [...liveConditions({ topLevelOnly: true }), ...scope.conditions];
+  const params: unknown[] = [...scope.params];
   const rows = db
     .prepare<unknown[], { id: string; scope: string; access_level: string; content: string }>(
       `SELECT id, scope, access_level, content FROM memories WHERE ${conditions.join(' AND ')}`,

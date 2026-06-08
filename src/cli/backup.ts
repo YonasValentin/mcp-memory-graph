@@ -1,21 +1,9 @@
 import { resolveDbPath } from '../db/db-path.js';
 import { getReadOnlyDb } from '../lib/direct-access.js';
 import { backupDatabase } from '../db/backup.js';
+import { parseFlags } from './argv.js';
 
 /* c8 ignore start — thin CLI/IO wiring around the tested backupDatabase core. */
-
-/** Parses `--flag value` pairs from a raw argv slice. */
-function parseFlags(args: string[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a.startsWith('--')) {
-      out[a.slice(2)] = args[i + 1] ?? '';
-      i++;
-    }
-  }
-  return out;
-}
 
 /**
  * `memory backup [--out <path>]` — write a WAL-safe online snapshot of the

@@ -30,5 +30,6 @@ coverage/
 # Web-dashboard verification screenshots (regenerable by scripts/battle/verify-web.mjs)
 scripts/battle/web-shots/
 
-# battle-v7 workflow scratch (scripts + preserved artifacts)
+# battle-v7 workflow scratch (scripts + preserved artifacts) + skeptic worktrees
 .battle/
+.battle-skeptic*/

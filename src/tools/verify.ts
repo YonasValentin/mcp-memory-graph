@@ -2,23 +2,6 @@ import type Database from 'better-sqlite3';
 import { liveConditions, scopeConditions } from '../db/predicates.js';
 import { verifyEnvelopeAny, trustedPubkeys } from '../provenance/envelope.js';
 
-/**
- * M2.2 — memory_verify (read-only).
- *
- * Re-derives each memory's content_hash from the stored content and ed25519-
- * verifies its signature against the canonical provenance JSON, then buckets each
- * memory into one of three statuses:
- *   - 'verified' — hash matches and the signature verifies under the row's pubkey
- *   - 'unsigned' — no signature/pubkey on the row (nothing to attest)
- *   - 'tampered' — signed, but the content was edited (content_mismatch) or the
- *                  signature/metadata was forged (bad_signature)
- *
- * Verify a single memory by `id`, or a batch filtered by scope/namespace and
- * capped by `limit`. Batch mode only inspects currently-live rows (valid_to /
- * tx_expired NULL) so the report agrees with what memory_search/get surface.
- * Read-only: it issues a single SELECT and never mutates the store.
- */
-
 /** A single memory's verification outcome. */
 export interface VerifyEntry {
   id: string;
@@ -63,6 +46,22 @@ const SELECT_COLS =
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1000;
 
+/**
+ * M2.2 — memory_verify (read-only).
+ *
+ * Re-derives each memory's content_hash from the stored content and ed25519-
+ * verifies its signature against the canonical provenance JSON, then buckets each
+ * memory into one of three statuses:
+ *   - 'verified' — hash matches and the signature verifies under the row's pubkey
+ *   - 'unsigned' — no signature/pubkey on the row (nothing to attest)
+ *   - 'tampered' — signed, but the content was edited (content_mismatch) or the
+ *                  signature/metadata was forged (bad_signature)
+ *
+ * Verify a single memory by `id`, or a batch filtered by scope/namespace and
+ * capped by `limit`. Batch mode only inspects currently-live rows (valid_to /
+ * tx_expired NULL) so the report agrees with what memory_search/get surface.
+ * Read-only: it issues a single SELECT and never mutates the store.
+ */
 export function handleVerify(
   db: Database.Database,
   input: { id?: string; scope?: string; namespace?: string; limit?: number; trusted_pubkeys?: string[] },

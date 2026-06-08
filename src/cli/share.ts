@@ -2,21 +2,9 @@ import { writeFileSync } from 'node:fs';
 import { getReadOnlyDb } from '../lib/direct-access.js';
 import { exportGraph, mergeGraphFiles } from '../graph/graph-export.js';
 import { getVaultEgress } from '../config/loader.js';
+import { parseFlags } from './argv.js';
 
 const DEFAULT_OUT = './memory-graph.json';
-
-/** Parses `--flag value` pairs from a raw argv slice. */
-function parseFlags(args: string[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a.startsWith('--')) {
-      out[a.slice(2)] = args[i + 1] ?? '';
-      i++;
-    }
-  }
-  return out;
-}
 
 /**
  * `memory export-graph [--out <path>] [--scope <s>] [--namespace <n>]`

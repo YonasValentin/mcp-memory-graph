@@ -6,21 +6,9 @@ import { runMigrations } from '../db/migrations.js';
 import { getConfig } from '../config/loader.js';
 import { getEmbedder } from '../lib/direct-access.js';
 import { rebuildFromVault } from '../vault/rebuild.js';
+import { parseFlags } from './argv.js';
 
 /* c8 ignore start — CLI/IO + real-model wiring around the tested rebuildFromVault core. */
-
-/** Parses `--flag value` pairs from a raw argv slice. */
-function parseFlags(args: string[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a.startsWith('--')) {
-      out[a.slice(2)] = args[i + 1] ?? '';
-      i++;
-    }
-  }
-  return out;
-}
 
 /**
  * `memory rebuild [--vault <path>]` — discard the SQLite index and reconstruct

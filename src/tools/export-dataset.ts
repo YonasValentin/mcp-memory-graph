@@ -19,19 +19,6 @@ function datasetAccessAllowlist(): string[] {
   return ACCESS_LEVELS.filter((_, i) => i <= capIdx);
 }
 
-/**
- * `memory_export_dataset` (M6.3) — the project LoRA / distillation flywheel.
- *
- * Read-only export of the store's HIGH-SIGNAL rows (auto-extracted learnings and
- * agent reflections) as instruction→output training pairs in JSONL-friendly
- * shapes (pairs / chatml / alpaca). A quality floor (importance/confidence) keeps
- * noise out. Training itself stays OUT of the repo — this only emits the data; a
- * caller writes the JSONL and runs distillation elsewhere (scripts/distill).
- *
- * Mirrors export.ts: live, top-level rows only, optionally scoped. Embeddings and
- * provenance signatures are never included — this is a text corpus, not a backup.
- */
-
 export type DatasetFormat = 'pairs' | 'chatml' | 'alpaca';
 
 export interface ExportDatasetInput {
@@ -80,6 +67,18 @@ function toSample(format: DatasetFormat, prompt: string, completion: string): un
   }
 }
 
+/**
+ * `memory_export_dataset` (M6.3) — the project LoRA / distillation flywheel.
+ *
+ * Read-only export of the store's HIGH-SIGNAL rows (auto-extracted learnings and
+ * agent reflections) as instruction→output training pairs in JSONL-friendly
+ * shapes (pairs / chatml / alpaca). A quality floor (importance/confidence) keeps
+ * noise out. Training itself stays OUT of the repo — this only emits the data; a
+ * caller writes the JSONL and runs distillation elsewhere (scripts/distill).
+ *
+ * Mirrors export.ts: live, top-level rows only, optionally scoped. Embeddings and
+ * provenance signatures are never included — this is a text corpus, not a backup.
+ */
 export function handleExportDataset(
   db: Database.Database,
   input: ExportDatasetInput,

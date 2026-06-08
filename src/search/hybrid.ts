@@ -33,7 +33,7 @@ function memoryAgeDays(updatedAt: string): number {
   return Math.max(0, Math.floor((Date.now() - new Date(updatedAt).getTime()) / 86_400_000));
 }
 
-function freshnessWarning(ageDays: number): string | null {
+export function freshnessWarning(ageDays: number): string | null {
   if (ageDays > 90) return `This memory is ${ageDays} days old. Verify against current state before asserting as fact.`;
   if (ageDays > 30) return `This memory is ${ageDays} days old. Information may be outdated.`;
   return null;
@@ -43,6 +43,38 @@ export interface HybridSearchResponse {
   results: SearchResult[];
   total: number;
   truncated: boolean;
+}
+
+/**
+ * Appends ONLY the 7 user-facing secondary filters + the expires-now guard that
+ * are condition-for-condition IDENTICAL across all three search arms (vector
+ * keep-count, keyword, final fetch). Mutates the caller-owned `conds`/`params`
+ * arrays in the EXACT current source order (so the positional `?` binding order
+ * is preserved at every call site). The `col` callback applies the column
+ * prefix: identity for the bare-table arms (vector keep-count + final fetch),
+ * `x => 'm.' + x` for the FTS-JOIN keyword arm.
+ *
+ * Deliberately does NOT emit the scope/namespace partition+privacy guard, the
+ * `parent_id`/keep temporal quad, or the `as_of` point-in-time branch — those
+ * differ BY DESIGN per arm (battle-vN starvation + as_of correctness) and stay
+ * inline at each call site.
+ */
+function pushSecondaryFilters(
+  conds: string[],
+  params: unknown[],
+  o: SearchOptions,
+  col: (name: string) => string,
+): void {
+  if (o.department) { conds.push(`${col('department')} = ?`); params.push(o.department); }
+  if (o.document_type) { conds.push(`${col('document_type')} = ?`); params.push(o.document_type); }
+  if (o.access_level) { conds.push(`${col('access_level')} = ?`); params.push(o.access_level); }
+  if (o.language) { conds.push(`${col('language')} = ?`); params.push(o.language); }
+  if (o.tags && o.tags.length > 0) {
+    for (const tag of o.tags) { conds.push(`${col('tags')} LIKE ?`); params.push(`%"${tag}"%`); }
+  }
+  if (o.date_from) { conds.push(`${col('created_at')} >= ?`); params.push(o.date_from); }
+  if (o.date_to) { conds.push(`${col('created_at')} <= ?`); params.push(o.date_to); }
+  conds.push(`(${col('expires_at')} IS NULL OR ${col('expires_at')} > ${NOW_ISO_SQL})`);
 }
 
 /**
@@ -131,16 +163,7 @@ export async function hybridSearch(
       const keepConds: string[] = [...partConds];
       const keepParams: unknown[] = [...partParams];
       keepConds.push('parent_id IS NULL', 'valid_to IS NULL', 'tx_expired IS NULL', 'superseded_at IS NULL');
-      if (options.department) { keepConds.push('department = ?'); keepParams.push(options.department); }
-      if (options.document_type) { keepConds.push('document_type = ?'); keepParams.push(options.document_type); }
-      if (options.access_level) { keepConds.push('access_level = ?'); keepParams.push(options.access_level); }
-      if (options.language) { keepConds.push('language = ?'); keepParams.push(options.language); }
-      if (options.tags && options.tags.length > 0) {
-        for (const tag of options.tags) { keepConds.push('tags LIKE ?'); keepParams.push(`%"${tag}"%`); }
-      }
-      if (options.date_from) { keepConds.push('created_at >= ?'); keepParams.push(options.date_from); }
-      if (options.date_to) { keepConds.push('created_at <= ?'); keepParams.push(options.date_to); }
-      keepConds.push(`(expires_at IS NULL OR expires_at > ${NOW_ISO_SQL})`);
+      pushSecondaryFilters(keepConds, keepParams, options, (x) => x);
       const total =
         db
           .prepare<unknown[], { c: number }>(
@@ -195,16 +218,7 @@ export async function hybridSearch(
         else { kwConds.push("m.scope != 'user'"); }
         if (options.namespace) { kwConds.push('m.namespace = ?'); kwParams.push(options.namespace); }
         kwConds.push('m.parent_id IS NULL', 'm.valid_to IS NULL', 'm.tx_expired IS NULL', 'm.superseded_at IS NULL');
-        if (options.department) { kwConds.push('m.department = ?'); kwParams.push(options.department); }
-        if (options.document_type) { kwConds.push('m.document_type = ?'); kwParams.push(options.document_type); }
-        if (options.access_level) { kwConds.push('m.access_level = ?'); kwParams.push(options.access_level); }
-        if (options.language) { kwConds.push('m.language = ?'); kwParams.push(options.language); }
-        if (options.tags && options.tags.length > 0) {
-          for (const tag of options.tags) { kwConds.push('m.tags LIKE ?'); kwParams.push(`%"${tag}"%`); }
-        }
-        if (options.date_from) { kwConds.push('m.created_at >= ?'); kwParams.push(options.date_from); }
-        if (options.date_to) { kwConds.push('m.created_at <= ?'); kwParams.push(options.date_to); }
-        kwConds.push(`(m.expires_at IS NULL OR m.expires_at > ${NOW_ISO_SQL})`);
+        pushSecondaryFilters(kwConds, kwParams, options, (x) => 'm.' + x);
         const rows = db.prepare(
           `SELECT f.rowid AS rowid, f.rank AS rank
            FROM memories_fts f JOIN memories m ON m.rowid = f.rowid
@@ -277,38 +291,7 @@ export async function hybridSearch(
     whereClauses.push('namespace = ?');
     params.push(options.namespace);
   }
-  if (options.department) {
-    whereClauses.push('department = ?');
-    params.push(options.department);
-  }
-  if (options.document_type) {
-    whereClauses.push('document_type = ?');
-    params.push(options.document_type);
-  }
-  if (options.access_level) {
-    whereClauses.push('access_level = ?');
-    params.push(options.access_level);
-  }
-  if (options.language) {
-    whereClauses.push('language = ?');
-    params.push(options.language);
-  }
-  if (options.tags && options.tags.length > 0) {
-    for (const tag of options.tags) {
-      whereClauses.push('tags LIKE ?');
-      params.push(`%"${tag}"%`);
-    }
-  }
-  if (options.date_from) {
-    whereClauses.push('created_at >= ?');
-    params.push(options.date_from);
-  }
-  if (options.date_to) {
-    whereClauses.push('created_at <= ?');
-    params.push(options.date_to);
-  }
-
-  whereClauses.push(`(expires_at IS NULL OR expires_at > ${NOW_ISO_SQL})`);
+  pushSecondaryFilters(whereClauses, params, options, (x) => x);
 
   // Bi-temporal: currently-valid by default; point-in-time when `as_of` is set.
   if (options.as_of) {

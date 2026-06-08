@@ -1,17 +1,14 @@
 import type Database from 'better-sqlite3';
-import fs from 'node:fs';
 import path from 'node:path';
 import type { VaultStatus, VaultSyncMeta } from '../types.js';
 import { scanVault } from '../vault/scanner.js';
+import { assertVaultDir } from '../vault/guard.js';
 
 export function handleVaultStatus(
   db: Database.Database,
   input: { vault_path: string },
 ): VaultStatus {
-  const stat = fs.statSync(input.vault_path, { throwIfNoEntry: false });
-  if (!stat || !stat.isDirectory()) {
-    throw new Error(`Vault path is not a directory: ${input.vault_path}`);
-  }
+  assertVaultDir(input.vault_path);
 
   const vaultName = path.basename(input.vault_path);
   const scannedFiles = scanVault(input.vault_path);

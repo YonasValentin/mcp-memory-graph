@@ -7,20 +7,9 @@ import { getReadOnlyDb } from '../lib/direct-access.js';
 import { buildMergeDriverCommand } from './share.js';
 import { vaultGitignore, vaultGitattributes, rebuildHook } from '../vault/git-init.js';
 import { writeGraphSidecar, writeManifestSidecar } from '../vault/sidecar.js';
+import { parseFlags } from './argv.js';
 
 /* c8 ignore start — git + filesystem wiring; the pure content + sidecar core are tested. */
-
-function parseFlags(args: string[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a.startsWith('--')) {
-      out[a.slice(2)] = args[i + 1] ?? '';
-      i++;
-    }
-  }
-  return out;
-}
 
 function resolveVault(flags: Record<string, string>): string | undefined {
   return flags.vault || process.env.MCP_VAULT_PATH || getConfig().vault.path;

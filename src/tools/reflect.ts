@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import type { EmbeddingProvider, MemoryScope } from '../types.js';
 import { handleStore } from './store.js';
 import { createMemoryLink } from '../graph/memory-links.js';
+import { liveConditions, scopeConditions } from '../db/predicates.js';
 
 interface ReflectInput {
   /** 'gather' (default): collect reflection material. 'store': persist a synthesized insight. */
@@ -91,21 +92,12 @@ function gatherMaterial(db: Database.Database, input: ReflectInput): GatherResul
 
   // Top-level, currently-valid memories only (bi-temporal filter), ranked by
   // importance then recency — the reflection-worthiness ordering.
+  const scope = scopeConditions(input);
   const conditions: string[] = [
-    'parent_id IS NULL',
-    'valid_to IS NULL',
-    'tx_expired IS NULL',
+    ...liveConditions({ topLevelOnly: true }),
+    ...scope.conditions,
   ];
-  const params: unknown[] = [];
-
-  if (input.scope !== undefined) {
-    conditions.push('scope = ?');
-    params.push(input.scope);
-  }
-  if (input.namespace !== undefined) {
-    conditions.push('namespace = ?');
-    params.push(input.namespace);
-  }
+  const params: unknown[] = [...scope.params];
 
   const whereClause = `WHERE ${conditions.join(' AND ')}`;
 

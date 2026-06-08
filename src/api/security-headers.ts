@@ -16,6 +16,7 @@
  * browsers anyway, but we omit it to avoid noise in dev.
  */
 import type { Request, Response, NextFunction } from 'express';
+import { envInt } from '../lib/env.js';
 
 export interface SecurityHeadersConfig {
   /** True when this server is NOT bound to loopback (i.e. behind a TLS proxy). */
@@ -24,13 +25,6 @@ export interface SecurityHeadersConfig {
 
 function envFlag(name: string): boolean {
   return process.env[name] === '1';
-}
-
-function envInt(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (!raw) return fallback;
-  const n = parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
 /**

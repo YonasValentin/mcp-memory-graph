@@ -9,6 +9,7 @@ import {
   VEC0_MAX_K,
 } from '../db/repository.js';
 import { cosineSimFromL2, confidenceLabel, computeGroundedness } from '../search/scoring.js';
+import { freshnessWarning } from '../search/hybrid.js';
 
 interface VecMatch {
   rowid: number;
@@ -121,12 +122,7 @@ export async function handleRelated(
       groundedness_level,
       match_type: 'vector',
       age_days: ageDays,
-      freshness_warning: ageDays > 90
-        ? `This memory is ${ageDays} days old. Verify against current state before asserting as fact.`
-        /* c8 ignore next 2 */
-        : ageDays > 30
-          ? `This memory is ${ageDays} days old. Information may be outdated.`
-          : null,
+      freshness_warning: freshnessWarning(ageDays),
     });
   }
 

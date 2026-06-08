@@ -1,12 +1,5 @@
 import type Database from 'better-sqlite3';
-
-/**
- * Store health report (M3.2): `memory_health`. A single read that answers "is my
- * memory healthy?" — volume, retired/stale ratios, unresolved conflicts,
- * by-time freshness, and (when the event bus is on) webhook delivery health.
- * Read-only; optionally scoped. `status` is a rolled-up verdict so a caller can
- * branch on one field.
- */
+import { liveConditions, scopeConditions } from '../db/predicates.js';
 
 export interface HealthReport {
   status: 'ok' | 'attention';
@@ -31,29 +24,30 @@ function scopeClause(
   alias: string,
   input: { scope?: string; namespace?: string },
 ): { sql: string; params: unknown[] } {
-  const conds: string[] = [];
-  const params: unknown[] = [];
-  if (input.scope !== undefined) {
-    conds.push(`${alias}.scope = ?`);
-    params.push(input.scope);
-  }
-  if (input.namespace !== undefined) {
-    conds.push(`${alias}.namespace = ?`);
-    params.push(input.namespace);
-  }
-  return { sql: conds.length ? ` AND ${conds.join(' AND ')}` : '', params };
+  const { conditions, params } = scopeConditions(input, alias);
+  return { sql: conditions.length ? ` AND ${conditions.join(' AND ')}` : '', params };
 }
 
 function count(db: Database.Database, sql: string, params: unknown[]): number {
   return db.prepare<unknown[], { n: number }>(sql).get(...params)?.n ?? 0;
 }
 
+/**
+ * Store health report (M3.2): `memory_health`. A single read that answers "is my
+ * memory healthy?" — volume, retired/stale ratios, unresolved conflicts,
+ * by-time freshness, and (when the event bus is on) webhook delivery health.
+ * Read-only; optionally scoped. `status` is a rolled-up verdict so a caller can
+ * branch on one field.
+ */
 export function handleHealth(
   db: Database.Database,
   input: { scope?: string; namespace?: string } = {},
 ): HealthReport {
   const f = scopeClause('m', input);
-  const live = `m.parent_id IS NULL AND m.valid_to IS NULL AND m.tx_expired IS NULL`;
+  const live = liveConditions({ topLevelOnly: true, alias: 'm' }).join(' AND ');
+  // The retired predicate is the logical NEGATION of `live` (parent_id IS NULL
+  // AND NOT valid) — there is no single-source-of-truth equivalent, so it stays
+  // inline by design.
   const retired = `m.parent_id IS NULL AND (m.valid_to IS NOT NULL OR m.tx_expired IS NOT NULL)`;
 
   const liveCount = count(db, `SELECT COUNT(*) AS n FROM memories m WHERE ${live}${f.sql}`, f.params);

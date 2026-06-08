@@ -15,6 +15,7 @@ import type Database from 'better-sqlite3';
 import type { EmbeddingProvider, MemoryScope } from '../types.js';
 import { handleStore } from './store.js';
 import { handleUpdate } from './update.js';
+import { liveConditions } from '../db/predicates.js';
 
 export interface SessionNoteInput {
   session_id: string;
@@ -75,8 +76,7 @@ export async function handleSessionNote(
     const existing = db
       .prepare<[string], { id: string; content: string; version: number }>(
         `SELECT id, content, version FROM memories
-           WHERE source = ? AND parent_id IS NULL
-             AND valid_to IS NULL AND tx_expired IS NULL
+           WHERE source = ? AND ${liveConditions({ topLevelOnly: true }).join(' AND ')}
            ORDER BY created_at ASC
            LIMIT 1`,
       )

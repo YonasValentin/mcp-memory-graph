@@ -26,6 +26,14 @@ export interface LiveConditionOptions {
   topLevelOnly?: boolean;
   /** Also exclude rows whose TTL has passed (`expires_at IS NULL OR expires_at > now`). */
   excludeExpired?: boolean;
+  /**
+   * Optional table alias to prefix every emitted column with (`<alias>.col`),
+   * for use inside JOINs where a bare column would be ambiguous (e.g.
+   * `liveConditions({ topLevelOnly: true, alias: 'm' })`). When omitted, output
+   * is byte-identical to the historical bare-column form. The `NOW_ISO_SQL`
+   * "now" expression is left bare (it references no table column).
+   */
+  alias?: string;
 }
 
 /**
@@ -33,11 +41,12 @@ export interface LiveConditionOptions {
  * currently-live memory rows. Always includes the bitemporal validity guard.
  */
 export function liveConditions(opts: LiveConditionOptions = {}): string[] {
-  const conditions = ['valid_to IS NULL', 'tx_expired IS NULL'];
-  if (opts.excludeSuperseded) conditions.push('superseded_at IS NULL');
-  if (opts.topLevelOnly) conditions.push('parent_id IS NULL');
+  const p = opts.alias ? `${opts.alias}.` : '';
+  const conditions = [`${p}valid_to IS NULL`, `${p}tx_expired IS NULL`];
+  if (opts.excludeSuperseded) conditions.push(`${p}superseded_at IS NULL`);
+  if (opts.topLevelOnly) conditions.push(`${p}parent_id IS NULL`);
   if (opts.excludeExpired) {
-    conditions.push(`(expires_at IS NULL OR expires_at > ${NOW_ISO_SQL})`);
+    conditions.push(`(${p}expires_at IS NULL OR ${p}expires_at > ${NOW_ISO_SQL})`);
   }
   return conditions;
 }
@@ -45,24 +54,32 @@ export function liveConditions(opts: LiveConditionOptions = {}): string[] {
 /**
  * Builds the common `scope = ? / namespace = ? / department = ?` conditions and
  * their bound params from a filter input. Only defined fields are constrained.
+ *
+ * An optional `alias` prefixes every emitted column with `<alias>.` (for use in
+ * JOINs); the bound params are identical with or without it. When omitted,
+ * output is byte-identical to the historical bare-column form.
  */
-export function scopeConditions(input: {
-  scope?: string;
-  namespace?: string;
-  department?: string;
-}): { conditions: string[]; params: unknown[] } {
+export function scopeConditions(
+  input: {
+    scope?: string;
+    namespace?: string;
+    department?: string;
+  },
+  alias?: string,
+): { conditions: string[]; params: unknown[] } {
+  const p = alias ? `${alias}.` : '';
   const conditions: string[] = [];
   const params: unknown[] = [];
   if (input.scope !== undefined) {
-    conditions.push('scope = ?');
+    conditions.push(`${p}scope = ?`);
     params.push(input.scope);
   }
   if (input.namespace !== undefined) {
-    conditions.push('namespace = ?');
+    conditions.push(`${p}namespace = ?`);
     params.push(input.namespace);
   }
   if (input.department !== undefined) {
-    conditions.push('department = ?');
+    conditions.push(`${p}department = ?`);
     params.push(input.department);
   }
   return { conditions, params };
