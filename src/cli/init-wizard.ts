@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { ServerConfig, MemoryScope } from '../types.js';
 import { SCOPES } from '../constants/enums.js';
 
@@ -32,18 +32,31 @@ export interface Prompter {
 const SCOPE_CHOICES: string[] = [...SCOPES];
 const MODE_CHOICES = ['solo', 'team'];
 
-/** The default db path, also the default the wizard offers for storage. */
+/** The global (home) db path — the default for a machine-wide install. */
 export function defaultDbPath(): string {
   return join(homedir(), '.mcp-memory', 'memory.db');
 }
 
+/**
+ * Scope-aware default DB path. A `project` install keeps its DB project-local
+ * (`<cwd>/.mcp-memory/memory.db`, alongside the repo-local config) so the
+ * install is self-contained and never silently shares the global home DB; any
+ * other scope uses the global home path. The runtime resolver then reads this
+ * back from `config.storage.db_path`.
+ */
+export function defaultDbPathForScope(scope: string): string {
+  return scope === 'project'
+    ? join(resolve(process.cwd()), '.mcp-memory', 'memory.db')
+    : defaultDbPath();
+}
+
 /** The all-Enter answer set — a valid config with sensible defaults. */
-export function defaultAnswers(): WizardAnswers {
+export function defaultAnswers(projectScoped = true): WizardAnswers {
   return {
     mode: 'solo',
     scope: 'project',
     namespace: undefined,
-    dbPath: defaultDbPath(),
+    dbPath: defaultDbPathForScope(projectScoped ? 'project' : 'user'),
     vaultPath: undefined,
     commitGraph: false,
     remoteEndpoint: undefined,
@@ -83,8 +96,10 @@ export async function runWizard(prompter: Prompter): Promise<WizardAnswers> {
     await prompter.input('Namespace (blank = auto from directory):', ''),
   );
 
+  // Offer a scope-aware default: project scope → project-local DB.
+  const scopeDefaultDb = defaultDbPathForScope(scope);
   const dbPath =
-    optional(await prompter.input('Database path:', defaultDbPath())) ?? defaultDbPath();
+    optional(await prompter.input('Database path:', scopeDefaultDb)) ?? scopeDefaultDb;
 
   const vaultPath = optional(
     await prompter.input('Markdown vault path for .md round-trip (optional):', ''),
