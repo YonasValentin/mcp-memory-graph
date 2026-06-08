@@ -1,6 +1,14 @@
 import type Database from 'better-sqlite3';
 import { liveConditions } from '../db/predicates.js';
 
+const UNATTRIBUTED = 'unattributed';
+
+export interface AttributionResult {
+  by_agent: Record<string, number>;
+  by_author: Record<string, number>;
+  total: number;
+}
+
 /**
  * Pillar 7 (T22): multi-agent / team attribution.
  *
@@ -15,15 +23,6 @@ import { liveConditions } from '../db/predicates.js';
  * top-level (parent_id IS NULL) memories — chunks and retired facts are
  * excluded, matching the rest of the read surface.
  */
-
-const UNATTRIBUTED = 'unattributed';
-
-export interface AttributionResult {
-  by_agent: Record<string, number>;
-  by_author: Record<string, number>;
-  total: number;
-}
-
 export function handleAttribution(
   db: Database.Database,
   input: { scope?: string; namespace?: string },

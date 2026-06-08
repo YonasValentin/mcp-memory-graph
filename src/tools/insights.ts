@@ -1,23 +1,5 @@
 import type Database from 'better-sqlite3';
 
-/**
- * Active advisor surface (M3.2): `memory_insights`. Where `memory_questions`
- * asks "what should I capture next", insights answers "what in the store needs
- * attention right now" — the maintenance backlog the graph can detect itself.
- * Purely additive READ over currently-valid, top-level memories, optionally
- * scoped. Every signal is deterministic-ordered so identical stores yield
- * identical digests.
- *
- * Signals (emitted in this order, then capped at `limit`):
- *   1. unresolved_conflict — a recorded memory_conflict with resolved_at NULL.
- *   2. stale — a memory flagged needs_revalidation by change-propagation (M3.3):
- *      a source it was derived from changed/retired and it wasn't re-confirmed.
- *   3. most_contradicted — a memory that appears in the most conflict records
- *      (a repeatedly-disputed fact worth resolving once, properly).
- *   4. no_evidence_decision — a `decision` memory with no outgoing edges: a call
- *      recorded with nothing linking it to the facts it rests on.
- */
-
 const DEFAULT_LIMIT = 20;
 const SNIPPET_LEN = 60;
 const MIN_CONTRADICTIONS = 2;
@@ -57,6 +39,23 @@ function scopeFilter(
   return { sql: conditions.length ? ` AND ${conditions.join(' AND ')}` : '', params };
 }
 
+/**
+ * Active advisor surface (M3.2): `memory_insights`. Where `memory_questions`
+ * asks "what should I capture next", insights answers "what in the store needs
+ * attention right now" — the maintenance backlog the graph can detect itself.
+ * Purely additive READ over currently-valid, top-level memories, optionally
+ * scoped. Every signal is deterministic-ordered so identical stores yield
+ * identical digests.
+ *
+ * Signals (emitted in this order, then capped at `limit`):
+ *   1. unresolved_conflict — a recorded memory_conflict with resolved_at NULL.
+ *   2. stale — a memory flagged needs_revalidation by change-propagation (M3.3):
+ *      a source it was derived from changed/retired and it wasn't re-confirmed.
+ *   3. most_contradicted — a memory that appears in the most conflict records
+ *      (a repeatedly-disputed fact worth resolving once, properly).
+ *   4. no_evidence_decision — a `decision` memory with no outgoing edges: a call
+ *      recorded with nothing linking it to the facts it rests on.
+ */
 export function handleInsights(
   db: Database.Database,
   input: { scope?: string; namespace?: string; limit?: number },

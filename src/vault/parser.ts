@@ -7,10 +7,6 @@ const WIKI_LINK_RE = /\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]+)?\]\]/g;
 const INLINE_TAG_RE = /(?:^|\s)#([a-zA-Z][a-zA-Z0-9_/-]*)/gm;
 
 /**
- * Parses a single Obsidian `.md` file into structured data,
- * extracting frontmatter, wiki-links, and inline tags.
- */
-/**
  * Frontmatter fence matcher. Accepts:
  *   - the closing `---` followed by a newline OR end-of-string (VAULT-1: a file
  *     whose closing fence is the last line with no trailing newline);
@@ -47,6 +43,10 @@ export function splitFrontmatter(raw: string): {
   return { frontmatter, body };
 }
 
+/**
+ * Parses a single Obsidian `.md` file into structured data,
+ * extracting frontmatter, wiki-links, and inline tags.
+ */
 export function parseVaultFile(
   absolutePath: string,
   relativePath: string,

@@ -1,13 +1,5 @@
 import type Database from 'better-sqlite3';
 
-/**
- * Store health report (M3.2): `memory_health`. A single read that answers "is my
- * memory healthy?" — volume, retired/stale ratios, unresolved conflicts,
- * by-time freshness, and (when the event bus is on) webhook delivery health.
- * Read-only; optionally scoped. `status` is a rolled-up verdict so a caller can
- * branch on one field.
- */
-
 export interface HealthReport {
   status: 'ok' | 'attention';
   memories: {
@@ -48,6 +40,13 @@ function count(db: Database.Database, sql: string, params: unknown[]): number {
   return db.prepare<unknown[], { n: number }>(sql).get(...params)?.n ?? 0;
 }
 
+/**
+ * Store health report (M3.2): `memory_health`. A single read that answers "is my
+ * memory healthy?" — volume, retired/stale ratios, unresolved conflicts,
+ * by-time freshness, and (when the event bus is on) webhook delivery health.
+ * Read-only; optionally scoped. `status` is a rolled-up verdict so a caller can
+ * branch on one field.
+ */
 export function handleHealth(
   db: Database.Database,
   input: { scope?: string; namespace?: string } = {},
