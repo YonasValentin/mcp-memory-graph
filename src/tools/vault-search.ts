@@ -9,6 +9,8 @@ export async function handleVaultSearch(
   input: {
     vault_path: string;
     query: string;
+    scope?: MemoryScope;
+    namespace?: string;
     limit?: number;
     offset?: number;
     search_mode?: string;
@@ -16,12 +18,15 @@ export async function handleVaultSearch(
     min_confidence?: number;
   },
 ): Promise<{ results: SearchResult[]; total: number; truncated: boolean }> {
-  const vaultName = path.basename(input.vault_path);
+  // Default the namespace to the vault folder name (back-compat), but honour an
+  // explicit override so callers whose memories live in a differently-named
+  // namespace (the common post-export case) can still find them.
+  const namespace = input.namespace ?? path.basename(input.vault_path);
 
   const { results, total, truncated } = await hybridSearch(db, embedder, {
     query: input.query,
-    scope: 'project' as MemoryScope,
-    namespace: vaultName,
+    scope: input.scope ?? ('project' as MemoryScope),
+    namespace,
     limit: input.limit ?? 10,
     offset: input.offset ?? 0,
     search_mode: (input.search_mode ?? 'hybrid') as SearchMode,

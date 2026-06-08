@@ -265,7 +265,7 @@ async function createConfig(opts: { projectScoped: boolean; interactive: boolean
       prompter.close?.();
     }
   } else {
-    answers = defaultAnswers();
+    answers = defaultAnswers(opts.projectScoped);
     dim('Non-interactive (--yes): using default answers');
   }
 
@@ -286,7 +286,26 @@ async function createConfig(opts: { projectScoped: boolean; interactive: boolean
   }
 }
 
-function installLaunchdPlist(): void {
+/**
+ * Whether this install scope should register a machine-global nightly
+ * consolidation schedule (launchd/cron). A `project` install must NOT — a
+ * global daily `consolidate` runs against the default DB, never the project's
+ * own, so it would be both surprising and useless for a project-scoped setup.
+ * Only a machine-wide (user) install schedules.
+ */
+export function schedulesGlobalConsolidation(scope: Scope): boolean {
+  return scope !== 'project';
+}
+
+function installLaunchdPlist(scope: Scope): void {
+  if (!schedulesGlobalConsolidation(scope)) {
+    info('Project scope — skipping the machine-global consolidation schedule');
+    dim('A global launchd/cron job would target the default DB, not this project.');
+    dim('Run `mcp-memory-server init` (user scope) to schedule the default DB, or add a project cron manually:');
+    dim(`  0 3 * * * MCP_MEMORY_DB_PATH=<project-db> node ${join(__dirname, '..', 'index.js')} consolidate`);
+    return;
+  }
+
   if (platform() !== 'darwin') {
     info('Not on macOS — skipping launchd plist installation');
     dim('To schedule nightly consolidation on Linux, add a cron entry:');
@@ -536,7 +555,7 @@ export async function runInit(): Promise<void> {
 
   console.log('');
   info('Step 5/5: Installing scheduled consolidation...');
-  installLaunchdPlist();
+  installLaunchdPlist(scope);
 
   console.log(`\n${GREEN}Init complete! (${scope} scope)${RESET}\n`);
 }

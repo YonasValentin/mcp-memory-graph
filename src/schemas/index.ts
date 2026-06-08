@@ -804,6 +804,18 @@ export const VaultSearchSchema = z.object({
     .describe(
       'Search query — supports natural language for semantic search and keywords for exact matching',
     ),
+  scope: z
+    .enum(SCOPES)
+    .optional()
+    .describe('Memory scope to search (default "project")'),
+  namespace: z
+    .string()
+    .optional()
+    .describe(
+      'Namespace to search. Defaults to the vault folder name — set this when ' +
+      'your memories live in a namespace different from the vault directory ' +
+      'name (e.g. after memory_export_vault wrote them under <vault>/<namespace>/).',
+    ),
   limit: z
     .number()
     .int()

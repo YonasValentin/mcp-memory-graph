@@ -516,7 +516,7 @@ export function createServer(): McpServer {
   // ── 15. vault_search ────────────────────────────────────────────────────
   reg(
     'vault_search',
-    'Search within a synced Obsidian vault using hybrid vector+keyword search. Automatically scopes results to the vault namespace.',
+    'Search memories via hybrid vector+keyword search, scoped to a namespace. Defaults the namespace to the vault folder name; pass an explicit `namespace` to search memories that live under a different namespace (e.g. after memory_export_vault).',
     VaultSearchSchema.shape,
     instrument('vault_search', async (input) => {
       const parsed = VaultSearchSchema.parse(input);
@@ -524,7 +524,9 @@ export function createServer(): McpServer {
       if (!vaultPathInForcedNamespace(parsed.vault_path)) {
         throw new Error('Vault path is outside the pinned namespace');
       }
-      return handleVaultSearch(getDb(), await getEmbedder(), parsed);
+      // withForcedNs pins the namespace to the tenant on a shared deployment so
+      // the explicit override cannot read across namespaces; a no-op otherwise.
+      return handleVaultSearch(getDb(), await getEmbedder(), withForcedNs(parsed));
     }),
   );
 
