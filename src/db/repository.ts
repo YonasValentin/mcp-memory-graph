@@ -23,8 +23,14 @@ function signingEnabled(): boolean {
 // surrounding ed25519 block (guard / valid_from / re-SELECT) are NOT folded in.
 
 /** vec0 hard-delete of a row's KNN shadow. Callers pass `BigInt(rowid)`. */
+/** vec0 shadow-removal SQL — shared so a bulk loop can prepare it once. */
+const SQL_VEC_DELETE = 'DELETE FROM memories_vec WHERE rowid = ?';
+/** FTS5 external-content `'delete'` shadow-removal SQL — shared for prepare-once reuse. */
+const SQL_FTS_DELETE =
+  "INSERT INTO memories_fts(memories_fts, rowid, title, content, tags, author, department) VALUES('delete', ?, ?, ?, ?, ?, ?)";
+
 function vecDelete(db: Database.Database, rowid: number | bigint): void {
-  db.prepare('DELETE FROM memories_vec WHERE rowid = ?').run(rowid);
+  db.prepare(SQL_VEC_DELETE).run(rowid);
 }
 
 /** vec0 (re)index INSERT. Caller computes scope/namespace (e.g. `?? ''`/`|| ''`). */
@@ -69,9 +75,7 @@ function ftsDelete(
   author: string | null,
   department: string | null,
 ): void {
-  db.prepare(
-    "INSERT INTO memories_fts(memories_fts, rowid, title, content, tags, author, department) VALUES('delete', ?, ?, ?, ?, ?, ?)",
-  ).run(rowid, title, content, tags, author, department);
+  db.prepare(SQL_FTS_DELETE).run(rowid, title, content, tags, author, department);
 }
 
 /**
@@ -442,13 +446,15 @@ export function deleteMemoriesByFilter(
       return 0;
     }
 
-    // Per-row helper calls re-prepare each iteration vs the former prepared-once
-    // loop; better-sqlite3 caches by SQL string so the cost is negligible, and
-    // the bound params (raw rowid + `?? ''` column values for FTS, BigINT for vec)
-    // are byte-identical to the prior inline statements.
+    // Prepare the two shadow-index DELETEs once and bind per row — better-sqlite3
+    // does NOT cache by SQL string, so a per-row helper call (which re-prepares)
+    // is ~3x slower on a bulk delete. SQL strings are the shared single source
+    // (SQL_FTS_DELETE/SQL_VEC_DELETE), and the bound params (raw rowid + `?? ''`
+    // FTS columns, BigInt for vec) match the ftsDelete/vecDelete helpers exactly.
+    const deleteFts = db.prepare(SQL_FTS_DELETE);
+    const deleteVec = db.prepare(SQL_VEC_DELETE);
     for (const row of rows) {
-      ftsDelete(
-        db,
+      deleteFts.run(
         row.rowid,
         row.title ?? '',
         row.content,
@@ -456,7 +462,7 @@ export function deleteMemoriesByFilter(
         row.author ?? '',
         row.department ?? '',
       );
-      vecDelete(db, BigInt(row.rowid));
+      deleteVec.run(BigInt(row.rowid));
     }
 
     const result = db
