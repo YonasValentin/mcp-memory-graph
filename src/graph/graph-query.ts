@@ -3,6 +3,7 @@ import type { EmbeddingProvider, MemoryRow, MemoryScope } from '../types.js';
 import { hybridSearch } from '../search/hybrid.js';
 import { getOutgoingLinks, getBacklinks } from './memory-links.js';
 import { getMemoryById } from '../db/repository.js';
+import { liveConditions } from '../db/predicates.js';
 
 /** ~4 chars/token with a 15% safety margin — same convention as `tools/search.ts`. */
 const CHARS_PER_TOKEN = 3.4;
@@ -301,7 +302,7 @@ function isCurrentlyValid(db: Database.Database, id: string): boolean {
   const row = db
     .prepare<[string], { ok: number }>(
       `SELECT 1 AS ok FROM memories
-        WHERE id = ? AND valid_to IS NULL AND tx_expired IS NULL`,
+        WHERE id = ? AND ${liveConditions().join(' AND ')}`,
     )
     .get(id);
   return row !== undefined;

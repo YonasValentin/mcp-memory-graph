@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { liveConditions } from '../db/predicates.js';
+import { liveConditions, scopeConditions } from '../db/predicates.js';
 
 const UNATTRIBUTED = 'unattributed';
 
@@ -30,17 +30,12 @@ export function handleAttribution(
   // battle-v9 CLASS 4: use the single-source live predicate so a restored-but-
   // still-superseded fact is NOT counted (the docstring promises retired facts
   // are excluded; the hand-written list omitted superseded_at IS NULL).
-  const conditions: string[] = liveConditions({ excludeSuperseded: true, topLevelOnly: true });
-  const params: unknown[] = [];
-
-  if (input.scope !== undefined) {
-    conditions.push('scope = ?');
-    params.push(input.scope);
-  }
-  if (input.namespace !== undefined) {
-    conditions.push('namespace = ?');
-    params.push(input.namespace);
-  }
+  const scope = scopeConditions(input);
+  const conditions: string[] = [
+    ...liveConditions({ excludeSuperseded: true, topLevelOnly: true }),
+    ...scope.conditions,
+  ];
+  const params: unknown[] = [...scope.params];
 
   const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
