@@ -11,7 +11,8 @@ info:
     is set (recommended for any non-loopback deployment). Unauthenticated
     access requires either a loopback bind or `MCP_AUTH_OPTIONAL=1`.
   license:
-    name: MIT
+    name: PolyForm Noncommercial License 1.0.0
+    url: https://polyformproject.org/licenses/noncommercial/1.0.0/
 servers:
   - url: http://127.0.0.1:3100
     description: Local development
