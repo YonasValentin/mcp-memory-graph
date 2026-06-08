@@ -2,28 +2,7 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { CLAUDE_MD_MARKER } from './init.js';
-
-const GREEN = '\x1b[32m';
-const YELLOW = '\x1b[33m';
-const CYAN = '\x1b[36m';
-const DIM = '\x1b[2m';
-const RESET = '\x1b[0m';
-
-function success(msg: string): void {
-  console.log(`${GREEN}[ok]${RESET} ${msg}`);
-}
-
-function warn(msg: string): void {
-  console.log(`${YELLOW}[!!]${RESET} ${msg}`);
-}
-
-function info(msg: string): void {
-  console.log(`${CYAN}[->]${RESET} ${msg}`);
-}
-
-function dim(msg: string): void {
-  console.log(`${DIM}    ${msg}${RESET}`);
-}
+import { GREEN, CYAN, RESET, success, warn, info, dim } from './cli-output.js';
 
 // Match hook commands by substring — they contain the hook file name
 const HOOK_IDENTIFIERS = [
