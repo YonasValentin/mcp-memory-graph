@@ -64,6 +64,8 @@ export function handleVersionDiff(
 
 export interface VersionRestoreResult {
   restored: boolean;
+  /** Why the restore did nothing — only set when restored=false (solo-E2E UX: never a silent failure). */
+  reason?: string;
   restored_from_version?: number;
   memory?: Memory;
 }
@@ -80,7 +82,17 @@ export async function handleVersionRestore(
   input: { id: string; version: number; changed_by?: string },
 ): Promise<VersionRestoreResult> {
   const content = getVersionContent(db, input.id, input.version);
-  if (content === null) return { restored: false };
+  if (content === null) {
+    // Say WHY: bare `{restored:false}` was a silent failure (solo-E2E UX).
+    const current = db
+      .prepare<[string], { version: number }>('SELECT version FROM memories WHERE id = ?')
+      .get(input.id);
+    if (!current) return { restored: false, reason: 'Memory not found' };
+    return {
+      restored: false,
+      reason: `Version ${input.version} not found; available: 1..${current.version}`,
+    };
+  }
 
   // Restoring to the already-current content changes nothing — return a true
   // no-op (no version bump, no phantom snapshot, no synthetic author). The
@@ -96,7 +108,9 @@ export async function handleVersionRestore(
     content,
     changed_by: input.changed_by ?? `restore-v${input.version}`,
   });
-  if (!memory) return { restored: false };
+  // handleUpdate re-checks existence inside its transaction — null here means
+  // the row vanished between our read and the update (concurrent delete).
+  if (!memory) return { restored: false, reason: 'Memory was deleted concurrently during restore' };
 
   return { restored: true, restored_from_version: input.version, memory };
 }

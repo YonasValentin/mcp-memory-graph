@@ -27,6 +27,7 @@ import { handleManifest } from '../../tools/manifest.js';
 import { handleGraph } from '../../tools/graph.js';
 import { handleExtractEntities } from '../../tools/extract-entities.js';
 import { handleDelete } from '../../tools/delete.js';
+import { handleForget } from '../../tools/forget.js';
 import { handleUpdate } from '../../tools/update.js';
 import { handleVaultStatus } from '../../tools/vault-status.js';
 import { handleVaultSync } from '../../tools/vault-sync.js';
@@ -82,6 +83,27 @@ describe('handleGet', () => {
   it('returns null for missing id', () => {
     const got = handleGet(db, { id: 'does-not-exist', include_chunks: false });
     expect(got).toBeNull();
+  });
+
+  // team-E2E LOW: a retired memory looked identical to a live one over
+  // memory_get — the bi-temporal columns never made it into the response, so
+  // users couldn't see WHY a memory stopped appearing in search.
+  it('exposes bi-temporal validity: a live memory has valid_to null', async () => {
+    const r = await handleStore(db, embedder, { content: 'Live fact: the API rate limit is 100 rps.' });
+    const got = handleGet(db, { id: r.memory.id, include_chunks: false });
+    expect(typeof got!.memory.valid_from).toBe('string'); // stamped at insert
+    expect(got!.memory.valid_to).toBeNull();
+    expect(got!.memory.superseded_at).toBeNull();
+  });
+
+  it('a retired (forgotten) memory fetched by id shows its valid_to stamp', async () => {
+    const r = await handleStore(db, embedder, { content: 'Old fact: the API rate limit is 50 rps.' });
+    handleForget(db, { id: r.memory.id });
+
+    const got = handleGet(db, { id: r.memory.id, include_chunks: false });
+    expect(got).not.toBeNull();
+    // A real ISO stamp — not null and not (the pre-fix bug) undefined.
+    expect(typeof got!.memory.valid_to).toBe('string');
   });
 
   it('include_chunks returns child rows', async () => {
