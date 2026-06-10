@@ -205,6 +205,7 @@ export function registerApiRoutes(
       limit: q.limit,
       offset: q.offset,
       search_mode: q.mode,
+      detail_level: q.detail,
       min_confidence: q.min_confidence,
       date_from: q.date_from,
       date_to: q.date_to,

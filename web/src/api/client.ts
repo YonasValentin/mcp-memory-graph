@@ -111,7 +111,9 @@ export function searchMemories(params: {
   offset?: number
   min_confidence?: number
 }): Promise<{ results: SearchResult[]; total: number }> {
-  return fetchJson(`${BASE}/search${qs(params)}`)
+  // The dashboard renders content previews + match badges, so it needs the
+  // full nested {memory, ...} projection (the REST default stays 'summary').
+  return fetchJson(`${BASE}/search${qs({ ...params, detail: "full" })}`)
 }
 
 // ── List ─────────────────────────────────────────────────────────────────

@@ -100,7 +100,7 @@ export function Browse() {
   return (
     <div className="space-y-4 p-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold tracking-tight">Browse</h1>
+        <div><p className="microlabel">the stacks</p><h1 className="font-display mt-1 text-4xl italic">Browse</h1></div>
         <div className="flex items-center gap-2">
           <Select value={scopeFilter} onValueChange={(v) => setScopeFilter(v ?? "all")}>
             <SelectTrigger className="w-32">

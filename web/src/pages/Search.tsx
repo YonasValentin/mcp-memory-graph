@@ -196,7 +196,7 @@ export function Search() {
 
   return (
     <div className="space-y-6 p-6">
-      <h1 className="text-2xl font-bold tracking-tight">Search</h1>
+      <div><p className="microlabel">semantic recall</p><h1 className="font-display mt-1 text-4xl italic">Search</h1></div>
 
       {/* Search bar with suggestions dropdown */}
       <div className="flex gap-2">

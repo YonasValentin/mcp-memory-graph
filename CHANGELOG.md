@@ -46,6 +46,14 @@ All changes additive; migrations automatic.
 
 ### Added
 
+- **Dashboard "Archive Terminal" identity**: designed typography (Instrument
+  Serif / Instrument Sans / IBM Plex Mono, bundled locally — no CDN), two
+  committed themes (manila-paper light, phosphor-on-ink dark), dot-grid
+  texture, indexed sidebar nav, archive-palette knowledge graph
+- `/api/search` gains `detail=ids_only|summary|full` (default `summary`
+  preserves the existing contract) — fixes the dashboard Search page, which
+  crashed on every query because the UI rendered the full nested result
+  shape the route never returned
 - **LongMemEval-S public benchmark harness** (`npm run bench:longmemeval`):
   runs the ICLR 2025 long-term-memory benchmark's retrieval stage against the
   real production store/search handlers, fully local. Measured (stock
