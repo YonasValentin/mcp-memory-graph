@@ -18,16 +18,19 @@ import { searchMemories, listMemories } from "@/api/client"
 import { toastError } from "@/lib/toast-error"
 import type { SearchResult, SearchMode } from "@/types"
 
+// Archive-palette pills (oklch theme tokens, not stock Tailwind colors) so the
+// Search results sit inside the manila/phosphor identity. Confidence reads on a
+// warm→cool ramp; match type uses muted/primary/amber.
 const confidenceColor: Record<string, string> = {
-  high: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300",
-  medium: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300",
-  low: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
+  high: "bg-primary/15 text-primary",
+  medium: "bg-amber/15 text-amber",
+  low: "bg-destructive/15 text-destructive",
 }
 
 const matchTypeColor: Record<string, string> = {
-  hybrid: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300",
-  vector: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300",
-  keyword: "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300",
+  hybrid: "bg-primary/10 text-primary",
+  vector: "bg-secondary text-secondary-foreground",
+  keyword: "bg-amber/10 text-amber",
 }
 
 interface Suggestion {
