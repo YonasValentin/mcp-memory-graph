@@ -97,30 +97,54 @@ describe('M2.1 redaction — bypasses are closed', () => {
     expect(redactContent(emoji, 'scrub')).toEqual({ content: emoji, redactions: 0, kinds: [] });
   });
 
-  it('PEM ReDoS: many BEGIN markers with no END complete in linear time', () => {
-    const evil = '-----BEGIN PRIVATE KEY-----\n'.repeat(20000); // ~560KB, no END
+  // Self-calibrating linearity guards (machine-independent). The previous absolute
+  // wall-clock ceilings (4s) flaked: the large inputs take multiple seconds even on
+  // idle Apple Silicon, and shared CI runners (Windows/macOS GitHub-hosted) are
+  // slower still. Instead we time a SMALL input and the 10×-LARGE input on the SAME
+  // machine and assert the ratio. Linear scaling → ~10×; the pre-fix O(n^2) → ~100×.
+  // A 30× bound sits safely between. The small baseline is the median of 3 runs
+  // (single samples showed ~3× GC/scheduler jitter) and is floored so timer noise
+  // on a fast machine can't shrink the denominator toward 0. A very generous
+  // absolute ceiling remains purely as a hang-stop, not a perf bar.
+  const SMALL_TO_LARGE_RATIO_BOUND = 30; // linear ≈10×, pre-fix quadratic ≈100×
+  const BASELINE_FLOOR_MS = 50; // denominator floor against timer/JIT noise
+  const HANG_STOP_MS = 60_000; // only catches a real hang/catastrophic blowup
+  const timeMs = (fn: () => void): number => {
     const start = process.hrtime.bigint();
-    const r = redactContent(evil, 'scrub');
-    const ms = Number(process.hrtime.bigint() - start) / 1e6;
+    fn();
+    return Number(process.hrtime.bigint() - start) / 1e6;
+  };
+  const medianOf3 = (fn: () => void): number =>
+    [timeMs(fn), timeMs(fn), timeMs(fn)].sort((a, b) => a - b)[1];
+
+  it('PEM ReDoS: many BEGIN markers with no END scale linearly (small→10× input)', () => {
+    const small = '-----BEGIN PRIVATE KEY-----\n'.repeat(2000); // ~56KB, no END
+    const large = '-----BEGIN PRIVATE KEY-----\n'.repeat(20000); // ~560KB, no END
+    // Warm-up (absorbs first-call JIT/regex lazy-compile cost) + functional check.
+    expect(redactContent(small, 'scrub').redactions).toBe(0);
+    const smallMs = medianOf3(() => { redactContent(small, 'scrub'); });
+    let r!: ReturnType<typeof redactContent>;
+    const largeMs = timeMs(() => { r = redactContent(large, 'scrub'); });
     expect(r.redactions).toBe(0); // no closing marker → no match
-    // Linearity guard, not a speed benchmark. The pre-fix O(n^2) backtrack took
-    // MULTIPLE SECONDS on this input and would scale super-linearly; the bounded
-    // {0,8192} body makes it linear (~0.5s on a shared cloud vCPU, faster on
-    // Apple Silicon). A generous ceiling absorbs CI/CPU-contention jitter while
-    // still catching any re-introduced quadratic blowup (orders of magnitude over).
-    expect(ms).toBeLessThan(4000);
+    // The bounded {0,8192} PEM body keeps this linear; a re-introduced unbounded
+    // backtrack scales quadratically and blows the ratio by an order of magnitude.
+    expect(largeMs).toBeLessThan(SMALL_TO_LARGE_RATIO_BOUND * Math.max(smallMs, BASELINE_FLOOR_MS));
+    expect(largeMs).toBeLessThan(HANG_STOP_MS);
   });
 
-  it('secret_assignment ReDoS: a long alnum run does NOT blow up (bounded prefix)', () => {
-    const evil = 'a'.repeat(1_000_000); // schema-legal; pre-fix O(n^2) → ~minutes
-    const start = process.hrtime.bigint();
-    redactContent(evil, 'scrub');
-    const ms = Number(process.hrtime.bigint() - start) / 1e6;
-    // Linearity guard (see PEM test above): the bounded {0,64} `_secret` prefix
-    // keeps this linear over 1M chars (~0.5s on a shared cloud vCPU). The pre-fix
-    // unbounded prefix was O(n^2) → minutes; the generous ceiling catches that
-    // regression class without flaking on slower/contended hardware.
-    expect(ms).toBeLessThan(4000);
+  it('secret_assignment ReDoS: a long alnum run scales linearly (bounded prefix)', () => {
+    const small = 'a'.repeat(100_000);
+    const large = 'a'.repeat(1_000_000); // schema-legal; pre-fix O(n^2) → ~minutes
+    // Warm-up (absorbs first-call JIT/regex lazy-compile cost) + functional check.
+    expect(redactContent(small, 'scrub').redactions).toBe(0);
+    const smallMs = medianOf3(() => { redactContent(small, 'scrub'); });
+    let r!: ReturnType<typeof redactContent>;
+    const largeMs = timeMs(() => { r = redactContent(large, 'scrub'); });
+    expect(r.redactions).toBe(0);
+    // The bounded {0,64} `_secret` prefix keeps this linear over 1M chars; the
+    // pre-fix unbounded prefix rescanned the run per position (O(n^2) → ~100×).
+    expect(largeMs).toBeLessThan(SMALL_TO_LARGE_RATIO_BOUND * Math.max(smallMs, BASELINE_FLOOR_MS));
+    expect(largeMs).toBeLessThan(HANG_STOP_MS);
   });
 
   it('lowercase "bearer" scheme is detected (case-insensitive)', () => {
