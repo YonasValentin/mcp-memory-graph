@@ -26,6 +26,27 @@
 export const RESERVED_VAULT_META_KEY = '_vault';
 export const VAULT_BOOKKEEPING_KEYS = new Set([RESERVED_VAULT_META_KEY, 'vault_path', 'frontmatter']);
 
+/**
+ * Copy of `meta` without ONLY the reserved `_vault` container — the
+ * rowToMemory emit-chokepoint strip. Unlike the vault-boundary strip below,
+ * this must NOT touch the legacy flat `vault_path`/`frontmatter` names: in
+ * plain (non-vault) usage those are perfectly legitimate user keys, and hiding
+ * them on every read would silently lose user data (the battle-v17 HIGH class).
+ * `_vault` alone is unambiguous — underscore-prefixed, documented reserved,
+ * and the writer strips/re-stamps it in vault flows.
+ */
+export function stripReservedVaultContainer(
+  meta: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!(RESERVED_VAULT_META_KEY in meta)) return meta;
+  const clean: Record<string, unknown> = {};
+  for (const key of Object.keys(meta)) {
+    if (key === RESERVED_VAULT_META_KEY) continue;
+    clean[key] = meta[key];
+  }
+  return clean;
+}
+
 /** Copy of `meta` without the reserved bookkeeping keys (user metadata only). */
 export function stripVaultBookkeeping(meta: Record<string, unknown>): Record<string, unknown> {
   const clean: Record<string, unknown> = {};

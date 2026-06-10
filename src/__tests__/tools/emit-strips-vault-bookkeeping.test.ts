@@ -21,6 +21,11 @@ import { handleExport } from '../../tools/export.js';
 
 const embedder = new MockEmbeddingProvider();
 const ABS_VAULT = '/Users/dev-a/Obsidian/team-vault';
+// A DIFFERENT path for the legacy flat residue so assertions can tell the two
+// apart: the reserved container must never emit; the legacy flat key is
+// AMBIGUOUS with user data in plain usage, so the chokepoint deliberately
+// passes it through (the vault boundary — writer/sync — still strips/heals it).
+const ABS_LEGACY = '/Users/dev-a/legacy-vault';
 
 let db: Database.Database;
 
@@ -49,7 +54,7 @@ async function seedStampedRow(): Promise<string> {
       links: ['[[Billing]]'],
       custom: 'keep-me',
       _vault: { vault_path: ABS_VAULT, links: ['Billing'] },
-      vault_path: ABS_VAULT, // legacy flat residue (pre-container rows)
+      vault_path: ABS_LEGACY, // legacy flat residue (pre-container rows)
     }),
     id,
   );
@@ -63,13 +68,17 @@ describe('read tools strip vault bookkeeping at the emit boundary (F-EXPORT-VAUL
     const result = handleGet(db, { id, include_chunks: false });
     expect(result).not.toBeNull();
 
-    // User keys survive — `links` is USER metadata here (3b31d73 contract).
+    // User keys survive — `links` is USER metadata here (3b31d73 contract) —
+    // and the legacy flat `vault_path` passes through: in plain usage it is an
+    // indistinguishable user key, and hiding it on reads would be the same
+    // silent-loss class 3b31d73 fixed (vault flows still strip/heal it).
     expect(result!.memory.metadata).toMatchObject({
       links: ['[[Billing]]'],
       custom: 'keep-me',
+      vault_path: ABS_LEGACY,
     });
 
-    // No bookkeeping anywhere in the serialized response.
+    // The reserved container never emits.
     const serialized = JSON.stringify(result);
     expect(serialized).not.toContain('_vault');
     expect(serialized).not.toContain(ABS_VAULT);
@@ -89,6 +98,7 @@ describe('read tools strip vault bookkeeping at the emit boundary (F-EXPORT-VAUL
     expect(exported.memories[0].metadata).toMatchObject({
       links: ['[[Billing]]'],
       custom: 'keep-me',
+      vault_path: ABS_LEGACY, // ambiguous-with-user-data: passes through
     });
 
     const serialized = JSON.stringify(exported);
