@@ -302,6 +302,10 @@ paths:
         - in: query
           name: mode
           schema: { type: string, enum: [hybrid, vector, keyword], default: hybrid }
+        - in: query
+          name: detail
+          description: Result projection. `summary` (default) is flat {id, title, snippet, …}; `full` nests the complete memory as {memory, score, confidence, match_type}.
+          schema: { type: string, enum: [ids_only, summary, full], default: summary }
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Offset'
         - in: query

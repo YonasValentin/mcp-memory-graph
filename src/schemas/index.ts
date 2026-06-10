@@ -1465,6 +1465,9 @@ export const ApiSearchQuerySchema = z.object({
   tags: csvList(),
   language: optString(),
   mode: z.enum(SEARCH_MODES).default('hybrid'),
+  // Result projection. Default 'summary' preserves the existing REST contract;
+  // the bundled dashboard requests 'full' (nested {memory, ...} shape).
+  detail: z.enum(['ids_only', 'summary', 'full']).default('summary'),
   limit: intFromString(1, 100, 20),
   offset: intFromString(0, 100000, 0),
   min_confidence: floatFromString(0, 1),
