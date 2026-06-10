@@ -25,6 +25,8 @@ export function handleGet(
     return null;
   }
 
+  // F-EXPORT-VAULTPATH: `_vault` bookkeeping is stripped at the rowToMemory
+  // chokepoint (db/repository) — every read surface is covered there.
   const memory = rowToMemory(row);
   recordAccess(db, [{ memory_id: input.id, access_type: 'get' }]);
 
@@ -45,6 +47,6 @@ export function handleGet(
     )
     .all(input.id, row.scope, row.namespace ?? null);
 
-  const chunks = chunkRows.map(rowToMemory);
+  const chunks = chunkRows.map((r) => rowToMemory(r));
   return { memory, chunks, links, backlinks };
 }

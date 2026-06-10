@@ -20,7 +20,10 @@ function capture(fn: () => void): string {
 describe('printRebuildSummary', () => {
   it('prints the rebuilt memory count', () => {
     const out = capture(() =>
-      printRebuildSummary({ memories: 5, linksRestored: 2, conflicted: 0, conflictedFiles: [] }, '/v'),
+      printRebuildSummary(
+        { memories: 5, linksRestored: 2, conflicted: 0, conflictedFiles: [], duplicates: 0, duplicateFiles: [] },
+        '/v',
+      ),
     );
     expect(out).toContain('5 memories');
     expect(out).toContain('/v');
@@ -28,15 +31,26 @@ describe('printRebuildSummary', () => {
 
   it('stays quiet about quarantine when nothing was quarantined', () => {
     const out = capture(() =>
-      printRebuildSummary({ memories: 3, linksRestored: 0, conflicted: 0, conflictedFiles: [] }, '/v'),
+      printRebuildSummary(
+        { memories: 3, linksRestored: 0, conflicted: 0, conflictedFiles: [], duplicates: 0, duplicateFiles: [] },
+        '/v',
+      ),
     );
     expect(out).not.toMatch(/conflict/i);
+    expect(out).not.toMatch(/duplicat/i);
   });
 
   it('surfaces the quarantined count + file list when files were skipped (the E2E gap)', () => {
     const out = capture(() =>
       printRebuildSummary(
-        { memories: 3, linksRestored: 0, conflicted: 2, conflictedFiles: ['a.md', 'team/b.md'] },
+        {
+          memories: 3,
+          linksRestored: 0,
+          conflicted: 2,
+          conflictedFiles: ['a.md', 'team/b.md'],
+          duplicates: 0,
+          duplicateFiles: [],
+        },
         '/v',
       ),
     );
@@ -44,5 +58,24 @@ describe('printRebuildSummary', () => {
     expect(out).toContain('2');
     expect(out).toContain('a.md');
     expect(out).toContain('team/b.md');
+  });
+
+  it('surfaces the duplicate-id count + file list (F-REBUILD-DUPID)', () => {
+    const out = capture(() =>
+      printRebuildSummary(
+        {
+          memories: 4,
+          linksRestored: 0,
+          conflicted: 0,
+          conflictedFiles: [],
+          duplicates: 1,
+          duplicateFiles: ['team/Retry (legacy copy).md'],
+        },
+        '/v',
+      ),
+    );
+    expect(out).toMatch(/duplicat/i);
+    expect(out).toContain('1');
+    expect(out).toContain('team/Retry (legacy copy).md');
   });
 });

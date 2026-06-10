@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import type { Memory, MemoryRow, ListOptions, AccessLogEntry, IngestSourceRecord } from '../types.js';
 import type { MemoryPartition } from '../graph/conflict-resolver.js';
 import { NOW_ISO_SQL } from './predicates.js';
+import { stripVaultBookkeeping } from '../vault/bookkeeping.js';
 import { signEnvelope } from '../provenance/envelope.js';
 import type { SignedEnvelope } from '../provenance/envelope.js';
 
@@ -679,7 +680,13 @@ export function rowToMemory(row: MemoryRow): Memory {
     try {
       const parsed: unknown = JSON.parse(row.metadata);
       if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        metadata = parsed as Record<string, unknown>;
+        // F-EXPORT-VAULTPATH chokepoint: strip the server-internal `_vault`
+        // bookkeeping (an ABSOLUTE per-dev local path) here so EVERY tool-facing
+        // read surface (get/export/list/search/related/update echo/…) is covered
+        // at once — per-tool stripping diverges (battle-v9 lesson). The DB row
+        // keeps `_vault`; vault sync reads raw rows, never through rowToMemory.
+        const clean = stripVaultBookkeeping(parsed as Record<string, unknown>);
+        metadata = Object.keys(clean).length > 0 ? clean : null;
       }
     } catch {
       metadata = null;

@@ -26,34 +26,16 @@ import { getVaultEgress } from '../config/loader.js';
 const UNSAFE_FILENAME_CHARS = /[\x00-\x1f<>:"/\\|?*]/g;
 const MAX_FILENAME_STEM = 80;
 
-/**
- * The single reserved container key vault_sync stamps its per-machine DERIVED
- * bookkeeping into: `memories.metadata._vault = { vault_path, links }`.
- * `vault_path` is an absolute local path (differs per developer — emitting it
- * flipped the file on every export and caused YAML merge conflicts in files
- * nobody edited); `links` feeds resolveVaultWikilinks. Nesting under one
- * reserved key keeps bookkeeping out of the OPEN user-metadata namespace, so a
- * user can store their own `links` / `file_path` (natural keys for a memory
- * tool) without it being mistaken for bookkeeping and silently dropped
- * (battle-v17 HIGH regression). The writer strips `_vault` before emitting
- * `metadata:` frontmatter; both sides also strip the legacy FLAT `vault_path` /
- * `frontmatter` keys older rows still carry (re-importing an emitted
- * `frontmatter` nested it one level deeper per cycle — geometric growth), so an
- * already-poisoned vault self-heals on its next sync/export. ONE shared list —
- * the two sides must never diverge.
- */
-export const RESERVED_VAULT_META_KEY = '_vault';
-export const VAULT_BOOKKEEPING_KEYS = new Set([RESERVED_VAULT_META_KEY, 'vault_path', 'frontmatter']);
-
-/** Copy of `meta` without the reserved bookkeeping keys (user metadata only). */
-export function stripVaultBookkeeping(meta: Record<string, unknown>): Record<string, unknown> {
-  const clean: Record<string, unknown> = {};
-  for (const key of Object.keys(meta)) {
-    if (VAULT_BOOKKEEPING_KEYS.has(key)) continue;
-    clean[key] = meta[key];
-  }
-  return clean;
-}
+// Bookkeeping keys + strip helpers live in the leaf module vault/bookkeeping.ts
+// (rowToMemory in db/repository also strips them, and repository cannot import
+// this file without a cycle). Re-exported here for the existing import sites.
+export {
+  RESERVED_VAULT_META_KEY,
+  VAULT_BOOKKEEPING_KEYS,
+  stripVaultBookkeeping,
+  stripVaultBookkeepingFromMemory,
+} from './bookkeeping.js';
+import { stripVaultBookkeeping } from './bookkeeping.js';
 
 /**
  * Resolve `relPath` under the (already real, symlink-free) `vaultRoot` and

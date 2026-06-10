@@ -38,7 +38,10 @@ export function handleExport(
     )
     .all(...scope.params, limit, offset);
 
-  const memories: Memory[] = rows.map(rowToMemory);
+  // F-EXPORT-VAULTPATH: `_vault` bookkeeping (absolute per-dev local path) is
+  // stripped at the rowToMemory chokepoint (db/repository); it is DERIVED state
+  // vault_sync re-stamps, so an export→import round-trip losing it is correct.
+  const memories: Memory[] = rows.map((r) => rowToMemory(r));
 
   return {
     version: '1.0.0',

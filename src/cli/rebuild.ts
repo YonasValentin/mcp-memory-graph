@@ -26,6 +26,15 @@ export function printRebuildSummary(result: RebuildResult, vaultRoot: string): v
       dim(file);
     }
   }
+  if (result.duplicates > 0) {
+    warn(
+      `Skipped ${result.duplicates} file(s) whose frontmatter id duplicates another vault file — ` +
+        'NOT indexed (first claim wins). Remove or re-id the stray copies and re-run `memory rebuild`:',
+    );
+    for (const file of result.duplicateFiles) {
+      dim(file);
+    }
+  }
 }
 
 /* c8 ignore start — CLI/IO + real-model wiring around the tested rebuildFromVault core. */

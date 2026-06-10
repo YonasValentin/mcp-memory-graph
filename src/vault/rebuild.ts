@@ -31,6 +31,16 @@ export interface RebuildResult {
   /** Vault-relative paths of the quarantined files, so the CLI can surface
    * WHICH notes were omitted (quarantine was previously invisible). */
   conflictedFiles: string[];
+  /**
+   * F-REBUILD-DUPID: count of .md files skipped because their frontmatter id
+   * was already claimed by an earlier file this rebuild (e.g. a hand-placed /
+   * orphaned legacy copy next to the canonical note). First claim wins —
+   * mirrors syncVault's duplicate-frontmatter-id guard; previously this
+   * crashed the WHOLE rebuild with `UNIQUE constraint failed: memories.id`.
+   */
+  duplicates: number;
+  /** Vault-relative paths of the skipped duplicate-id files. */
+  duplicateFiles: string[];
 }
 
 /** Drift counts between the trusted manifest and the on-disk vault. */
@@ -172,6 +182,12 @@ export async function rebuildFromVault(
 
   const indexed: Array<{ id: string; embedding: Float32Array }> = [];
   const conflictedFiles: string[] = [];
+  const duplicateFiles: string[] = [];
+  // F-REBUILD-DUPID: first-claim-wins ownership of frontmatter ids, ported from
+  // syncVault's guard. Two files sharing an id (an orphaned legacy copy beside
+  // the canonical note — exactly the disaster-recovery mess rebuild exists for)
+  // previously aborted the whole rebuild on the UNIQUE memories.id constraint.
+  const idOwner = new Map<string, string>();
 
   for (const abs of files) {
     const parsed = parseMemoryFile(fs.readFileSync(abs, 'utf-8'));
@@ -187,6 +203,17 @@ export async function rebuildFromVault(
       logger.warn({ event: 'rebuild_conflict_markers_skipped', id: parsed.id, file: abs });
       continue;
     }
+
+    // Reject a file claiming a frontmatter id another vault file already owns —
+    // skip + warn + count instead of crashing the rebuild mid-flight (the same
+    // contract as syncVault's guard; the .md stays on disk for the user to fix).
+    const owner = idOwner.get(parsed.id);
+    if (owner !== undefined) {
+      duplicateFiles.push(path.relative(vaultRoot, abs));
+      logger.warn({ event: 'rebuild_duplicate_id_skipped', id: parsed.id, file: abs, owner });
+      continue;
+    }
+    idOwner.set(parsed.id, abs);
 
     const row = rowFromParsed(parsed);
     const embedding = await embedder.embed(
@@ -234,8 +261,15 @@ export async function rebuildFromVault(
   const sidecar = loadGraphSidecar(vaultRoot);
   if (sidecar) linksRestored = restoreLinksFromSidecar(db, sidecar);
 
-  logger.info({ event: 'rebuild_complete', memories: indexed.length, links_restored: linksRestored, conflicted: conflictedFiles.length, vault: vaultRoot });
-  return { memories: indexed.length, linksRestored, conflicted: conflictedFiles.length, conflictedFiles };
+  logger.info({ event: 'rebuild_complete', memories: indexed.length, links_restored: linksRestored, conflicted: conflictedFiles.length, duplicates: duplicateFiles.length, vault: vaultRoot });
+  return {
+    memories: indexed.length,
+    linksRestored,
+    conflicted: conflictedFiles.length,
+    conflictedFiles,
+    duplicates: duplicateFiles.length,
+    duplicateFiles,
+  };
 }
 
 /** Build a MemoryRow from parsed authored fields; derived columns get defaults. */
