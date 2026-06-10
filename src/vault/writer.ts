@@ -27,18 +27,23 @@ const UNSAFE_FILENAME_CHARS = /[\x00-\x1f<>:"/\\|?*]/g;
 const MAX_FILENAME_STEM = 80;
 
 /**
- * Reserved bookkeeping keys vault_sync stamps into memories.metadata. They are
- * per-machine DERIVED state, never user data: `vault_path` is an absolute local
- * path (differs per developer — emitting it flipped the file on every export and
- * caused YAML merge conflicts in files nobody edited) and `links` feeds
- * resolveVaultWikilinks; `frontmatter`/`file_path` are legacy blobs older rows
- * still carry (re-importing an emitted `frontmatter` nested it one level deeper
- * per export→sync cycle — geometric growth). The writer strips all four before
- * emitting `metadata:` frontmatter, and the import side (buildMemoryRow) strips
- * them from incoming user metadata, so an already-poisoned vault self-heals on
- * its next sync/export. ONE shared list — the two sides must never diverge.
+ * The single reserved container key vault_sync stamps its per-machine DERIVED
+ * bookkeeping into: `memories.metadata._vault = { vault_path, links }`.
+ * `vault_path` is an absolute local path (differs per developer — emitting it
+ * flipped the file on every export and caused YAML merge conflicts in files
+ * nobody edited); `links` feeds resolveVaultWikilinks. Nesting under one
+ * reserved key keeps bookkeeping out of the OPEN user-metadata namespace, so a
+ * user can store their own `links` / `file_path` (natural keys for a memory
+ * tool) without it being mistaken for bookkeeping and silently dropped
+ * (battle-v17 HIGH regression). The writer strips `_vault` before emitting
+ * `metadata:` frontmatter; both sides also strip the legacy FLAT `vault_path` /
+ * `frontmatter` keys older rows still carry (re-importing an emitted
+ * `frontmatter` nested it one level deeper per cycle — geometric growth), so an
+ * already-poisoned vault self-heals on its next sync/export. ONE shared list —
+ * the two sides must never diverge.
  */
-export const VAULT_BOOKKEEPING_KEYS = new Set(['vault_path', 'frontmatter', 'links', 'file_path']);
+export const RESERVED_VAULT_META_KEY = '_vault';
+export const VAULT_BOOKKEEPING_KEYS = new Set([RESERVED_VAULT_META_KEY, 'vault_path', 'frontmatter']);
 
 /** Copy of `meta` without the reserved bookkeeping keys (user metadata only). */
 export function stripVaultBookkeeping(meta: Record<string, unknown>): Record<string, unknown> {
