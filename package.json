@@ -20,6 +20,7 @@
     "test:watch": "vitest",
     "smoke": "node scripts/smoke-mcp.mjs",
     "bench": "node scripts/bench/retrieval.mjs",
+    "bench:longmemeval": "node scripts/bench/longmemeval.mjs",
     "lint": "tsc --noEmit",
     "prepublishOnly": "npm run build:all"
   },
