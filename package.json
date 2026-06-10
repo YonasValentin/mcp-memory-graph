@@ -1,6 +1,6 @@
 {
   "name": "mcp-memory-graph",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Local-first vector + knowledge-graph memory MCP server: hybrid search, bi-temporal, signed provenance — $0/token, zero cloud",
   "type": "module",
   "main": "dist/index.js",

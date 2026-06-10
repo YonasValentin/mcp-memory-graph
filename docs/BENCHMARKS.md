@@ -202,13 +202,50 @@ Honest notes:
   *lower* our score, never inflate it.
 - Retrieval recall is not end-to-end QA accuracy; no LLM reader is involved.
 
+## LOCOMO (public benchmark)
+
+[LOCOMO](https://github.com/snap-research/locomo) (Maharana et al., ACL 2024)
+measures very-long-term conversational memory: 10 conversations of up to ~35
+sessions / ~26k tokens each, ~2,000 questions across 5 categories
+(multi-hop, temporal, open-domain, single-hop, adversarial). Same setup as
+LongMemEval above: REAL production handlers, stock MiniLM embedder, **zero
+LOCOMO-specific tuning**.
+
+```bash
+npm run bench:locomo                 # full 10 conversations (downloads once)
+npm run bench:locomo -- --limit 2    # quick smoke
+```
+
+The runner reports recall at **session** granularity (≥ coverage of the
+evidence sessions — the level MemPalace publishes) AND the harder **turn**
+granularity from the same run. Full run 2026-06-11, Apple Silicon, ~131 min,
+hybrid + local rerank (the production MCP default):
+
+| Granularity | R@1 | R@5 | R@10 | R@50 |
+|---|---|---|---|---|
+| session | 52.3% | 73.3% | **82.2%** | **100%** |
+| turn | 39.4% | 57.0% | 61.0% | 68.1% |
+
+Per-category session R@10: temporal 85.5%, single-hop 84.4%, adversarial
+86.1%, multi-hop 72.3%, open-domain 62.4%.
+
+Honest notes:
+
+- MemPalace publishes session R@10 = 60.3% for their baseline and **88.9%**
+  for their "hybrid v5" — which adds keyword/temporal-regex boosts developed
+  against this benchmark family. Our untuned production path lands at 82.2%:
+  22 points above their baseline, 6.7 below their benchmark-tuned pipeline.
+- R@50 = 100%: every evidence session is always in the top-50 — the misses at
+  k=10 are ranking, not recall, failures.
+- Retrieval recall is not end-to-end QA accuracy; no LLM reader is involved.
+
 ## Roadmap (BATTLE-PLAN §6.D)
 
 This R0 harness is the foundation. Planned additions, each gated on measured
 numbers committed here:
 
 - ~~LongMemEval-S runner~~ Done — see above (`scripts/bench/longmemeval.mjs`).
-- LOCOMO runner (full multi-session benchmark).
+- ~~LOCOMO runner~~ Done — see above (`scripts/bench/locomo.mjs`).
 - Bigger held-out gold set; before/after numbers for each retrieval change.
 - ~~Latency dashboard at 1K / 10K / 100K vectors.~~ Done at 1K / 10K / 50K —
   see "Latency at scale" above (`scripts/battle/verify-scale.mjs`). 100K is

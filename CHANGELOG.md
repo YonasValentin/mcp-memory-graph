@@ -4,6 +4,55 @@ All notable changes to the MCP Memory Graph are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.2.0] - 2026-06-11
+
+Public benchmarks + a fresh adversarial E2E pass over the fix wave itself
+(solo, team-shared-SQLite, team-git-vault — real stdio MCP, real models).
+All changes backward compatible.
+
+### Added
+
+- **LOCOMO retrieval benchmark harness** (`npm run bench:locomo`) — runs the
+  full LOCOMO multi-session benchmark against the production store/search
+  handlers with the real local embedder; reports session- AND turn-level
+  recall@k from the same run
+- CI now tests on **Windows and macOS** (Node 22) in addition to Linux
+  (Node 20 + 22), plus a prod-only-deps install smoke job
+
+### Fixed
+
+- **Shutdown: `docker stop` no longer looks like a crash.** With any ONNX
+  model loaded, `process.exit()` aborted in onnxruntime's static destructors
+  (`libc++abi … mutex lock failed` → SIGABRT, deterministic under SIGTERM).
+  The SIGINT/SIGTERM handlers now close the databases (WAL checkpoint) and
+  die by re-raised default-disposition signal — POSIX-correct termination,
+  zero aborts across 75 PoC kills, DB integrity intact
+- **`--help` no longer executes commands.** Every CLI command ran on
+  `--help` — `init --help` wrote settings/config/launchd files and
+  `rebuild --help` would have deleted the database. A central gate now
+  prints usage for all 13 commands before any command module loads
+- **A cold NLI model download can't fail a write.** `memory_store` errored
+  outright while the 284MB NLI model was mid-download on first run; the
+  contradiction pass is optional enrichment and now degrades gracefully
+  (logged, per-call semantics of `MCP_NLI_DISABLED=1`), and failed loads
+  still retry
+- **`memory rebuild` survives duplicate frontmatter ids** instead of
+  crashing on `UNIQUE constraint failed` — same first-claim-wins guard
+  `vault_sync` already had; duplicates are skipped, warned, and counted in
+  the CLI summary
+- **`metadata._vault` (server-internal sync bookkeeping, including an
+  absolute per-developer path) no longer appears in any tool output** —
+  stripped once at the row-mapping chokepoint rather than per tool. User
+  metadata keys — including `links`, `file_path`, `vault_path`,
+  `frontmatter` — pass through untouched in plain usage
+- The vault metadata-collision fix (user keys colliding with bookkeeping
+  names) re-verified under adversarial attack: forged/malformed `_vault`
+  in a shared vault cannot inject wikilinks or paths across developers;
+  legacy flat residue self-heals without accretion
+- ReDoS linearity guards in the test suite self-calibrate (ratio vs a
+  small input) instead of asserting absolute wall-clock — no more flakes
+  on slow shared CI runners
+
 ## [2.1.0] - 2026-06-10
 
 Hardening release: five adversarial production-readiness battles (v9→v16,
