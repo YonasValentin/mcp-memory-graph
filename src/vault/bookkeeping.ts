@@ -47,6 +47,27 @@ export function stripReservedVaultContainer(
   return clean;
 }
 
+/**
+ * `stripReservedVaultContainer` for a RAW metadata JSON string (as stored in
+ * `memories.metadata` / `memory_versions.metadata`). Fast path: no `"_vault"`
+ * substring → returned as-is, no parse. Used at the version-snapshot WRITE
+ * (so new snapshots never carry the container) and at the snapshot READ
+ * surfaces (so legacy snapshots written before the strip existed are covered
+ * too — the fix-breaker lesson: the rowToMemory chokepoint covers `memories`
+ * reads, not snapshot/raw-metadata surfaces).
+ */
+export function stripReservedVaultContainerFromJson(json: string | null): string | null {
+  if (!json || !json.includes(`"${RESERVED_VAULT_META_KEY}"`)) return json;
+  try {
+    const parsed: unknown = JSON.parse(json);
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return json;
+    const clean = stripReservedVaultContainer(parsed as Record<string, unknown>);
+    return Object.keys(clean).length > 0 ? JSON.stringify(clean) : null;
+  } catch {
+    return json;
+  }
+}
+
 /** Copy of `meta` without the reserved bookkeeping keys (user metadata only). */
 export function stripVaultBookkeeping(meta: Record<string, unknown>): Record<string, unknown> {
   const clean: Record<string, unknown> = {};
@@ -57,21 +78,3 @@ export function stripVaultBookkeeping(meta: Record<string, unknown>): Record<str
   return clean;
 }
 
-/**
- * Copy of a memory with the reserved vault bookkeeping stripped from its
- * metadata — the EMIT-boundary guard for read/egress tools. `_vault.vault_path`
- * is an ABSOLUTE per-developer local path and must never appear in shared JSON
- * output (F-EXPORT-VAULTPATH). The DB row is left untouched —
- * sync/resolveVaultWikilinks reads `_vault` from raw rows — and it is DERIVED
- * state vault_sync re-stamps, so stripping at emit loses nothing durable.
- * Metadata that was ONLY bookkeeping emits as `null`, indistinguishable from a
- * row that never had metadata.
- */
-export function stripVaultBookkeepingFromMemory<
-  T extends { metadata: Record<string, unknown> | null },
->(memory: T): T {
-  if (!memory.metadata) return memory;
-  const clean = stripVaultBookkeeping(memory.metadata);
-  if (Object.keys(clean).length === Object.keys(memory.metadata).length) return memory;
-  return { ...memory, metadata: Object.keys(clean).length > 0 ? clean : null };
-}

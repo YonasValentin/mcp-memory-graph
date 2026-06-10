@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { VersionRecord } from '../types.js';
+import { stripReservedVaultContainerFromJson } from '../vault/bookkeeping.js';
 
 export function handleVersions(
   db: Database.Database,
@@ -21,6 +22,8 @@ export function handleVersions(
 
   return {
     current_version: current.version,
-    history,
+    // Legacy snapshots written before the snapshot-write strip existed can
+    // still carry `_vault` (absolute per-dev path) — strip at read too.
+    history: history.map((v) => ({ ...v, metadata: stripReservedVaultContainerFromJson(v.metadata) })),
   };
 }

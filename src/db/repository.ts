@@ -2,7 +2,10 @@ import type Database from 'better-sqlite3';
 import type { Memory, MemoryRow, ListOptions, AccessLogEntry, IngestSourceRecord } from '../types.js';
 import type { MemoryPartition } from '../graph/conflict-resolver.js';
 import { NOW_ISO_SQL } from './predicates.js';
-import { stripReservedVaultContainer } from '../vault/bookkeeping.js';
+import {
+  stripReservedVaultContainer,
+  stripReservedVaultContainerFromJson,
+} from '../vault/bookkeeping.js';
 import { signEnvelope } from '../provenance/envelope.js';
 import type { SignedEnvelope } from '../provenance/envelope.js';
 
@@ -228,7 +231,9 @@ export function updateMemory(
       id,
       existing.content,
       existing.title,
-      existing.metadata,
+      // Version snapshots are read back raw (memory_versions/history/forget) —
+      // never let the `_vault` bookkeeping (absolute per-dev path) into them.
+      stripReservedVaultContainerFromJson(existing.metadata),
       existing.version,
       updates.author ?? null,
     );

@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { stripReservedVaultContainerFromJson } from '../vault/bookkeeping.js';
 import type { Memory, VersionRecord } from '../types.js';
 import {
   getMemoryById,
@@ -118,7 +119,9 @@ export function handleForget(
     .prepare<[string], VersionRecord>(
       'SELECT * FROM memory_versions WHERE memory_id = ? ORDER BY version DESC',
     )
-    .all(input.id);
+    .all(input.id)
+    // Strip `_vault` from legacy snapshots at read (see versions.ts).
+    .map((v) => ({ ...v, metadata: stripReservedVaultContainerFromJson(v.metadata) }));
 
   // M3 change-propagation: flag dependents stale BEFORE erase — the FK cascade
   // drops the dependency edges, so they must be read while they still exist.

@@ -542,6 +542,11 @@ export async function runServe(): Promise<void> {
     process.kill(process.pid, signal);
   };
 
+  // NOTE: in practice db/connection.ts's own SIGINT/SIGTERM handler (registered
+  // at module import, i.e. BEFORE these) closes the DBs and self-kills
+  // synchronously, so this shutdown almost never runs on a signal — it covers
+  // the case where that registration order ever changes, and stays the single
+  // place that knows how to drain transports/webhooks.
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 

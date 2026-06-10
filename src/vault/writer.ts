@@ -33,7 +33,6 @@ export {
   RESERVED_VAULT_META_KEY,
   VAULT_BOOKKEEPING_KEYS,
   stripVaultBookkeeping,
-  stripVaultBookkeepingFromMemory,
 } from './bookkeeping.js';
 import { stripVaultBookkeeping } from './bookkeeping.js';
 

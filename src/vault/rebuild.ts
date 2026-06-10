@@ -307,7 +307,9 @@ function rowFromParsed(m: ParsedMemoryFile): MemoryRow {
 function scanLiveMarkdown(root: string): string[] {
   const out: string[] = [];
   const walk = (dir: string): void => {
-    for (const name of fs.readdirSync(dir)) {
+    // Sorted: the duplicate-id guard is first-claim-wins, so scan order must be
+    // deterministic across platforms (raw readdir order is filesystem-defined).
+    for (const name of fs.readdirSync(dir).sort()) {
       if (name.startsWith('.')) continue; // .memory, .git, etc.
       const abs = path.join(dir, name);
       if (fs.statSync(abs).isDirectory()) walk(abs);

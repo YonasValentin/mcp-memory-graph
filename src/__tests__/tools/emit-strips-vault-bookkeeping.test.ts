@@ -171,3 +171,55 @@ describe('rowToMemory chokepoint covers the OTHER read surfaces too', () => {
     expect(searchSerialized).toContain('keep-me');
   });
 });
+
+describe('snapshot + raw-metadata surfaces (fix-breaker wave 2)', () => {
+  it('memory_versions / memory_history emit no _vault after updating a stamped row', async () => {
+    const id = await seedStampedRow();
+    const { handleUpdate } = await import('../../tools/update.js');
+    await handleUpdate(db, embedder, { id, content: 'Dunning flow now retries 5 times.' });
+
+    const { handleVersions } = await import('../../tools/versions.js');
+    const versions = handleVersions(db, { id, limit: 10 });
+    const vSerialized = JSON.stringify(versions);
+    expect(vSerialized).not.toContain('_vault');
+    expect(vSerialized).not.toContain(ABS_VAULT);
+
+    const { handleHistory } = await import('../../tools/history.js');
+    const history = handleHistory(db, { id });
+    const hSerialized = JSON.stringify(history);
+    expect(hSerialized).not.toContain('_vault');
+    expect(hSerialized).not.toContain(ABS_VAULT);
+  });
+
+  it('a LEGACY snapshot row already carrying _vault is stripped at read time', async () => {
+    const id = await seedStampedRow();
+    db.prepare(
+      `INSERT INTO memory_versions (id, memory_id, content, title, metadata, version, changed_by, changed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+    ).run(`${id}_v0`, id, 'old content', 'old title',
+      JSON.stringify({ custom: 'keep-me', _vault: { vault_path: ABS_VAULT, links: [] } }), 0, null);
+
+    const { handleVersions } = await import('../../tools/versions.js');
+    const versions = handleVersions(db, { id, limit: 10 });
+    const serialized = JSON.stringify(versions);
+    expect(serialized).toContain('keep-me');
+    expect(serialized).not.toContain('_vault');
+    expect(serialized).not.toContain(ABS_VAULT);
+  });
+
+  it('memory_session_state resume state carries no _vault from a stamped row', async () => {
+    const { handleSessionState } = await import('../../tools/session-state.js');
+    await handleSessionState(db, embedder, {
+      action: 'save', session_key: 'sess-1', scope: 'global',
+      content: 'working on dunning', summary: 'dunning work',
+    });
+    db.prepare(
+      `UPDATE memories SET metadata = json_patch(metadata, ?) WHERE json_extract(metadata, '$.session_key') = ?`,
+    ).run(JSON.stringify({ _vault: { vault_path: ABS_VAULT, links: [] } }), 'sess-1');
+
+    const resumed = await handleSessionState(db, embedder, { action: 'resume', session_key: 'sess-1', scope: 'global' });
+    const serialized = JSON.stringify(resumed);
+    expect(serialized).not.toContain('_vault');
+    expect(serialized).not.toContain(ABS_VAULT);
+  });
+});

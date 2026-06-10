@@ -124,7 +124,9 @@ describe('M2.1 redaction — bypasses are closed', () => {
     expect(redactContent(small, 'scrub').redactions).toBe(0);
     const smallMs = medianOf3(() => { redactContent(small, 'scrub'); });
     let r!: ReturnType<typeof redactContent>;
-    const largeMs = timeMs(() => { r = redactContent(large, 'scrub'); });
+    // Median the large sample too — a single GC pause on a shared CI runner
+    // showed up to ~1.7x inflation on one sample (fix-breaker measurement).
+    const largeMs = medianOf3(() => { r = redactContent(large, 'scrub'); });
     expect(r.redactions).toBe(0); // no closing marker → no match
     // The bounded {0,8192} PEM body keeps this linear; a re-introduced unbounded
     // backtrack scales quadratically and blows the ratio by an order of magnitude.
@@ -139,7 +141,7 @@ describe('M2.1 redaction — bypasses are closed', () => {
     expect(redactContent(small, 'scrub').redactions).toBe(0);
     const smallMs = medianOf3(() => { redactContent(small, 'scrub'); });
     let r!: ReturnType<typeof redactContent>;
-    const largeMs = timeMs(() => { r = redactContent(large, 'scrub'); });
+    const largeMs = medianOf3(() => { r = redactContent(large, 'scrub'); });
     expect(r.redactions).toBe(0);
     // The bounded {0,64} `_secret` prefix keeps this linear over 1M chars; the
     // pre-fix unbounded prefix rescanned the run per position (O(n^2) → ~100×).
