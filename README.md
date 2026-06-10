@@ -115,7 +115,7 @@ Every memory supports rich metadata for cross-department use:
 
 ### Obsidian-grade vault
 
-- **Bidirectional write-back** — `vault_sync` reads a vault *in*; `memory_export_vault` writes memories *out* as `.md` files with YAML frontmatter that round-trip losslessly.
+- **Bidirectional write-back** — `vault_sync` reads a vault *in*; `memory_export_vault` writes memories *out* as `.md` files with YAML frontmatter that round-trip losslessly for every authored field the writer emits (id, scope, namespace, tags, access_level, importance, timestamps, …). Two derived scores are *not* in the frontmatter and reset on re-import: `confidence_score` (→ 0.6) and `stability` (→ 1.0). Use `memory_export` (JSON) for a byte-perfect backup.
 - **JSON Canvas** — `memory_canvas` exports the graph as a JSON Canvas 1.0 `.canvas` that opens as a spatial board in real Obsidian.
 - **Read-only memory wiki / Publish** — `serve` exposes `/publish/:namespace` (index, page, search, graph) as a read-only wiki. It is intentionally *not* behind bearer auth but is hard-scoped to published access levels (`MCP_PUBLISH_ACCESS_LEVELS`, default `public`).
 - **Session notes + templates** — `memory_session_note` is a frictionless per-session "daily note" (appends to one memory per `session_id`); `memory_template` returns structured note scaffolds per document type.
@@ -442,8 +442,27 @@ Export memories to plain Markdown and share the folder as a git repo:
 ```bash
 npx mcp-memory-graph vault-init                    # make the vault a git repo (union merge driver + rebuild hook)
 git add -A && git commit -m "memory snapshot" && git push
-# collaborators: git pull && npx mcp-memory-graph rebuild
+# collaborators, once after cloning:
+#   npx mcp-memory-graph vault-init                # registers the union merge driver + post-merge hook in THEIR clone
+# collaborators, thereafter: git pull && npx mcp-memory-graph rebuild
 ```
+
+> **Each collaborator must run `vault-init` once in their own clone.** The
+> `memory-union` merge driver and the post-merge rebuild hook live in *local*
+> git config (`.git/`), not in the repo — a fresh clone without `vault-init`
+> will hit raw conflict markers in `.memory/graph.json` on its first concurrent
+> pull. Re-running `vault-init` is idempotent and does not clobber the committed
+> sidecar.
+
+Two recovery notes for team vaults:
+
+- **After a merge you resolved by hand** (the post-merge hook only fires on
+  clean merges), `memory rebuild` can refuse with `VaultIntegrityError` because
+  `.memory/manifest.json` is stale. Delete that file and re-run `rebuild` — it
+  is derived state and is regenerated.
+- **Hand-edited a `.md` while your DB has newer state?** Import first
+  (`vault_sync` or `rebuild`), *then* export (`memory sync`). A full export from
+  a stale DB overwrites vault files, including your hand-edit.
 
 See **Team & solo sharing (Bruno-style git)** above for the model and trade-offs.
 
@@ -537,6 +556,9 @@ The config file at `~/.mcp-memory/config.json` controls self-improvement behavio
 | `hooks` | `review_on_stop` | `true` | Spawn headless `claude -p` at session end to review transcript and call `memory_store`. Set `false` to disable per-session-end review without removing the hook from `settings.json`. |
 | `extraction` | `categories` | `["decision", "pattern", "error_fix", "convention"]` | Learning categories to extract |
 | `extraction` | `min_confidence` | `0.4` | Minimum confidence for extracted learnings |
+| `storage` | `db_path` | scope-dependent | SQLite file location (`~/.mcp-memory/memory.db` for user scope, `<project>/.mcp-memory/memory.db` for project scope). `MCP_MEMORY_DB_PATH` overrides. |
+| `vault` | `path` | _unset_ | Obsidian vault root used by `vault_sync` / `memory_export_vault` / `rebuild` when no explicit path is passed. `MCP_VAULT_PATH` and `--vault <path>` override. |
+| `vault` | `write_through` | `true` | Mirror memory writes out to the vault as `.md` files when a vault is configured. `MCP_VAULT_WRITE_THROUGH=0` overrides. |
 
 ---
 
@@ -636,6 +658,10 @@ Search memories for "deployment patterns" with temporal_decay={type:"exponential
 - `confidence` — Normalized 0-1 confidence
 - `confidence_level` — "high" (>=0.7), "medium" (>=0.4), or "low"
 - `match_type` — "hybrid", "vector", or "keyword"
+
+> The default `detail_level: "summary"` projection returns `confidence_level`
+> but omits the numeric `confidence` (and full `content`) to save tokens — pass
+> `detail_level: "full"` when you need them.
 
 ---
 
@@ -811,6 +837,11 @@ Show sync status for an Obsidian vault: files synced/pending/changed, last sync 
 ### 15. `vault_search`
 
 Hybrid search scoped to a specific vault's memories.
+
+> By default this searches the namespace named after the vault's **folder
+> name**. Memories exported from another namespace keep their original
+> namespace in frontmatter — if a search over a freshly-synced vault returns 0
+> hits, pass the explicit `namespace` (and/or `scope`) override.
 
 ---
 

@@ -1,6 +1,6 @@
 {
   "name": "mcp-memory-graph",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Local-first vector + knowledge-graph memory MCP server: hybrid search, bi-temporal, signed provenance — $0/token, zero cloud",
   "type": "module",
   "main": "dist/index.js",
@@ -54,6 +54,14 @@
     "enterprise"
   ],
   "license": "PolyForm-Noncommercial-1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YonasValentin/mcp-memory-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/YonasValentin/mcp-memory-server/issues"
+  },
+  "homepage": "https://github.com/YonasValentin/mcp-memory-server#readme",
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.29.0",

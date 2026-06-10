@@ -30,6 +30,23 @@ Earlier the knowledge-graph tables were global (no namespace column), so a share
 
 > **Honest caveat:** testing proves *bugs-found*, not *bugs-absent*. v14 makes shared-DB isolation structural and battle-converged, but a separate DB file per tenant is still the only boundary with *no shared state to reason about*. Choose it when the cost of a single missed reader outweighs the convenience of one DB.
 
+## Inside one namespace: a single trust boundary
+
+Isolation is **between** namespaces, not between teammates inside one. A shared
+DB + shared namespace means: `scope='user'` hides a memory from *unscoped
+search only* (any teammate can read it with an explicit `scope:'user'` search
+or by id); `author` is honor-system; teammates can update or delete each
+other's memories (revisions record `changed_by`). One write-path consequence
+worth knowing: the self-correcting NLI write-gate runs on every store, so a
+teammate storing a near-twin of your note *can* auto-retire yours when the
+model reads the pair as a bidirectional contradiction — heavily templated
+notes (shared boilerplate, one variable changed) are the false-positive risk.
+Every auto-retire is audited in `memory_conflicts` and recoverable
+(`memory_history`, `as_of`); set `MCP_NLI_DISABLED=1` to turn the gate off for
+such corpora (see `docs/ENV.md`). There is no per-user identity or per-request
+RBAC — if teammates must not see or affect each other's data, give them
+different namespaces or separate DB files.
+
 ## Recommendation
 
 | Need | Use |
