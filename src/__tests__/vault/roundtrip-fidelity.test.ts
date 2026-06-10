@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
 import { createTestDb } from '../../testing/test-db.js';
@@ -8,6 +8,8 @@ import { handleStore } from '../../tools/store.js';
 import { handleExportVault } from '../../tools/export-vault.js';
 import { handleVaultSync } from '../../tools/vault-sync.js';
 import { getMemoryById } from '../../db/repository.js';
+import { parseVaultFile } from '../../vault/parser.js';
+import { parseMemoryFile } from '../../vault/memory-file.js';
 
 const embedder = new MockEmbeddingProvider();
 
@@ -76,6 +78,33 @@ describe('vault round-trip preserves importance + timestamps it persists (VAULT-
       expect(recovered).not.toBeNull();
       expect(recovered?.agent_id).toBe('agent-bruno');
       expect(recovered?.access_level).toBe('confidential');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * E2E-found (2-dev vault sim): the SAME .md imported to 178 bytes via vault_sync
+ * but 177 via rebuild — parseVaultFile kept the body's trailing newline while
+ * parseMemoryFile strips it. The writer emits `${body}\n`, so the STRIPPED form
+ * is the canonical content; the two import paths must not diverge (a one-byte
+ * drift breaks exact-content equality on a team's git round-trip and silently
+ * re-embeds).
+ */
+describe('the two import paths parse identical content (VAULT-PARSE-PARITY)', () => {
+  it('parseVaultFile (sync path) and parseMemoryFile (rebuild path) agree byte-for-byte', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vault-parity-'));
+    try {
+      const raw = '---\nid: parity-1\ntitle: Parity\nscope: project\n---\n\nSame bytes through either path.\n';
+      const abs = join(dir, 'parity.md');
+      writeFileSync(abs, raw, 'utf-8');
+
+      const syncSide = parseVaultFile(abs, 'parity.md', 0).content;
+      const rebuildSide = parseMemoryFile(raw).content;
+
+      expect(syncSide).toBe(rebuildSide);
+      expect(syncSide).toBe('Same bytes through either path.');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -14,6 +14,9 @@ import type {
 import { insertMemory, deleteMemory, getMemoryById, invalidateMemory } from '../db/repository.js';
 import { parseVaultFile } from './parser.js';
 import { scanVault } from './scanner.js';
+import { hasGitConflictMarkers } from './memory-file.js';
+import { stripVaultBookkeeping } from './writer.js';
+import { logger } from '../lib/logger.js';
 import { chunkContent } from '../chunking/chunker.js';
 import { createMemoryLink } from '../graph/memory-links.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
@@ -91,6 +94,7 @@ export async function syncVault(
   let filesUpdated = 0;
   let filesDeleted = 0;
   let totalMemories = 0;
+  let conflicted = 0;
 
   for (const filePath of deletedPaths) {
     try {
@@ -139,6 +143,18 @@ export async function syncVault(
         file = parseVaultFile(entry.absolutePath, entry.relativePath, entry.mtimeMs);
       } catch (err) {
         errors.push(`Parse failed for ${entry.relativePath}: ${errorMessage(err)}`);
+        continue;
+      }
+
+      // battle-v15 GT-4 parity: rebuildFromVault quarantines a marker-bearing
+      // file, but syncVault had NO such guard — a sloppily-committed 3-way merge
+      // became searchable memory containing `<<<<<<< HEAD`. Skip BEFORE the
+      // id-claim and delete-old steps so a conflicted update never tears down
+      // the previously-synced memory; the .md stays on disk for the user to
+      // resolve and the next sync picks it up once the markers are gone.
+      if (hasGitConflictMarkers(file.content)) {
+        conflicted++;
+        logger.warn({ event: 'sync_conflict_markers_skipped', file: entry.relativePath });
         continue;
       }
 
@@ -289,6 +305,7 @@ export async function syncVault(
     files_deleted: filesDeleted,
     files_unchanged: unchangedCount,
     files_errored: errors.length,
+    conflicted,
     total_memories: totalMemories,
     errors,
     duration_ms: Date.now() - startMs,
@@ -418,6 +435,17 @@ function buildMemoryRow(
   // randomUUID duplicate under namespace=<vault>. Falls back to vault defaults
   // for hand-authored notes that carry no such frontmatter.
   const fmScope = fmString(fm, 'scope');
+  // USER metadata from frontmatter, with the reserved bookkeeping keys stripped
+  // so an already-poisoned file (pre-fix exports re-emitted the bookkeeping blob,
+  // nesting the previous frontmatter under metadata.frontmatter on every
+  // export→sync cycle) self-heals on import. Only the two FLAT keys this module
+  // still consumes are re-stamped below: resolveVaultWikilinks reads
+  // meta.vault_path as the vault-membership filter and meta.links for wikilink
+  // edges. `frontmatter`/`file_path` had zero consumers and are dropped.
+  const fmMeta =
+    fm.metadata && typeof fm.metadata === 'object' && !Array.isArray(fm.metadata)
+      ? stripVaultBookkeeping(fm.metadata as Record<string, unknown>)
+      : {};
   // battle-v14 G1: under a forced namespace, PIN every synced memory to the forced
   // tenant — a per-file `namespace:` in frontmatter must NOT let a pinned tenant
   // plant a row in another tenant's namespace (the vault-path guard only checks
@@ -453,10 +481,9 @@ function buildMemoryRow(
         ? parsed.frontmatter.language
         : 'en',
     metadata: JSON.stringify({
+      ...fmMeta,
       vault_path: vaultPath,
-      frontmatter: parsed.frontmatter,
       links: parsed.links,
-      file_path: parsed.relativePath,
     }),
     parent_id: null,
     chunk_index: null,

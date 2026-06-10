@@ -75,6 +75,7 @@ export class CrossEncoderNli implements NliClassifier {
   private tokenizer: any = null;
   private model: any = null;
   private ready: boolean = false;
+  private initPromise: Promise<void> | null = null;
 
   constructor(modelName?: string) {
     this.modelName =
@@ -107,10 +108,26 @@ export class CrossEncoderNli implements NliClassifier {
     );
   }
 
-  // Model download/load — never exercised in the hermetic test suite.
+  // Model download/load — never exercised with the real model in the suite
+  // (the init-dedup tests drive it with an injected loader).
   private async initialize(): Promise<void> {
     if (this.ready) return;
 
+    // Dedupe concurrent first calls onto ONE in-flight load (mirrors
+    // ../embeddings/transformers.ts): pre-fix, N callers each saw ready=false
+    // and launched N parallel ~250MB ONNX loads in one process. The memo is
+    // cleared once settled so a FAILED load is retried by a later call instead
+    // of caching the rejection forever; after success `ready` short-circuits.
+    if (!this.initPromise) {
+      this.initPromise = this.loadModel().finally(() => {
+        this.initPromise = null;
+      });
+    }
+    return this.initPromise;
+  }
+
+  /** The actual one-shot model load — only ever entered via the memo above. */
+  private async loadModel(): Promise<void> {
     console.error('Loading NLI model (first time may take a few seconds)...');
     try {
       const { AutoTokenizer, AutoModelForSequenceClassification } = await import(

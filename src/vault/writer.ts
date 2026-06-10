@@ -27,6 +27,30 @@ const UNSAFE_FILENAME_CHARS = /[\x00-\x1f<>:"/\\|?*]/g;
 const MAX_FILENAME_STEM = 80;
 
 /**
+ * Reserved bookkeeping keys vault_sync stamps into memories.metadata. They are
+ * per-machine DERIVED state, never user data: `vault_path` is an absolute local
+ * path (differs per developer — emitting it flipped the file on every export and
+ * caused YAML merge conflicts in files nobody edited) and `links` feeds
+ * resolveVaultWikilinks; `frontmatter`/`file_path` are legacy blobs older rows
+ * still carry (re-importing an emitted `frontmatter` nested it one level deeper
+ * per export→sync cycle — geometric growth). The writer strips all four before
+ * emitting `metadata:` frontmatter, and the import side (buildMemoryRow) strips
+ * them from incoming user metadata, so an already-poisoned vault self-heals on
+ * its next sync/export. ONE shared list — the two sides must never diverge.
+ */
+export const VAULT_BOOKKEEPING_KEYS = new Set(['vault_path', 'frontmatter', 'links', 'file_path']);
+
+/** Copy of `meta` without the reserved bookkeeping keys (user metadata only). */
+export function stripVaultBookkeeping(meta: Record<string, unknown>): Record<string, unknown> {
+  const clean: Record<string, unknown> = {};
+  for (const key of Object.keys(meta)) {
+    if (VAULT_BOOKKEEPING_KEYS.has(key)) continue;
+    clean[key] = meta[key];
+  }
+  return clean;
+}
+
+/**
  * Resolve `relPath` under the (already real, symlink-free) `vaultRoot` and
  * return the absolute target IFF it stays inside the vault — otherwise `null`.
  * Single source of truth for path confinement: every vault write (markdown
@@ -110,7 +134,12 @@ export function memoryToMarkdown(memory: Memory & { valid_to?: string | null }):
   front.importance_score = memory.importance_score;
   if (memory.expires_at) front.expires_at = memory.expires_at;
   if (memory.agent_id) front.agent_id = memory.agent_id;
-  if (memory.metadata && Object.keys(memory.metadata).length > 0) front.metadata = memory.metadata;
+  // Emit only USER metadata: the sync bookkeeping keys are per-machine derived
+  // state and must never reach the shared repo (see VAULT_BOOKKEEPING_KEYS).
+  if (memory.metadata) {
+    const userMeta = stripVaultBookkeeping(memory.metadata);
+    if (Object.keys(userMeta).length > 0) front.metadata = userMeta;
+  }
   front.created_at = memory.created_at;
   front.updated_at = memory.updated_at;
   front.provenance = memory.provenance;

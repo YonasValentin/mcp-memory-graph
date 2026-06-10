@@ -31,6 +31,10 @@ export function vaultGitignore(): string {
     '# subject to merges. Regenerated on the next `memory sync`/export.',
     '.memory/manifest.json',
     '',
+    '# Per-machine log of the last post-merge/post-checkout rebuild (see the git',
+    '# hooks) — derived, regenerated on every run, never shared.',
+    '.memory/last-rebuild.log',
+    '',
   ].join('\n');
 }
 
@@ -43,6 +47,9 @@ export function vaultGitattributes(): string {
  * Git hook body that rebuilds the index after a pull/merge/checkout, so the
  * derived DB tracks the files automatically. `distEntry` is the absolute path to
  * the compiled CLI (index.js). Double-quoted so spaces in the path survive.
+ * Output lands in `.memory/last-rebuild.log` (truncated each run) instead of
+ * /dev/null — discarding it made quarantined conflicted notes invisible after a
+ * merge. stdout stays quiet and the git op is never blocked.
  */
 export function rebuildHook(distEntry: string): string {
   return [
@@ -54,7 +61,10 @@ export function rebuildHook(distEntry: string): string {
     '# merge from out-of-band tampering. Drop the stale manifest before rebuilding;',
     '# it is regenerated against the new file set on the next `memory sync`/export.',
     'rm -f .memory/manifest.json',
-    `node "${distEntry}" rebuild >/dev/null 2>&1 || true`,
+    '# Log the rebuild (truncated each run) instead of discarding it: a quarantined',
+    '# conflicted note was invisible when everything went to /dev/null.',
+    'mkdir -p .memory',
+    `node "${distEntry}" rebuild > .memory/last-rebuild.log 2>&1 || true`,
     '',
   ].join('\n');
 }

@@ -52,6 +52,12 @@ export interface Memory {
   readonly created_at: string;
   updated_at: string;
   expires_at: string | null;
+  /** Bi-temporal validity start (= created_at at insert). */
+  valid_from: string | null;
+  /** When the fact stopped being true (NULL = live). Stamped by forget/supersede — why a memory left default recall. */
+  valid_to: string | null;
+  /** When a newer memory superseded this one (NULL = never superseded). */
+  superseded_at: string | null;
   access_count: number;
   last_accessed_at: string | null;
   importance_score: number;
@@ -88,6 +94,10 @@ export interface MemoryRow {
   confidence_score: number;
   /** Spaced-repetition stability: grows on access, drives the forgetting curve. */
   stability: number;
+  /** Bi-temporal validity (schema v6): when the fact was true; superseded_at stamps replacement by a newer memory. */
+  valid_from?: string | null;
+  valid_to?: string | null;
+  superseded_at?: string | null;
   /** How this memory came to exist (manual, vault_sync, reflection, …). */
   provenance?: string;
   /** Which agent wrote this memory (multi-agent attribution), distinct from `author`. */
@@ -389,6 +399,12 @@ export interface VaultSyncResult {
   files_deleted: number;
   files_unchanged: number;
   files_errored: number;
+  /**
+   * Files quarantined because their body carried git conflict markers (a
+   * sloppily-resolved 3-way merge) — skipped, never indexed. Mirrors
+   * RebuildResult.conflicted: the two import paths apply the same guard.
+   */
+  conflicted: number;
   total_memories: number;
   errors: string[];
   duration_ms: number;

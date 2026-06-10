@@ -4,6 +4,7 @@ import type { ZodRawShape } from 'zod';
 import { createRequire } from 'node:module';
 import type Database from 'better-sqlite3';
 import { getDatabase, closeDatabase } from './db/connection.js';
+import { envFlag } from './lib/env.js';
 import { initializeSchema } from './db/schema.js';
 import { runMigrations } from './db/migrations.js';
 import type { EmbeddingProvider } from './types.js';
@@ -221,7 +222,13 @@ export function createServer(): McpServer {
     return embedderPromise;
   }
 
-  function getNli(): NliClassifier {
+  function getNli(): NliClassifier | undefined {
+    // MCP_NLI_DISABLED=1 turns the self-correcting NLI write-gate off entirely:
+    // handleStore receives no classifier, so stores never auto-retire a
+    // contradicted fact. Escape hatch for corpora of templated near-twin notes,
+    // where the MNLI model can read boilerplate as a bidirectional contradiction
+    // (score ≥0.97 observed) and bi-temporally retire a teammate's valid note.
+    if (envFlag('MCP_NLI_DISABLED')) return undefined;
     // Lazy proxy: constructing CrossEncoderNli downloads nothing — the model
     // loads only when classify() actually runs. R3 runs the contradiction gate
     // on EVERY store (not just on_conflict=supersede), but handleStore only calls

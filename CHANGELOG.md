@@ -4,6 +4,68 @@ All notable changes to the MCP Memory Graph are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.1.0] - 2026-06-10
+
+Hardening release: five adversarial production-readiness battles (v9→v16,
+schema v12→v15), three init/vault footgun fixes, and a fresh three-scenario
+end-to-end pass (solo, team-shared-SQLite, team-git-vault) over real stdio MCP.
+All changes additive; migrations automatic.
+
+### Fixed
+
+**Team git vault (found by 2-dev E2E simulation)**
+
+- **Vault frontmatter no longer accretes**: `vault_sync` used to stuff the
+  entire previous frontmatter plus each developer's *absolute* vault path into
+  `metadata`, and exports wrote it all back — geometric file growth, YAML merge
+  conflicts in files nobody edited, and quarantine data loss. Imports and
+  exports now strip the reserved bookkeeping keys both ways; poisoned vaults
+  self-heal on the next export
+- `vault_sync` now quarantines files containing git conflict markers (counted
+  in the new `conflicted` result field) instead of indexing `<<<<<<< HEAD` as
+  memory content — same guard `rebuild` already had
+- The two vault import paths (`vault_sync` vs `rebuild`) now produce
+  byte-identical content (trailing-newline parity)
+- `rebuild` CLI prints quarantined files; the post-merge hook logs to
+  `.memory/last-rebuild.log` (gitignored) instead of discarding output
+
+**Concurrency**
+
+- Lazy model init (embedder, NLI, reranker) is now promise-deduped: N
+  concurrent cold-start calls share one model load instead of launching N
+  parallel ~250MB loads — fixes intermittent cold-start store failures and a
+  native abort at shutdown under parallel first writes; failed loads retry
+
+**Visibility**
+
+- `memory_get` now returns `valid_from` / `valid_to` / `superseded_at`, so a
+  retired memory is distinguishable from a live one
+- `memory_version_restore` failures now carry a `reason`
+  (`"Version 99 not found; available: 1..2"`) instead of a bare
+  `{"restored": false}`
+
+### Added
+
+- `MCP_NLI_DISABLED=1` escape hatch: turns the self-correcting NLI write-gate
+  off for corpora of templated near-twin notes, where MNLI can read shared
+  boilerplate as a bidirectional contradiction and auto-retire a teammate's
+  valid note (every auto-retire remains audited + recoverable)
+- `vault_search` accepts explicit `scope` / `namespace` overrides (default
+  remains the vault folder name)
+- `memory init --scope project` keeps everything project-local: project
+  `db_path` default, no machine-global consolidation schedule
+- `package.json` `repository` / `bugs` / `homepage` metadata
+
+### Changed
+
+- Schema v15: tenancy-scoped `search_log`; v14: structural `(scope, namespace)`
+  on the five knowledge-graph tables — shared-DB multi-tenant isolation is
+  enforced by schema, not per-reader filters (see `docs/MULTI-TENANCY.md`)
+- Docs: team-vault onboarding (per-clone `vault-init`), stale-manifest
+  recovery, hand-edit ordering, vault round-trip fidelity (only
+  `confidence_score` and `stability` reset), `detail_level: "full"` for numeric
+  `confidence`, same-namespace trust model
+
 ## [2.0.0] - 2026-05-29
 
 The "revolution" release: 8 pillars expand the server from 17 to 37 MCP tools.

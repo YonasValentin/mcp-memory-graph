@@ -28,6 +28,9 @@ export interface RebuildResult {
    * indexing the markers as live memory content.
    */
   conflicted: number;
+  /** Vault-relative paths of the quarantined files, so the CLI can surface
+   * WHICH notes were omitted (quarantine was previously invisible). */
+  conflictedFiles: string[];
 }
 
 /** Drift counts between the trusted manifest and the on-disk vault. */
@@ -168,7 +171,7 @@ export async function rebuildFromVault(
   assertVaultIntegrity(vaultRoot, files);
 
   const indexed: Array<{ id: string; embedding: Float32Array }> = [];
-  let conflicted = 0;
+  const conflictedFiles: string[] = [];
 
   for (const abs of files) {
     const parsed = parseMemoryFile(fs.readFileSync(abs, 'utf-8'));
@@ -180,7 +183,7 @@ export async function rebuildFromVault(
     // live memory content. The post-merge rebuild hook deletes the integrity
     // manifest first, so this is the only line of defense for the git-team flow.
     if (hasGitConflictMarkers(parsed.content)) {
-      conflicted++;
+      conflictedFiles.push(path.relative(vaultRoot, abs));
       logger.warn({ event: 'rebuild_conflict_markers_skipped', id: parsed.id, file: abs });
       continue;
     }
@@ -231,8 +234,8 @@ export async function rebuildFromVault(
   const sidecar = loadGraphSidecar(vaultRoot);
   if (sidecar) linksRestored = restoreLinksFromSidecar(db, sidecar);
 
-  logger.info({ event: 'rebuild_complete', memories: indexed.length, links_restored: linksRestored, conflicted, vault: vaultRoot });
-  return { memories: indexed.length, linksRestored, conflicted };
+  logger.info({ event: 'rebuild_complete', memories: indexed.length, links_restored: linksRestored, conflicted: conflictedFiles.length, vault: vaultRoot });
+  return { memories: indexed.length, linksRestored, conflicted: conflictedFiles.length, conflictedFiles };
 }
 
 /** Build a MemoryRow from parsed authored fields; derived columns get defaults. */

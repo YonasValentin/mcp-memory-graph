@@ -30,6 +30,22 @@ describe('vault git scaffolding content (P1.4)', () => {
     expect(hook).toContain('|| true'); // never fail the pull/merge
   });
 
+  it('rebuild hook logs to .memory/last-rebuild.log instead of discarding output (quarantine visibility)', () => {
+    // E2E-found: the hook sent ALL rebuild output to /dev/null, so a post-merge
+    // rebuild that quarantined conflicted notes was invisible. Output now lands
+    // in a per-run log inside the vault (truncated, `>` not `>>`); stdout stays
+    // quiet and the git op is never blocked.
+    const hook = rebuildHook('/opt/app/dist/index.js');
+    expect(hook).not.toContain('>/dev/null'); // the old discard-everything redirect
+    expect(hook).toContain('mkdir -p .memory');
+    expect(hook).toContain('> .memory/last-rebuild.log 2>&1');
+    expect(hook).not.toContain('>> .memory/last-rebuild.log');
+  });
+
+  it('gitignore excludes the per-machine rebuild log (it must never churn the shared repo)', () => {
+    expect(vaultGitignore()).toContain('.memory/last-rebuild.log');
+  });
+
   it('rebuild hook drops the stale integrity manifest before rebuilding (a git-driven merge is not tampering)', () => {
     // After a merge/checkout the .md set legitimately changed, so the old manifest
     // is stale and assertVaultIntegrity would (correctly, for tampering) refuse the

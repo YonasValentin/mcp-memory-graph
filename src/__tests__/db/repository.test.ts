@@ -290,6 +290,28 @@ describe('repository', () => {
       const mem = rowToMemory(row);
       expect(mem.metadata).toBeNull();
     });
+
+    // team-E2E LOW: a memory retired by the NLI write-gate / supersede policy
+    // looked identical to a live one over memory_get — rowToMemory dropped the
+    // bi-temporal columns, so users couldn't see WHY it left search.
+    it('maps the bi-temporal columns (valid_from/valid_to/superseded_at)', () => {
+      const row = makeRow({
+        valid_from: '2026-01-01T00:00:00.000Z',
+        valid_to: '2026-02-01T00:00:00.000Z',
+        superseded_at: '2026-02-01T00:00:00.000Z',
+      });
+      const mem = rowToMemory(row);
+      expect(mem.valid_from).toBe('2026-01-01T00:00:00.000Z');
+      expect(mem.valid_to).toBe('2026-02-01T00:00:00.000Z');
+      expect(mem.superseded_at).toBe('2026-02-01T00:00:00.000Z');
+    });
+
+    it('defaults the bi-temporal columns to null when unset', () => {
+      const mem = rowToMemory(makeRow());
+      expect(mem.valid_from).toBeNull();
+      expect(mem.valid_to).toBeNull();
+      expect(mem.superseded_at).toBeNull();
+    });
   });
 
   describe('findNearDuplicates', () => {
