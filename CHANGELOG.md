@@ -46,6 +46,13 @@ All changes additive; migrations automatic.
 
 ### Added
 
+- **LongMemEval-S public benchmark harness** (`npm run bench:longmemeval`):
+  runs the ICLR 2025 long-term-memory benchmark's retrieval stage against the
+  real production store/search handlers, fully local. Measured (stock
+  embedder, zero benchmark-specific tuning, all 500 questions):
+  **Recall@5 = 95.2% hybrid / 97.8% with the local reranker**
+  (MemPalace-comparable aggregation); official-style recall_all@5 = 92.8%,
+  NDCG@5 = 0.930. Methodology + both aggregations in `docs/BENCHMARKS.md`
 - `MCP_NLI_DISABLED=1` escape hatch: turns the self-correcting NLI write-gate
   off for corpora of templated near-twin notes, where MNLI can read shared
   boilerplate as a bidirectional contradiction and auto-retire a teammate's

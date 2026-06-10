@@ -144,12 +144,71 @@ Even mid-pack accuracy wins the framing: comparable retrieval quality at **0%
 cloud exposure and $0/token**. The reranker lift above is the kind of
 measured, not asserted, gain the rest of the roadmap is held to.
 
+## LongMemEval-S (public benchmark)
+
+[LongMemEval](https://github.com/xiaowu0162/LongMemEval) (Wu et al., ICLR 2025,
+MIT) measures long-term conversational memory: 500 questions, each over a
+~115k-token haystack of 38–62 chat sessions. We run the **retrieval** stage —
+the part a memory server owns — against this server's REAL production handlers
+(`handleStore` → `handleSearch`, hybrid RRF, optional local cross-encoder
+rerank) with the stock embedder (`Xenova/all-MiniLM-L6-v2`, 384-dim). One doc
+per session (user turns only), per-question isolated corpus, query = the raw
+question string. **Zero LongMemEval-specific tuning** — production defaults.
+
+```bash
+npm run bench:longmemeval                       # full S (downloads ~277 MB once)
+npm run bench:longmemeval -- --dataset oracle --limit 50   # quick smoke
+```
+
+Two aggregations from the same run (2026-06-10, Apple Silicon, ~5s/question
+for both modes; full report JSON printed by the runner):
+
+**MemPalace-comparable** — methodology copied from
+[MemPalace's published benchmark](https://github.com/MemPalace/mempalace)
+(all 500 questions incl. the 30 abstention items, session-level
+**recall_any@k**: ≥1 evidence session in the top-k):
+
+| System | R@1 | R@3 | R@5 | R@10 |
+|---|---|---|---|---|
+| MemPalace "raw" (their headline, same MiniLM embedder) | — | — | 96.6% | — |
+| MemPalace "hybrid v4" (450-q held-out; benchmark-specific boosts) | — | — | 98.4% | 99.8% |
+| **mcp-memory hybrid (no rerank)** | 60.0% | 92.0% | 95.2% | 98.8% |
+| **mcp-memory hybrid + local rerank** | **92.2%** | **97.4%** | **97.8%** | **98.8%** |
+
+Per-type recall_any@5 (rerank on): knowledge-update 100%, multi-session 100%,
+single-session-user 98.6%, single-session-assistant 98.2%,
+temporal-reasoning 97.0%, single-session-preference 83.3%.
+
+**Official-style** — the official `eval_utils.py` aggregation (skips
+abstention + assistant-only-evidence questions → 419 questions; headline =
+**recall_all@k**, every evidence session retrieved, + binary NDCG):
+
+| Mode | recall_all@5 | NDCG@5 | recall_all@10 | NDCG@10 |
+|---|---|---|---|---|
+| hybrid (no rerank) | 83.8% | 0.772 | 94.3% | 0.798 |
+| hybrid + local rerank | **92.8%** | **0.930** | **97.1%** | **0.939** |
+
+Honest notes:
+
+- The two aggregations are NOT interchangeable: recall_any@5 over 500 is the
+  number comparable to MemPalace's 96.6%; recall_all@5 over 419 is the number
+  comparable to the LongMemEval paper's baselines. The runner prints both.
+- MemPalace's 98.4% "hybrid v4" adds keyword/temporal/preference-regex boosts
+  developed against this benchmark family (their own docs flag the tuning
+  risk and use a held-out split). Our pipeline has no benchmark-specific
+  logic; 97.8% is the same production path every MCP request takes.
+- 14 of ~23,850 session stores (0.06%) were dropped by the production
+  exact-duplicate gate (`ingest_integrity.non_add_operations`) — this can only
+  *lower* our score, never inflate it.
+- Retrieval recall is not end-to-end QA accuracy; no LLM reader is involved.
+
 ## Roadmap (BATTLE-PLAN §6.D)
 
 This R0 harness is the foundation. Planned additions, each gated on measured
 numbers committed here:
 
-- LOCOMO + LongMemEval-S runners (full multi-session benchmarks).
+- ~~LongMemEval-S runner~~ Done — see above (`scripts/bench/longmemeval.mjs`).
+- LOCOMO runner (full multi-session benchmark).
 - Bigger held-out gold set; before/after numbers for each retrieval change.
 - ~~Latency dashboard at 1K / 10K / 100K vectors.~~ Done at 1K / 10K / 50K —
   see "Latency at scale" above (`scripts/battle/verify-scale.mjs`). 100K is

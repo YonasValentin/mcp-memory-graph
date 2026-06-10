@@ -52,7 +52,9 @@ Every number below is produced on the machine running it — real embedding mode
 | Hybrid (RRF) | 0.563 | 0.750 | 0.704 | ~4 ms |
 | **+ cross-encoder rerank** (MCP default) | **0.813** | **0.875** | **0.867** | ~230 ms |
 
-**Scale (real embedder, file-backed SQLite):** retrieval p95 stays sub-second far past the goal — **9.1 ms at 10K vectors, 30 ms at 50K** (the rerank pass adds a ~constant ~200 ms). vs. mem0 / Zep / Letta / Cognee / Supermemory and native ChatGPT/Claude memory — all of which lead with self-reported, cloud-hosted, per-token numbers — this is the inverse: mid-pack accuracy at **0% cloud exposure and $0/token**, reproducible from a committed corpus + runner.
+**Scale (real embedder, file-backed SQLite):** retrieval p95 stays sub-second far past the goal — **9.1 ms at 10K vectors, 30 ms at 50K** (the rerank pass adds a ~constant ~200 ms). vs. mem0 / Zep / Letta / Cognee / Supermemory and native ChatGPT/Claude memory — all of which lead with self-reported, cloud-hosted, per-token numbers — this is the inverse: measured accuracy at **0% cloud exposure and $0/token**, reproducible from a committed corpus + runner.
+
+**Public benchmark — [LongMemEval-S](https://github.com/xiaowu0162/LongMemEval) (ICLR 2025; 500 questions, each over a ~115k-token chat haystack): session-level Recall@5 = 95.2% hybrid, 97.8% with the local reranker** — production handlers, stock embedder, zero benchmark-specific tuning, fully local. Run it yourself: `npm run bench:longmemeval`. Both the MemPalace-comparable and the official-paper aggregations (incl. recall_all@5 = 92.8%, NDCG@5 = 0.930) are in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
 
 ### Self-Improvement Capabilities
 
