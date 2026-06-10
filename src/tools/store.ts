@@ -163,7 +163,20 @@ export async function handleStore(
     // bidirectional (H6): require BOTH directions to agree before retiring, so a
     // single-direction MNLI over-prediction can't silently delete a valid,
     // compatible fact on the same sub-topic.
-    const contradicted = await detectContradictions(nli, input.content, candidates, { bidirectional: true });
+    //
+    // F-NLI-COLDLOAD: classify() lazy-loads the ~284MB model on first use, and
+    // that load can FAIL (first-ever cold start mid-download, offline link).
+    // The rejection must not fail the whole memory_store — contradiction
+    // detection is an optional enrichment. Degrade to the heuristic-only path
+    // for THIS call (same semantics as MCP_NLI_DISABLED=1) and log it. The
+    // failure is NOT cached here: CrossEncoderNli's init memo already clears a
+    // failed load, so the next store simply retries.
+    let contradicted: Array<{ id: string; score: number }> = [];
+    try {
+      contradicted = await detectContradictions(nli, input.content, candidates, { bidirectional: true });
+    } catch (err) {
+      logger.warn({ event: 'nli_pass_skipped', err: err instanceof Error ? err.message : String(err) });
+    }
     for (const c of contradicted) {
       nliInvalidated.push(c.id);
       nliContradictions.push({

@@ -10,21 +10,31 @@
 // so the published numbers cannot silently drift.
 
 /**
- * Binary-relevance NDCG@k over an already-ranked list of doc ids.
- * DCG sums 1/log2(i+2) at each top-k position holding a correct doc; the ideal
- * DCG places min(k, |correct|) correct docs at the top.
+ * Binary-relevance NDCG@k over an already-ranked list of doc ids, matching the
+ * official LongMemEval `eval_utils.py` `dcg()` EXACTLY:
+ *
+ *   dcg = rel[0] + sum_{i>=1} rel[i] / log2(i + 1)
+ *
+ * i.e. ranks 0 AND 1 are undiscounted (both weight 1.0), rank 2 → 1/log2(3),
+ * rank 3 → 1/log2(4), … — the "alternative"/rel[0]-undiscounted convention.
+ * (A naive 1/log2(i+2) curve is shifted one position and does NOT cancel
+ * between DCG and IDCG because their relevance shapes differ.) The ideal DCG
+ * places min(k, |correct|) correct docs at the top.
  */
+function dcgAtK(rel, k) {
+  const top = rel.slice(0, k);
+  if (top.length === 0) return 0;
+  let d = top[0];
+  for (let i = 1; i < top.length; i++) d += top[i] / Math.log2(i + 1);
+  return d;
+}
+
 export function binaryNdcgAtK(rankedIds, correctIds, k) {
-  const top = rankedIds.slice(0, k);
-  let dcg = 0;
-  for (let i = 0; i < top.length; i++) {
-    if (correctIds.has(top[i])) dcg += 1 / Math.log2(i + 2);
-  }
-  let idcg = 0;
+  const rel = rankedIds.slice(0, k).map((id) => (correctIds.has(id) ? 1 : 0));
+  const dcg = dcgAtK(rel, k);
   const ideal = Math.min(k, correctIds.size);
-  for (let i = 0; i < ideal; i++) {
-    idcg += 1 / Math.log2(i + 2);
-  }
+  const idealRel = Array.from({ length: ideal }, () => 1);
+  const idcg = dcgAtK(idealRel, k);
   return idcg === 0 ? 0 : dcg / idcg;
 }
 

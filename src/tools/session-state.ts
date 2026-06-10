@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { stripReservedVaultContainer } from '../vault/bookkeeping.js';
 import { randomUUID } from 'node:crypto';
 import type { EmbeddingProvider, MemoryRow } from '../types.js';
 import { insertMemory, updateMemory } from '../db/repository.js';
@@ -123,7 +124,9 @@ export async function handleSessionState(
       session_key: key,
       memory_id: row.id,
       version: row.version,
-      state: safeJson(row.metadata) as SessionStateMeta,
+      // `_vault` (vault-sync bookkeeping, absolute per-dev path) can be
+      // stamped onto any row — never surface it as session state.
+      state: stripReservedVaultContainer(safeJson(row.metadata)) as SessionStateMeta,
       content: row.content,
     };
   }

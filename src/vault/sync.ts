@@ -15,7 +15,7 @@ import { insertMemory, deleteMemory, getMemoryById, invalidateMemory } from '../
 import { parseVaultFile } from './parser.js';
 import { scanVault } from './scanner.js';
 import { hasGitConflictMarkers } from './memory-file.js';
-import { stripVaultBookkeeping } from './writer.js';
+import { stripVaultBookkeeping, RESERVED_VAULT_META_KEY } from './writer.js';
 import { logger } from '../lib/logger.js';
 import { chunkContent } from '../chunking/chunker.js';
 import { createMemoryLink } from '../graph/memory-links.js';
@@ -480,10 +480,12 @@ function buildMemoryRow(
         /* c8 ignore next */
         ? parsed.frontmatter.language
         : 'en',
+    // Bookkeeping lives under ONE reserved container key so it never collides
+    // with the open user-metadata namespace (battle-v17 HIGH). fmMeta already
+    // has the reserved keys stripped, so user `links`/`file_path` survive.
     metadata: JSON.stringify({
       ...fmMeta,
-      vault_path: vaultPath,
-      links: parsed.links,
+      [RESERVED_VAULT_META_KEY]: { vault_path: vaultPath, links: parsed.links },
     }),
     parent_id: null,
     chunk_index: null,
@@ -628,13 +630,18 @@ function resolveVaultWikilinks(
   const sources: Array<{ id: string; links: string[] }> = [];
 
   for (const row of rows) {
-    let meta: { vault_path?: string; links?: unknown } | null = null;
+    let meta: { vault_path?: string; links?: unknown; _vault?: { vault_path?: string; links?: unknown } } | null = null;
     try {
       meta = row.metadata ? JSON.parse(row.metadata) : null;
     } catch {
       meta = null;
     }
-    if (!meta || meta.vault_path !== vaultPath) continue;
+    if (!meta) continue;
+    // Read bookkeeping from the reserved container, falling back to the legacy
+    // flat keys for rows written before the container existed.
+    const bookVaultPath = meta._vault?.vault_path ?? meta.vault_path;
+    const bookLinks = meta._vault?.links ?? meta.links;
+    if (bookVaultPath !== vaultPath) continue;
 
     // battle-v16 WIKILINK-EMPTYKEY: skip an empty key — a symbol/emoji-only title
     // has no letter/number, so indexing '' would make every such title collide
@@ -650,8 +657,8 @@ function resolveVaultWikilinks(
       if (k) index.set(k, row.id);
     }
 
-    const links = Array.isArray(meta.links)
-      ? (meta.links.filter((l): l is string => typeof l === 'string'))
+    const links = Array.isArray(bookLinks)
+      ? (bookLinks.filter((l): l is string => typeof l === 'string'))
       : [];
     sources.push({ id: row.id, links });
   }

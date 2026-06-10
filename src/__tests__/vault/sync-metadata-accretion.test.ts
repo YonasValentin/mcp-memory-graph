@@ -134,23 +134,34 @@ describe('vault metadata bookkeeping does not accrete across export→sync cycle
     const row = getMemoryById(db, id);
     expect(row).not.toBeNull();
     const meta = JSON.parse(row!.metadata!) as Record<string, unknown>;
-    // User metadata recovered, nested poison gone, flat bookkeeping re-stamped
-    // to THIS machine's vault (resolveVaultWikilinks still consumes both keys).
+    // User metadata recovered; the two UNAMBIGUOUS bookkeeping keys that caused
+    // the accretion/churn bugs (the nested `frontmatter` blob + the absolute
+    // `vault_path`) are stripped; bookkeeping is re-stamped under the reserved
+    // `_vault` container scoped to THIS machine.
     expect(meta.jira).toBe('ABC-1');
     expect(meta).not.toHaveProperty('frontmatter');
-    expect(meta).not.toHaveProperty('file_path');
-    expect(meta.vault_path).toBe(vault);
-    expect(meta.links).toEqual([]);
+    expect(meta).not.toHaveProperty('vault_path'); // flat absolute path gone
+    const book = meta._vault as { vault_path?: string; links?: unknown };
+    expect(book.vault_path).toBe(vault);
+    expect(book.links).toEqual([]);
     expect(JSON.stringify(meta)).not.toContain('/Users/dev-a');
+    // battle-v17 trade-off: legacy FLAT `links`/`file_path` are now treated as
+    // user data (a user can legitimately store them), so a pre-fix file's inert
+    // residue is preserved rather than risk eating real user metadata. They do
+    // NOT accrete (flat scalars) and do NOT churn (no absolute path).
+    expect(meta.file_path).toBe('nsy/poisoned.md');
 
-    // And the next export emits ONLY the user metadata — the vault is healed.
+    // The next export emits the user metadata (incl. the preserved residue),
+    // never the `_vault` bookkeeping — the absolute path never reaches the repo.
     const out = mkTmp('vault-healed-');
     handleExportVault(db, { vault_path: out });
     const files = liveMd(out);
     expect(files).toHaveLength(1);
-    expect(parseMemoryFile(fs.readFileSync(path.join(out, files[0]), 'utf-8')).metadata).toEqual({
-      jira: 'ABC-1',
-    });
+    const healed = parseMemoryFile(fs.readFileSync(path.join(out, files[0]), 'utf-8')).metadata;
+    expect(healed).not.toHaveProperty('_vault');
+    expect(healed).not.toHaveProperty('vault_path');
+    expect(JSON.stringify(healed)).not.toContain('/Users/dev-a');
+    expect((healed as Record<string, unknown>).jira).toBe('ABC-1');
   });
 
   it('wikilinks still resolve from the flat bookkeeping keys (vault_path + links back-compat)', async () => {

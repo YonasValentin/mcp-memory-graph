@@ -190,3 +190,10 @@
     transform: translateY(0);
   }
 }
+
+/* Respect reduced-motion: no entrance animation, content visible immediately. */
+@media (prefers-reduced-motion: reduce) {
+  .reveal > * {
+    animation: none;
+  }
+}

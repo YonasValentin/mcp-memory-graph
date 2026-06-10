@@ -13,12 +13,19 @@ concurrency:
 
 jobs:
   test-server:
-    name: server (Node ${{ matrix.node }})
-    runs-on: ubuntu-latest
+    name: server (${{ matrix.os }} · Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        node: ['20.x', '22.x']
+        # Linux covers both supported Node majors; macOS + Windows pin Node 22
+        # so the native better-sqlite3 / sqlite-vec load path is exercised on
+        # every OS we claim support for (no platform ships untested).
+        include:
+          - { os: ubuntu-latest, node: '20.x' }
+          - { os: ubuntu-latest, node: '22.x' }
+          - { os: macos-latest, node: '22.x' }
+          - { os: windows-latest, node: '22.x' }
     steps:
       - uses: actions/checkout@v4
 
@@ -37,20 +44,20 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Test (with coverage on Node 22)
-        if: matrix.node == '22.x'
+      - name: Test (with coverage on ubuntu Node 22)
+        if: matrix.os == 'ubuntu-latest' && matrix.node == '22.x'
         run: npx vitest run --coverage
         env:
           MCP_LOG_LEVEL: error
 
-      - name: Test (Node 20)
-        if: matrix.node != '22.x'
+      - name: Test
+        if: "!(matrix.os == 'ubuntu-latest' && matrix.node == '22.x')"
         run: npm test
         env:
           MCP_LOG_LEVEL: error
 
       - name: Upload coverage artifact
-        if: always() && matrix.node == '22.x'
+        if: always() && matrix.os == 'ubuntu-latest' && matrix.node == '22.x'
         uses: actions/upload-artifact@v4
         with:
           name: server-coverage

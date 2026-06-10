@@ -522,7 +522,7 @@ export async function runServe(): Promise<void> {
   // Drain the webhook queue on an interval so deliveries fire autonomously (L4).
   const stopWebhookLoop = webhooksEnabled() ? startWebhookDispatchLoop(getReadWriteDb) : undefined;
 
-  const shutdown = async () => {
+  const shutdown = async (signal: NodeJS.Signals) => {
     logger.info({ event: 'shutdown_start' });
     stopWebhookLoop?.();
     for (const sid of Object.keys(transports)) {
@@ -531,9 +531,22 @@ export async function runServe(): Promise<void> {
     }
     closeDatabase();
     logger.info({ event: 'shutdown_complete' });
-    process.exit(0);
+    // V17-A: `process.exit(0)` with a loaded ONNX model aborts (SIGABRT) in
+    // onnxruntime's static destructors — die by re-raised default-disposition
+    // signal instead, which skips C exit teardown. Full rationale + PoC
+    // evidence: exitBySignal() in ../db/connection.ts.
+    if (process.platform === 'win32') {
+      process.exit(0);
+    }
+    process.removeAllListeners(signal);
+    process.kill(process.pid, signal);
   };
 
+  // NOTE: in practice db/connection.ts's own SIGINT/SIGTERM handler (registered
+  // at module import, i.e. BEFORE these) closes the DBs and self-kills
+  // synchronously, so this shutdown almost never runs on a signal — it covers
+  // the case where that registration order ever changes, and stays the single
+  // place that knows how to drain transports/webhooks.
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 

@@ -120,20 +120,47 @@ export function trackedConnectionCount(): number {
 
 /* c8 ignore start */
 // Process-lifetime signal handlers — fired by the runtime, not callable
-// from tests. Excluded from coverage; behavior is verified by manual
-// shutdown observation and CI's deploy/restart cycle.
+// from tests. Excluded from coverage; behavior is verified by the v17
+// shutdown PoCs (see exitBySignal below) and CI's deploy/restart cycle.
 function handleExit(): void {
   closeDatabase();
   closeAllDatabases();
 }
 
+/**
+ * V17-A: terminate by RE-RAISING the signal with the default disposition
+ * restored, instead of calling `process.exit(0)`.
+ *
+ * Once any ONNX model is loaded (embedder/reranker/NLI via onnxruntime-node),
+ * `process.exit()` runs C `exit()` teardown, and onnxruntime's static
+ * destructors abort the process: `libc++abi: terminating due to uncaught
+ * exception of type std::__1::system_error: mutex lock failed` → SIGABRT.
+ * Deterministic 9/9 under SIGTERM in the v17 PoCs (sandbox
+ * .battle/e2e-v17/solo/51-shutdown-hard.mjs + 52-sigterm-idle.mjs), so every
+ * `docker stop` looked like a crash to supervisors. Disposing the sessions
+ * first does NOT help — `pipeline.dispose()` followed by `process.exit(0)`
+ * still aborts 134 (verified empirically); the abort comes from the runtime's
+ * GLOBAL thread-pool/env static destructors, not from live sessions.
+ *
+ * Default-disposition signal death skips atexit/static destructors entirely,
+ * so the abort cannot fire, and the process reports the POSIX-correct
+ * "terminated by SIGTERM/SIGINT" — which supervisors treat as a normal stop.
+ * The DBs are closed in-handler first (WAL checkpoint on close); note that
+ * `process.on('exit')` does NOT run on signal death. PoC verification (3×
+ * each): 51 + 52 clean signal-death with zero aborts, graceful path (50)
+ * unchanged, DB integrity_check ok. Windows has no POSIX signal dispositions
+ * (and no observed abort) — keep the previous clean `process.exit(0)` there.
+ */
+function exitBySignal(signal: NodeJS.Signals): void {
+  handleExit();
+  if (process.platform === 'win32') {
+    process.exit(0);
+  }
+  process.removeAllListeners(signal);
+  process.kill(process.pid, signal);
+}
+
 process.on('exit', handleExit);
-process.on('SIGINT', () => {
-  handleExit();
-  process.exit(0);
-});
-process.on('SIGTERM', () => {
-  handleExit();
-  process.exit(0);
-});
+process.on('SIGINT', () => exitBySignal('SIGINT'));
+process.on('SIGTERM', () => exitBySignal('SIGTERM'));
 /* c8 ignore stop */

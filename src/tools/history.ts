@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { stripReservedVaultContainerFromJson } from '../vault/bookkeeping.js';
 import type { VersionRecord } from '../types.js';
 
 export interface MemoryTimeline {
@@ -47,5 +48,11 @@ export function handleHistory(
     )
     .all(input.id);
 
-  return { memory_id: input.id, exists: true, timeline, versions };
+  return {
+    memory_id: input.id,
+    exists: true,
+    timeline,
+    // Strip `_vault` from legacy snapshots at read (see versions.ts).
+    versions: versions.map((v) => ({ ...v, metadata: stripReservedVaultContainerFromJson(v.metadata) })),
+  };
 }

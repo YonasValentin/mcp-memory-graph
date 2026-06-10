@@ -2,6 +2,10 @@ import type Database from 'better-sqlite3';
 import type { Memory, MemoryRow, ListOptions, AccessLogEntry, IngestSourceRecord } from '../types.js';
 import type { MemoryPartition } from '../graph/conflict-resolver.js';
 import { NOW_ISO_SQL } from './predicates.js';
+import {
+  stripReservedVaultContainer,
+  stripReservedVaultContainerFromJson,
+} from '../vault/bookkeeping.js';
 import { signEnvelope } from '../provenance/envelope.js';
 import type { SignedEnvelope } from '../provenance/envelope.js';
 
@@ -227,7 +231,9 @@ export function updateMemory(
       id,
       existing.content,
       existing.title,
-      existing.metadata,
+      // Version snapshots are read back raw (memory_versions/history/forget) —
+      // never let the `_vault` bookkeeping (absolute per-dev path) into them.
+      stripReservedVaultContainerFromJson(existing.metadata),
       existing.version,
       updates.author ?? null,
     );
@@ -679,7 +685,19 @@ export function rowToMemory(row: MemoryRow): Memory {
     try {
       const parsed: unknown = JSON.parse(row.metadata);
       if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        metadata = parsed as Record<string, unknown>;
+        // F-EXPORT-VAULTPATH chokepoint: strip ONLY the reserved `_vault`
+        // container (an ABSOLUTE per-dev local path) here so EVERY tool-facing
+        // read surface (get/export/list/search/related/update echo/…) is covered
+        // at once — per-tool stripping diverges (battle-v9 lesson). The DB row
+        // keeps `_vault`; vault sync reads raw rows, never through rowToMemory.
+        // Deliberately NOT the full VAULT_BOOKKEEPING_KEYS set: the legacy flat
+        // `vault_path`/`frontmatter` names are AMBIGUOUS with real user metadata
+        // in plain (non-vault) usage, and hiding user data on every read is the
+        // exact battle-v17 HIGH this branch exists to fix. Legacy flat residue
+        // on pre-container vault rows still self-heals at the vault boundary
+        // (writer/sync strip it) on the next export→sync cycle.
+        const clean = stripReservedVaultContainer(parsed as Record<string, unknown>);
+        metadata = Object.keys(clean).length > 0 ? clean : null;
       }
     } catch {
       metadata = null;
