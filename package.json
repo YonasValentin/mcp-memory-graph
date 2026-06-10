@@ -21,6 +21,7 @@
     "smoke": "node scripts/smoke-mcp.mjs",
     "bench": "node scripts/bench/retrieval.mjs",
     "bench:longmemeval": "node scripts/bench/longmemeval.mjs",
+    "bench:locomo": "node scripts/bench/locomo.mjs",
     "lint": "tsc --noEmit",
     "prepublishOnly": "npm run build:all"
   },
