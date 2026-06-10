@@ -9,6 +9,7 @@ export class TransformersEmbeddingProvider implements EmbeddingProvider {
 
   private pipeline: any = null;
   private ready: boolean = false;
+  private initPromise: Promise<void> | null = null;
 
   constructor(
     modelName?: string,
@@ -23,6 +24,24 @@ export class TransformersEmbeddingProvider implements EmbeddingProvider {
   async initialize(): Promise<void> {
     if (this.ready) return;
 
+    // Dedupe concurrent first calls onto ONE in-flight load: pre-fix, N callers
+    // each saw ready=false and launched N parallel ~250MB ONNX loads in one
+    // process (intermittent load failures under cold-start parallel load + a
+    // native `mutex lock failed` abort at shutdown after the multi-load race).
+    // The memo is cleared once settled so a FAILED load is retried by a later
+    // call instead of caching the rejection forever — the embedder is load-
+    // bearing, a transient disk/network error must not brick the process. After
+    // success the `ready` check above short-circuits (and dispose() resets it).
+    if (!this.initPromise) {
+      this.initPromise = this.loadModel().finally(() => {
+        this.initPromise = null;
+      });
+    }
+    return this.initPromise;
+  }
+
+  /** The actual one-shot model load — only ever entered via the memo above. */
+  private async loadModel(): Promise<void> {
     console.error('Loading embedding model (first time may take a few seconds)...');
     try {
       const { pipeline } = await import('@huggingface/transformers');
