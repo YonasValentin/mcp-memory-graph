@@ -51,19 +51,40 @@ describe('binaryNdcgAtK', () => {
     expect(binaryNdcgAtK(ranked, correct, 5)).toBeCloseTo(1, 10);
   });
 
-  it('evidence at rank 2 of 1-evidence question: dcg=1/log2(3), idcg=1', () => {
+  it('rank 1 (0-based) is UNDISCOUNTED — official eval_utils.py convention', () => {
+    // 1-evidence question, evidence at the 2nd position. Official dcg() leaves
+    // rel[1] undiscounted (weight 1.0), so dcg = idcg = 1 → NDCG = 1.0.
+    // (A naive 1/log2(i+2) curve would wrongly report ~0.631 here — the
+    // battle-v17 regression this test now guards against.)
     const ranked = ['s1', 'answer_a', 's2'];
+    const correct = new Set(['answer_a']);
+    expect(binaryNdcgAtK(ranked, correct, 5)).toBeCloseTo(1, 10);
+  });
+
+  it('evidence at rank 3 of a 1-evidence question: dcg=1/log2(3), idcg=1', () => {
+    const ranked = ['s1', 's2', 'answer_a'];
     const correct = new Set(['answer_a']);
     expect(binaryNdcgAtK(ranked, correct, 5)).toBeCloseTo(1 / Math.log2(3), 10);
   });
 
-  it('idcg caps at min(k, |correct|)', () => {
-    // 3 evidence docs but k=2: ideal DCG counts only the first 2 positions.
+  it('idcg caps at min(k, |correct|), official discount curve', () => {
+    // 3 evidence docs but k=2. Top-2 rel = [1,0] → dcg = rel[0] + rel[1]/log2(2)
+    // = 1. Ideal top-2 = [1,1] → idcg = 1 + 1/log2(2) = 2. NDCG = 0.5.
     const ranked = ['answer_a', 's1', 'answer_b', 'answer_c'];
     const correct = new Set(['answer_a', 'answer_b', 'answer_c']);
-    const dcg = 1 / Math.log2(2); // only answer_a inside top-2
-    const idcg = 1 / Math.log2(2) + 1 / Math.log2(3);
-    expect(binaryNdcgAtK(ranked, correct, 2)).toBeCloseTo(dcg / idcg, 10);
+    expect(binaryNdcgAtK(ranked, correct, 2)).toBeCloseTo(0.5, 10);
+  });
+
+  it('matches the official eval_utils.py worked cases', () => {
+    // From battle-v17 verification: official NDCG@5 for these rankings.
+    const k = 5;
+    expect(binaryNdcgAtK(['a', 'x', 'y', 'z', 'b'], new Set(['a', 'b']), k)).toBeCloseTo(0.715, 3);
+    expect(binaryNdcgAtK(['x', 'y', 'z', 'b', 'c'], new Set(['b', 'c', 'd']), k)).toBeCloseTo(
+      // rel=[0,0,0,1,1], dcg = 1/log2(4)+1/log2(5)=0.5+0.4307=0.9307;
+      // idcg top-3 of 3 = 1+1+1/log2(3)=2.6309 → 0.3538
+      0.9307 / (1 + 1 + 1 / Math.log2(3)),
+      3,
+    );
   });
 });
 
