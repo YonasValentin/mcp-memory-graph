@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Database, FileText, Clock, AlertTriangle } from "lucide-react"
 import { getStats, listMemories } from "@/api/client"
 import { toastError } from "@/lib/toast-error"
+import { PageHeader } from "@/components/PageHeader"
 import type { MemoryStats, Memory } from "@/types"
 
 export function Dashboard() {
@@ -41,7 +42,7 @@ export function Dashboard() {
   if (loading) {
     return (
       <div className="space-y-6 p-6">
-        <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+        <PageHeader kicker="memory engine" title="Overview" />
         <div className="grid gap-4 md:grid-cols-4">
           {Array.from({ length: 4 }).map((_, i) => (
             <Skeleton key={i} className="h-28" />
@@ -54,7 +55,7 @@ export function Dashboard() {
   if (!stats) {
     return (
       <div className="space-y-3 p-6">
-        <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+        <PageHeader kicker="memory engine" title="Overview" />
         <p className="text-sm text-muted-foreground">
           Couldn't load dashboard stats
           {error instanceof Error ? `: ${error.message}` : ""}.
@@ -93,22 +94,20 @@ export function Dashboard() {
   ]
 
   return (
-    <div className="space-y-6 p-6">
-      <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+    <div className="reveal space-y-6 p-6">
+      <PageHeader kicker="memory engine" title="Overview" />
 
       {/* Stat cards */}
       <div className="grid gap-4 md:grid-cols-4">
         {statCards.map((card) => (
-          <Card key={card.label}>
+          <Card key={card.label} className="relative overflow-hidden">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                {card.label}
-              </CardTitle>
-              <card.icon className="h-4 w-4 text-muted-foreground" />
+              <CardTitle className="microlabel">{card.label}</CardTitle>
+              <card.icon className="h-4 w-4 text-primary/70" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{card.value}</div>
-              <p className="text-xs text-muted-foreground">{card.description}</p>
+              <div className="tnum font-display text-4xl">{card.value}</div>
+              <p className="mt-1 font-mono text-xs text-muted-foreground">{card.description}</p>
             </CardContent>
           </Card>
         ))}
@@ -118,14 +117,14 @@ export function Dashboard() {
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium">By Document Type</CardTitle>
+            <CardTitle className="microlabel">By Document Type</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
               {Object.entries(stats.by_document_type).map(([type, count]) => (
-                <div key={type} className="flex items-center justify-between">
-                  <span className="text-sm">{type}</span>
-                  <Badge variant="secondary">{count}</Badge>
+                <div key={type} className="flex items-center justify-between border-b border-dashed border-border/60 pb-1.5 last:border-0 last:pb-0">
+                  <span className="font-mono text-sm">{type}</span>
+                  <Badge variant="secondary" className="tnum font-mono">{count}</Badge>
                 </div>
               ))}
               {Object.keys(stats.by_document_type).length === 0 && (
@@ -137,14 +136,14 @@ export function Dashboard() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium">By Department</CardTitle>
+            <CardTitle className="microlabel">By Department</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
               {Object.entries(stats.by_department).map(([dept, count]) => (
-                <div key={dept} className="flex items-center justify-between">
-                  <span className="text-sm">{dept}</span>
-                  <Badge variant="secondary">{count}</Badge>
+                <div key={dept} className="flex items-center justify-between border-b border-dashed border-border/60 pb-1.5 last:border-0 last:pb-0">
+                  <span className="font-mono text-sm">{dept}</span>
+                  <Badge variant="secondary" className="tnum font-mono">{count}</Badge>
                 </div>
               ))}
               {Object.keys(stats.by_department).length === 0 && (
@@ -158,27 +157,27 @@ export function Dashboard() {
       {/* Recent memories */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm font-medium">Recent Memories</CardTitle>
+          <CardTitle className="microlabel">Recent Memories</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="space-y-3">
+          <div className="space-y-2">
             {recent.map((m) => (
               <Link
                 key={m.id}
                 to={`/memory/${m.id}`}
-                className="flex items-start justify-between rounded-md border p-3 transition-colors hover:bg-accent"
+                className="group flex items-start justify-between rounded-md border border-border/70 p-3 transition-colors hover:border-primary/40 hover:bg-accent/50"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">
+                  <p className="truncate text-sm font-medium group-hover:text-accent-foreground">
                     {m.title || m.content.slice(0, 80)}
                   </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
+                  <p className="mt-1 font-mono text-xs text-muted-foreground">
                     {m.scope}/{m.namespace} · {new Date(m.updated_at).toLocaleDateString()}
                   </p>
                 </div>
                 <div className="ml-3 flex shrink-0 gap-1">
                   {m.tags.slice(0, 2).map((tag) => (
-                    <Badge key={tag} variant="outline" className="text-xs">
+                    <Badge key={tag} variant="outline" className="font-mono text-xs">
                       {tag}
                     </Badge>
                   ))}

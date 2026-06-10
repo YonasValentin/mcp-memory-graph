@@ -1,13 +1,22 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
+/* Archive Terminal identity — all fonts bundled locally (no CDN, matching the
+ * server's zero-egress story): Instrument Serif for display, Instrument Sans
+ * for UI text, IBM Plex Mono for data, ids, and micro-labels. */
+@import "@fontsource/instrument-serif";
+@import "@fontsource/instrument-serif/400-italic.css";
+@import "@fontsource-variable/instrument-sans";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+    --font-display: 'Instrument Serif', 'Iowan Old Style', Georgia, serif;
     --font-heading: var(--font-sans);
-    --font-sans: 'Geist Variable', sans-serif;
+    --font-sans: 'Instrument Sans Variable', 'Instrument Sans', system-ui, sans-serif;
+    --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -39,6 +48,7 @@
     --color-card: var(--card);
     --color-foreground: var(--foreground);
     --color-background: var(--background);
+    --color-amber: var(--amber);
     --radius-sm: calc(var(--radius) * 0.6);
     --radius-md: calc(var(--radius) * 0.8);
     --radius-lg: var(--radius);
@@ -48,73 +58,79 @@
     --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* ── Manila archive (light) ─────────────────────────────────────────────────
+ * Warm paper, ink text, deep archive green, amber temporal accents. */
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+    --background: oklch(0.962 0.011 92);
+    --foreground: oklch(0.252 0.022 165);
+    --card: oklch(0.984 0.007 95);
+    --card-foreground: oklch(0.252 0.022 165);
+    --popover: oklch(0.984 0.007 95);
+    --popover-foreground: oklch(0.252 0.022 165);
+    --primary: oklch(0.42 0.092 162);
+    --primary-foreground: oklch(0.97 0.012 120);
+    --secondary: oklch(0.93 0.014 95);
+    --secondary-foreground: oklch(0.32 0.03 163);
+    --muted: oklch(0.93 0.012 95);
+    --muted-foreground: oklch(0.5 0.025 150);
+    --accent: oklch(0.9 0.02 120);
+    --accent-foreground: oklch(0.3 0.05 162);
+    --destructive: oklch(0.55 0.2 28);
+    --amber: oklch(0.6 0.13 75);
+    --border: oklch(0.86 0.018 95);
+    --input: oklch(0.86 0.018 95);
+    --ring: oklch(0.5 0.09 160);
+    --chart-1: oklch(0.42 0.092 162);
+    --chart-2: oklch(0.6 0.13 75);
+    --chart-3: oklch(0.55 0.07 200);
+    --chart-4: oklch(0.5 0.025 150);
+    --chart-5: oklch(0.7 0.1 120);
+    --radius: 0.375rem;
+    --sidebar: oklch(0.935 0.014 92);
+    --sidebar-foreground: oklch(0.252 0.022 165);
+    --sidebar-primary: oklch(0.42 0.092 162);
+    --sidebar-primary-foreground: oklch(0.97 0.012 120);
+    --sidebar-accent: oklch(0.89 0.018 100);
+    --sidebar-accent-foreground: oklch(0.3 0.05 162);
+    --sidebar-border: oklch(0.86 0.018 95);
+    --sidebar-ring: oklch(0.5 0.09 160);
 }
 
+/* ── Phosphor archive (dark) ────────────────────────────────────────────────
+ * Ink-green black, phosphor-green accent, amber temporal accents. */
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    --background: oklch(0.165 0.014 165);
+    --foreground: oklch(0.91 0.02 140);
+    --card: oklch(0.2 0.016 165);
+    --card-foreground: oklch(0.91 0.02 140);
+    --popover: oklch(0.21 0.016 165);
+    --popover-foreground: oklch(0.91 0.02 140);
+    --primary: oklch(0.84 0.17 152);
+    --primary-foreground: oklch(0.2 0.04 160);
+    --secondary: oklch(0.26 0.02 163);
+    --secondary-foreground: oklch(0.88 0.04 145);
+    --muted: oklch(0.25 0.018 163);
+    --muted-foreground: oklch(0.63 0.03 150);
+    --accent: oklch(0.28 0.03 160);
+    --accent-foreground: oklch(0.9 0.07 148);
+    --destructive: oklch(0.66 0.19 26);
+    --amber: oklch(0.79 0.13 80);
+    --border: oklch(0.32 0.022 160 / 70%);
+    --input: oklch(0.34 0.022 160 / 80%);
+    --ring: oklch(0.7 0.12 152);
+    --chart-1: oklch(0.84 0.17 152);
+    --chart-2: oklch(0.79 0.13 80);
+    --chart-3: oklch(0.72 0.09 200);
+    --chart-4: oklch(0.63 0.03 150);
+    --chart-5: oklch(0.55 0.1 152);
+    --sidebar: oklch(0.145 0.013 165);
+    --sidebar-foreground: oklch(0.91 0.02 140);
+    --sidebar-primary: oklch(0.84 0.17 152);
+    --sidebar-primary-foreground: oklch(0.2 0.04 160);
+    --sidebar-accent: oklch(0.24 0.02 163);
+    --sidebar-accent-foreground: oklch(0.9 0.07 148);
+    --sidebar-border: oklch(0.3 0.02 160 / 60%);
+    --sidebar-ring: oklch(0.7 0.12 152);
 }
 
 @layer base {
@@ -127,4 +143,50 @@
   html {
     @apply font-sans;
     }
+}
+
+@layer utilities {
+  /* Display face: the serif italic page voice. */
+  .font-display {
+    font-family: var(--font-display);
+    font-weight: 400;
+    letter-spacing: -0.01em;
+  }
+  /* Instrument micro-label: mono, uppercase, tracked out. */
+  .microlabel {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    line-height: 1rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+  /* Archival dot-grid backdrop for main panes. */
+  .bg-archive {
+    background-image: radial-gradient(color-mix(in oklch, var(--border) 80%, transparent) 1px, transparent 1px);
+    background-size: 26px 26px;
+  }
+  /* Staggered page reveal: apply to a page root; direct children fade up. */
+  .reveal > * {
+    animation: reveal-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .reveal > *:nth-child(2) { animation-delay: 60ms; }
+  .reveal > *:nth-child(3) { animation-delay: 120ms; }
+  .reveal > *:nth-child(4) { animation-delay: 180ms; }
+  .reveal > *:nth-child(5) { animation-delay: 240ms; }
+  .reveal > *:nth-child(n + 6) { animation-delay: 300ms; }
+}
+
+@keyframes reveal-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }

@@ -3,7 +3,7 @@ import { listTools, callTool, type McpTool, type ToolCallResult } from "@/api/mc
 import { toFormFields, coerceArgs, type FormField, type RawValue } from "@/lib/schema-form"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { Terminal, AlertTriangle, Eye, Pencil, Trash2, Globe } from "lucide-react"
+import { AlertTriangle, Eye, Pencil, Trash2, Globe } from "lucide-react"
 
 /**
  * Tools console — the dashboard's path to the FULL MCP tool surface.
@@ -115,8 +115,9 @@ export function Tools() {
   return (
     <div className="flex h-full flex-col">
       <header className="mb-4">
-        <h1 className="flex items-center gap-2 text-2xl font-semibold">
-          <Terminal className="h-6 w-6" /> Tools
+        <p className="microlabel">operator console</p>
+        <h1 className="font-display mt-1 flex items-center gap-2 text-4xl italic">
+          Tools
         </h1>
         <p className="text-sm text-muted-foreground">
           Run any of the server's {tools?.length ?? ""} tools directly. Reads are safe; destructive

@@ -20,11 +20,11 @@ interface GraphEdge extends d3Force.SimulationLinkDatum<GraphNode> {
 }
 
 const scopeColors: Record<string, string> = {
-  global: "#1E40AF",
-  project: "#3B82F6",
-  user: "#8B5CF6",
-  team: "#10B981",
-  department: "#F59E0B",
+  global: "#2F6B4F",
+  project: "#34D399",
+  user: "#7FB4A8",
+  team: "#D9A441",
+  department: "#C2703D",
 }
 
 export function KnowledgeGraph() {
@@ -136,7 +136,7 @@ export function KnowledgeGraph() {
       .selectAll<SVGLineElement, GraphEdge>("line")
       .data(edges)
       .join("line")
-      .attr("stroke", "#e5e7eb")
+      .attr("stroke", "color-mix(in oklch, currentColor 25%, transparent)")
       .attr("stroke-width", (d) => Math.max(0.5, d.similarity * 3))
       .attr("stroke-opacity", 0.4)
 
@@ -147,7 +147,7 @@ export function KnowledgeGraph() {
       .join("circle")
       .attr("r", (d) => 6 + d.memory.importance_score * 14)
       .attr("fill", (d) => scopeColors[d.memory.scope] ?? "#6B7280")
-      .attr("stroke", "#fff")
+      .attr("stroke", "var(--background)")
       .attr("stroke-width", 1.5)
       .attr("cursor", "pointer")
 
@@ -185,7 +185,8 @@ export function KnowledgeGraph() {
       .join("text")
       .text((d) => d.memory.title?.slice(0, 20) ?? d.memory.content.slice(0, 20))
       .attr("font-size", "10px")
-      .attr("fill", "#6B7280")
+      .attr("font-family", "var(--font-mono)")
+      .attr("fill", "var(--muted-foreground)")
       .attr("dx", 12)
       .attr("dy", 4)
       .attr("pointer-events", "none")
@@ -229,7 +230,7 @@ export function KnowledgeGraph() {
   if (loading) {
     return (
       <div className="p-6">
-        <h1 className="mb-4 text-2xl font-bold tracking-tight">Knowledge Graph</h1>
+        <div className="mb-4"><p className="microlabel">entity graph</p><h1 className="font-display mt-1 text-4xl italic">Knowledge Graph</h1></div>
         <Skeleton className="h-[600px]" />
       </div>
     )
@@ -238,7 +239,7 @@ export function KnowledgeGraph() {
   return (
     <div className="flex h-full flex-col p-6">
       <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-2xl font-bold tracking-tight">Knowledge Graph</h1>
+        <div><p className="microlabel">entity graph</p><h1 className="font-display mt-1 text-4xl italic">Knowledge Graph</h1></div>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">Min importance:</span>
