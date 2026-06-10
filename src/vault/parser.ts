@@ -62,9 +62,15 @@ export function parseVaultFile(
   const tags = deduplicateStrings([...frontmatterTags, ...inlineTags]);
   const title = deriveTitle(frontmatter, relativePath);
 
+  // Strip trailing whitespace exactly like parseMemoryFile: the writer emits
+  // `${body}\n`, so the stripped form is the canonical content. Otherwise the
+  // two import paths (sync vs rebuild) diverge by a trailing newline, breaking
+  // exact-content equality on a team's git round-trip.
+  const content = body.replace(/\s+$/, '');
+
   return {
     title,
-    content: body,
+    content,
     frontmatter,
     tags,
     links,
