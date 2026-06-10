@@ -6,6 +6,13 @@ const command = process.argv[2];
 const SERVER_COMMANDS = new Set([undefined, 'serve', 'http']);
 
 async function main(): Promise<void> {
+  // F-INIT-HELP: `<cmd> --help`/`-h` (or a bare `--help`) prints usage and
+  // returns BEFORE any command module is imported or dispatched. Pre-fix,
+  // `init --help` EXECUTED init (wrote settings.json hooks, config.json, and
+  // a launchd plist) and `rebuild --help` deleted the SQLite index.
+  const { maybePrintHelp } = await import('./cli/argv.js');
+  if (maybePrintHelp(command, process.argv.slice(3))) return;
+
   // battle-v14: note once at startup which tenancy mode is active when the
   // shared-DB multi-tenant mode (MCP_API_NAMESPACE) is enabled, pointing at the
   // strongest boundary (separate DB per tenant). Only for server-starting
