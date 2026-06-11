@@ -1,7 +1,7 @@
 # Environment variables
 
-Every `MCP_*` variable read by the server, with default and effect. Settings
-read once at process start unless noted.
+This page lists every `MCP_*` variable the server reads, with its default and
+effect. Settings are read once at process start unless noted.
 
 ## Networking & auth
 
@@ -9,7 +9,7 @@ read once at process start unless noted.
 |---|---|---|
 | `MCP_PORT` | `3100` | TCP port for `serve` mode. |
 | `MCP_BIND` | `127.0.0.1` | Interface to bind on. Set to `0.0.0.0` to expose externally; this requires `MCP_AUTH_TOKEN` (or `MCP_AUTH_OPTIONAL=1`) at startup. |
-| `MCP_AUTH_TOKEN` | _unset_ | Bearer token — the **single-token legacy mode**. When set, every request to `/api/*` and `/mcp/*` must carry `Authorization: Bearer <token>` (constant-time comparison). For per-key RBAC (one server, N keys, each pinned to a namespace set + access ceiling) use `memory keys` instead (schema v16); this env var is not how RBAC is configured. Legacy mode and per-key RBAC coexist — the legacy token is checked first. See `docs/MULTI-TENANCY.md`. |
+| `MCP_AUTH_TOKEN` | _unset_ | Bearer token: the **single-token legacy mode**. When set, every request to `/api/*` and `/mcp/*` must carry `Authorization: Bearer <token>` (constant-time comparison). For per-key RBAC (one server, N keys, each pinned to a namespace set + access ceiling) use `memory keys` instead (schema v16); this env var is not how RBAC is configured. Legacy mode and per-key RBAC coexist; the legacy token is checked first. See `docs/MULTI-TENANCY.md`. |
 | `MCP_AUTH_OPTIONAL` | _unset_ | Set to `1` to allow unauthenticated access on a non-loopback bind. Should only be used in trusted local networks. |
 | `MCP_ALLOWED_ORIGINS` | `http://localhost:5173` | Comma-separated allowlist for CORS. Origins not in the list receive no `Access-Control-Allow-Origin` header. |
 | `MCP_BODY_LIMIT` | `256kb` | Maximum JSON body size for any request. Larger payloads return 413. |
@@ -67,7 +67,7 @@ read once at process start unless noted.
 | `MCP_MEMORY_MODEL` | `Xenova/all-MiniLM-L6-v2` | Hugging Face model identifier loaded via `@huggingface/transformers`. |
 | `MCP_MEMORY_DIMENSIONS` | `384` | Vector dimension for `memories_vec`. Persisted in `schema_meta.embedding_dim` on first init; mismatched values throw on subsequent opens. |
 | `MCP_MEMORY_NLI_MODEL` | `Xenova/nli-deberta-v3-xsmall` | Cross-encoder NLI model used for contradiction detection in the self-correcting write gate. Loaded lazily on first use. |
-| `MCP_NLI_DISABLED` | _unset_ (gate on) | Set to `1` to turn the self-correcting NLI write-gate off: stores never auto-retire a contradicted fact. Escape hatch for corpora of templated near-twin notes, where the MNLI model can read shared boilerplate as a bidirectional contradiction and retire a teammate's valid note. Retired facts are always recoverable (`memory_history` / `as_of`), and every auto-retire is audited in `memory_conflicts` — but with this set the gate never fires in the first place. |
+| `MCP_NLI_DISABLED` | _unset_ (gate on) | Set to `1` to turn the self-correcting NLI write-gate off: stores never auto-retire a contradicted fact. Escape hatch for corpora of templated near-twin notes, where the MNLI model can read shared boilerplate as a bidirectional contradiction and retire a teammate's valid note. Retired facts are always recoverable (`memory_history` / `as_of`), and every auto-retire is audited in `memory_conflicts`, but with this set the gate never fires in the first place. |
 | `MCP_MEMORY_RERANKER_MODEL` | `Xenova/ms-marco-MiniLM-L-6-v2` | Cross-encoder model used when search is called with `rerank: true`. Loaded lazily on first use. |
 | `HF_HOME` | _unset_ | Cache directory for the Hugging Face model (set in Docker to `/cache`). |
 
@@ -78,19 +78,19 @@ read once at process start unless noted.
 | `MCP_REDACT_MODE` | `off` | Inbound secret-redaction gate applied before content is embedded/persisted (and before it can reach a git-shared vault). `scrub` replaces detected secrets (API keys, tokens, JWTs, PEM private keys, `password=`/`api_key=` assignments) with typed `[REDACTED:kind]` placeholders and records a `metadata.redactions` count; `block` rejects the write with an error naming the kinds; `off` is a passthrough. Wired into `memory_store` and `memory_ingest`. |
 | `MCP_SIGN_MEMORIES` | _unset_ (off) | Set to `1`/`true` to attach a signed provenance envelope to every new memory: an ed25519 signature over `content_hash + agent_id + scope + namespace + created_at`. `memory_verify` checks it. Off = memories are stored unsigned (today's behaviour); `memory_verify` reports them as `unsigned`. |
 | `MCP_MEMORY_KEY_DIR` | `~/.mcp-memory` | Directory holding the ed25519 signing keypair (`keys/ed25519.key` 0600, `keys/ed25519.pub`). Generated on first signed write. Override for tests or to relocate the key. |
-| `MCP_TRUSTED_PUBKEYS` | _unset_ | `:`- or `,`-separated list of FILE PATHS to teammate SPKI PEM public keys. `memory_verify` accepts a memory signed by this machine's own key OR any of these — a teammate's valid signature on a synced vault reads `verified` instead of `untrusted`. Unreadable paths are skipped. |
+| `MCP_TRUSTED_PUBKEYS` | _unset_ | `:`- or `,`-separated list of FILE PATHS to teammate SPKI PEM public keys. `memory_verify` accepts a memory signed by this machine's own key OR any of these: a teammate's valid signature on a synced vault reads `verified` instead of `untrusted`. Unreadable paths are skipped. |
 
 ## Active infrastructure (M3)
 
 | Variable | Default | Effect |
 |---|---|---|
-| `MCP_WEBHOOKS` | _unset_ (off) | Set to `1`/`true` to enable the outbound event bus — the first network egress in this otherwise local-first server. Mutations then enqueue HMAC-signed deliveries to registered `memory_webhook` targets (all SSRF-validated: public http(s) only). Off = no targets fire, zero hot-path cost. |
+| `MCP_WEBHOOKS` | _unset_ (off) | Set to `1`/`true` to enable the outbound event bus, the first network egress in this otherwise local-first server. Mutations then enqueue HMAC-signed deliveries to registered `memory_webhook` targets (all SSRF-validated: public http(s) only). Off = no targets fire, zero hot-path cost. |
 
 ## Compute governor (M6.2)
 
 | Variable | Default | Effect |
 |---|---|---|
-| `MCP_COMPUTE_GOVERNOR_MODE` | `off` | Graceful-degradation governor over the heavy per-request ML ops. `off` = always allow (no-op). `warn` = allow but flag over-budget. `throttle` = once over budget, skip reranking (search → free vector+FTS RRF) and the NLI gate (store → overlap heuristic only) — a quality downgrade, never an error. `block` = like throttle but also sets `denied` so a caller may refuse. |
+| `MCP_COMPUTE_GOVERNOR_MODE` | `off` | Graceful-degradation governor over the heavy per-request ML ops. `off` = always allow (no-op). `warn` = allow but flag over-budget. `throttle` = once over budget, skip reranking (search → free vector+FTS RRF) and the NLI gate (store → overlap heuristic only): a quality downgrade, never an error. `block` = like throttle but also sets `denied` so a caller may refuse. |
 | `MCP_COMPUTE_GOVERNOR_CAPACITY` | `600` | Burst budget in token units (embed=1, rerank=3, nli=4). |
 | `MCP_COMPUTE_GOVERNOR_REFILL_PER_SEC` | `60` | Sustained refill rate (token units/sec); window = capacity / refill. |
 
@@ -122,7 +122,7 @@ read once at process start unless noted.
 
 ## Production checklist
 
-For a non-loopback deployment behind Cloudflare Access / NGINX:
+Example settings for a non-loopback deployment behind Cloudflare Access / NGINX:
 
 ```bash
 export MCP_AUTH_TOKEN="$(openssl rand -base64 32)"

@@ -8,6 +8,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Documentation overhaul for readability: README restructured around a
+  5-minute quick start with a first store/recall example, a plain-language
+  "how to read the benchmarks" primer, stale facts corrected (schema v18,
+  49 tool registrations, dependency versions, roadmap now lists only unbuilt
+  work), and every user-facing doc (README, BENCHMARKS, MULTI-TENANCY,
+  ENTERPRISE-BRAIN, ENV, DATA-HANDLING, RUNBOOK, CONTRIBUTING, SECURITY,
+  COMMERCIAL, this changelog) rewritten in plainer language with em dashes
+  removed. No commands, numbers, or security caveats changed.
 - Repository renamed `YonasValentin/mcp-memory-server` → `YonasValentin/mcp-memory-graph`
   to match the npm package and binary name (old GitHub URLs redirect).
   `package.json` repository/bugs/homepage updated. The MS-01 deploy stack dir
@@ -16,7 +24,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ### Fixed
 
 - CLI hint and team-workflow docs referenced a nonexistent `mcp-memory-server`
-  binary — corrected to `mcp-memory-graph` (the actual `bin` name).
+  binary: corrected to `mcp-memory-graph` (the actual `bin` name).
 - Docker build was broken since the better-sqlite3 12.x bump: no usable
   prebuild on `node:20-slim`, so `npm ci` fell back to a source build and
   failed on missing Python. Image now uses `node:22-slim` (the repo's Node
@@ -35,18 +43,18 @@ v16 → v18 migrations run automatically.
   tenants: N API keys, each pinned to a *set* of namespaces and an
   access-level ceiling (`public < internal < confidential < restricted`).
   "Sales can't see HR" without one process per tenant. The
-  `src/lib/tenancy.ts` enforcement boundary is unchanged — the namespace it
+  `src/lib/tenancy.ts` enforcement boundary is unchanged: the namespace it
   forces is now per-request (minted from the calling key) instead of
   per-process.
   - New `api_keys` table (tokens stored as sha256; the raw `mcpm_…` token is
     shown exactly once at create).
-  - **`memory keys` CLI** — `create` (prints the token once with a store-now
+  - **`memory keys` CLI**: `create` (prints the token once with a store-now
     warning), `list` (aligned table, never any token/hash material), `revoke`
     (by id; never restamps an existing revocation).
   - Auth resolution: the **legacy single token `MCP_AUTH_TOKEN` still works and
     is checked first**; a key-only deployment (no `MCP_AUTH_TOKEN`) is fully
     authenticated. A newly created/revoked key takes effect on the next
-    request (key liveness is consulted per call — no cache, no restart).
+    request (key liveness is consulted per call: no cache, no restart).
   - Namespace semantics: a multi-namespace key picks its effective namespace
     per call (unset → the key's first namespace); a foreign namespace is denied
     `403 NAMESPACE_NOT_PERMITTED`, never silently redirected. Over-ceiling /
@@ -54,9 +62,9 @@ v16 → v18 migrations run automatically.
   - **MCP session binding:** a session is owned by the authenticating key;
     replaying another principal's `mcp-session-id` is `403`
     `SESSION_PRINCIPAL_MISMATCH`.
-  - §6 access-level ceilings are enforced across BOTH egress chokepoints —
+  - §6 access-level ceilings are enforced across BOTH egress chokepoints:
     every MCP read tool (by-id, positional, aggregate counts) and the REST
-    surface (`/api/search`, `/api/stats`, `/api/insights`, …) — converged
+    surface (`/api/search`, `/api/stats`, `/api/insights`, …): converged
     after 12 adversarial battle waves, pinned by four structural tripwire
     tests. v2 boundary: graph/community entity NAMES aggregate within a
     namespace (member memory ids are ceiling-filtered).
@@ -76,11 +84,11 @@ v16 → v18 migrations run automatically.
   (`docs/ENTERPRISE-BRAIN.md`): entity kinds `team`/`department`/`sop`/`agent`
   and relationship kinds `manages`/`reports_to`/`member_of`/`works_on`/
   `owns`/`follows` in `memory_extract_entities` + `memory_graph` filters.
-- **Backup retention cap** — `MCP_MEMORY_MAX_BACKUPS` (default 10, 0 = keep
+- **Backup retention cap**: `MCP_MEMORY_MAX_BACKUPS` (default 10, 0 = keep
   all) prunes old `<db>.backup-<ISO>` snapshots after `memory backup`.
-- **npm provenance releases** — tag-triggered workflow publishes with
+- **npm provenance releases**: tag-triggered workflow publishes with
   `--provenance` via npm Trusted Publishing (OIDC).
-- **Per-question benchmark artifacts** — all four public-benchmark runners
+- **Per-question benchmark artifacts**: all four public-benchmark runners
   accept `--out <path>` and write the report plus per-question rows
   (committed under `benchmarks/results/`) so published claims are
   independently checkable.
@@ -105,7 +113,7 @@ v16 → v18 migrations run automatically.
   pulls fatal'd on modern git; rebase pulls skip the hook) and no longer
   rewrites the committed `graph.json` sidecar on re-run.
 - **Rebuild integrity refusal** runs before the embedder loads and before the
-  old index is unlinked — a tampered-vault refusal no longer SIGABRTs through
+  old index is unlinked: a tampered-vault refusal no longer SIGABRTs through
   ONNX static destructors nor costs the existing index; the error now states
   the documented recovery (delete `.memory/manifest.json`, re-run).
 - **Key-only deployments logged "server is unauthenticated"** while enforcing
@@ -121,12 +129,12 @@ v16 → v18 migrations run automatically.
 ## [2.2.0] - 2026-06-11
 
 Public benchmarks + a fresh adversarial E2E pass over the fix wave itself
-(solo, team-shared-SQLite, team-git-vault — real stdio MCP, real models).
+(solo, team-shared-SQLite, team-git-vault: real stdio MCP, real models).
 All changes backward compatible.
 
 ### Added
 
-- **LOCOMO retrieval benchmark harness** (`npm run bench:locomo`) — runs the
+- **LOCOMO retrieval benchmark harness** (`npm run bench:locomo`): runs the
   full LOCOMO multi-session benchmark against the production store/search
   handlers with the real local embedder; reports session- AND turn-level
   recall@k from the same run
@@ -139,10 +147,10 @@ All changes backward compatible.
   model loaded, `process.exit()` aborted in onnxruntime's static destructors
   (`libc++abi … mutex lock failed` → SIGABRT, deterministic under SIGTERM).
   The SIGINT/SIGTERM handlers now close the databases (WAL checkpoint) and
-  die by re-raised default-disposition signal — POSIX-correct termination,
+  die by re-raised default-disposition signal: POSIX-correct termination,
   zero aborts across 75 PoC kills, DB integrity intact
 - **`--help` no longer executes commands.** Every CLI command ran on
-  `--help` — `init --help` wrote settings/config/launchd files and
+  `--help`: `init --help` wrote settings/config/launchd files and
   `rebuild --help` would have deleted the database. A central gate now
   prints usage for all 13 commands before any command module loads
 - **A cold NLI model download can't fail a write.** `memory_store` errored
@@ -151,20 +159,20 @@ All changes backward compatible.
   (logged, per-call semantics of `MCP_NLI_DISABLED=1`), and failed loads
   still retry
 - **`memory rebuild` survives duplicate frontmatter ids** instead of
-  crashing on `UNIQUE constraint failed` — same first-claim-wins guard
+  crashing on `UNIQUE constraint failed`: same first-claim-wins guard
   `vault_sync` already had; duplicates are skipped, warned, and counted in
   the CLI summary
 - **`metadata._vault` (server-internal sync bookkeeping, including an
-  absolute per-developer path) no longer appears in any tool output** —
+  absolute per-developer path) no longer appears in any tool output**;
   stripped once at the row-mapping chokepoint rather than per tool. User
-  metadata keys — including `links`, `file_path`, `vault_path`,
-  `frontmatter` — pass through untouched in plain usage
+  metadata keys, including `links`, `file_path`, `vault_path`,
+  `frontmatter`: pass through untouched in plain usage
 - The vault metadata-collision fix (user keys colliding with bookkeeping
   names) re-verified under adversarial attack: forged/malformed `_vault`
   in a shared vault cannot inject wikilinks or paths across developers;
   legacy flat residue self-heals without accretion
 - ReDoS linearity guards in the test suite self-calibrate (ratio vs a
-  small input) instead of asserting absolute wall-clock — no more flakes
+  small input) instead of asserting absolute wall-clock: no more flakes
   on slow shared CI runners
 
 ## [2.1.0] - 2026-06-10
@@ -180,13 +188,13 @@ All changes additive; migrations automatic.
 
 - **Vault frontmatter no longer accretes**: `vault_sync` used to stuff the
   entire previous frontmatter plus each developer's *absolute* vault path into
-  `metadata`, and exports wrote it all back — geometric file growth, YAML merge
+  `metadata`, and exports wrote it all back: geometric file growth, YAML merge
   conflicts in files nobody edited, and quarantine data loss. Imports and
   exports now strip the reserved bookkeeping keys both ways; poisoned vaults
   self-heal on the next export
 - `vault_sync` now quarantines files containing git conflict markers (counted
   in the new `conflicted` result field) instead of indexing `<<<<<<< HEAD` as
-  memory content — same guard `rebuild` already had
+  memory content: same guard `rebuild` already had
 - The two vault import paths (`vault_sync` vs `rebuild`) now produce
   byte-identical content (trailing-newline parity)
 - `rebuild` CLI prints quarantined files; the post-merge hook logs to
@@ -196,7 +204,7 @@ All changes additive; migrations automatic.
 
 - Lazy model init (embedder, NLI, reranker) is now promise-deduped: N
   concurrent cold-start calls share one model load instead of launching N
-  parallel ~250MB loads — fixes intermittent cold-start store failures and a
+  parallel ~250MB loads: fixes intermittent cold-start store failures and a
   native abort at shutdown under parallel first writes; failed loads retry
 
 **Visibility**
@@ -210,11 +218,11 @@ All changes additive; migrations automatic.
 ### Added
 
 - **Dashboard "Archive Terminal" identity**: designed typography (Instrument
-  Serif / Instrument Sans / IBM Plex Mono, bundled locally — no CDN), two
+  Serif / Instrument Sans / IBM Plex Mono, bundled locally: no CDN), two
   committed themes (manila-paper light, phosphor-on-ink dark), dot-grid
   texture, indexed sidebar nav, archive-palette knowledge graph
 - `/api/search` gains `detail=ids_only|summary|full` (default `summary`
-  preserves the existing contract) — fixes the dashboard Search page, which
+  preserves the existing contract): fixes the dashboard Search page, which
   crashed on every query because the UI rendered the full nested result
   shape the route never returned
 - **LongMemEval-S public benchmark harness** (`npm run bench:longmemeval`):
@@ -237,7 +245,7 @@ All changes additive; migrations automatic.
 ### Changed
 
 - Schema v15: tenancy-scoped `search_log`; v14: structural `(scope, namespace)`
-  on the five knowledge-graph tables — shared-DB multi-tenant isolation is
+  on the five knowledge-graph tables: shared-DB multi-tenant isolation is
   enforced by schema, not per-reader filters (see `docs/MULTI-TENANCY.md`)
 - Docs: team-vault onboarding (per-clone `vault-init`), stale-manifest
   recovery, hand-edit ordering, vault round-trip fidelity (only
@@ -248,20 +256,20 @@ All changes additive; migrations automatic.
 
 The "revolution" release: 8 pillars expand the server from 17 to 37 MCP tools.
 Database schema migrated to **v9** via additive migrations. All new behaviors
-are **additive and opt-in** — existing tools, defaults, and stored data are
+are **additive and opt-in**: existing tools, defaults, and stored data are
 preserved (e.g. search stays hybrid-by-default; graph/rerank/point-in-time
 features only activate when their flags are passed; `memory_forget` is additive
 to `memory_delete`).
 
 ### Added
 
-**Pillar 1 — Bi-temporal memory**
+**Pillar 1: Bi-temporal memory**
 
 - Valid-time (`valid_from`/`valid_to`) alongside transaction-time; updates *invalidate-don't-delete* so history is never lost
 - `as_of: <timestamp>` point-in-time recall on search and reads
 - `memory_history` tool: full bi-temporal timeline + edit versions for one memory
 
-**Pillar 2 — Knowledge graph**
+**Pillar 2: Knowledge graph**
 
 - Confidence-tagged `memory_links` (wikilink / co-occurrence / similarity edges) and entity co-occurrence
 - `memory_graph` multi-hop entity traversal (depth 1–3) and `memory_extract_entities`
@@ -269,38 +277,38 @@ to `memory_delete`).
 - `memory_query`: token-budgeted, hub-avoiding subgraph traversal that answers a question without flooding context
 - `memory_communities`: GraphRAG community detection (weighted label propagation) for corpus-level themes
 
-**Pillar 3 — Retrieval**
+**Pillar 3: Retrieval**
 
 - Cross-encoder reranking via `rerank: true` on search
 - Contextual indexing
 
-**Pillar 4 — Self-correcting writes**
+**Pillar 4: Self-correcting writes**
 
 - ADD / UPDATE / DELETE / NOOP write gate (`on_conflict`)
 - NLI cross-encoder contradiction detection
 - Forgetting-curve `stability` signal
 
-**Pillar 5 — Agent-OS memory**
+**Pillar 5: Agent-OS memory**
 
 - Pinned, bounded core-memory block: `core_memory_get` / `core_memory_append` / `core_memory_replace`
 - `memory_tiers`: MemGPT-style hot / recall / archival distribution + hot working set
 - `memory_reflect`: Generative-Agents-style reflection (gather material / store insight)
 
-**Pillar 6 — Obsidian-grade vault**
+**Pillar 6: Obsidian-grade vault**
 
 - `memory_export_vault`: bidirectional `.md` write-back with lossless YAML frontmatter (reverse of `vault_sync`)
 - `memory_canvas`: JSON Canvas 1.0 `.canvas` export
 - Read-only memory wiki / Publish routes (`/publish/:namespace`), hard-scoped to published access levels
 - `memory_session_note` (per-session daily note) and `memory_template` (structured note scaffolds)
 
-**Pillar 7 — Team & solo sharing**
+**Pillar 7: Team & solo sharing**
 
 - Interactive `memory init` wizard (with `--yes` for all-defaults)
 - Committable graph artifact: `export-graph` CLI → deterministic `memory-graph.json`
 - `git-setup` CLI: installs `.gitattributes` + `memory-union` git merge driver (`merge-graphs`) for conflict-free sharing
 - `memory_attribution`: per-`agent_id` rollup (default agent via `MCP_AGENT_ID`)
 
-**Pillar 8 — Trust & governance**
+**Pillar 8: Trust & governance**
 
 - `memory_questions`: "questions to ask" digest (ambiguous links, under-documented entities, orphans)
 - `memory_forget`: GDPR soft-delete (recoverable, queryable via `as_of`) or hard erase-after-export; additive to `memory_delete`

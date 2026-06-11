@@ -1,8 +1,8 @@
 # Operational runbook
 
 How to operate the MCP Memory Graph in production. The reference deployment
-is a single Docker container on MS-01 fronted by Cloudflare Access at
-`mcp.yonasvalentin.dk`, with the SQLite database mounted on a host volume.
+is a single Docker container on MS-01, fronted by Cloudflare Access at
+`mcp.yonasvalentin.dk`. The SQLite database is mounted on a host volume.
 
 ## Surface area
 
@@ -30,8 +30,8 @@ docker compose logs --tail=200 -f memory-server
 ```
 
 The CI deploy workflow (`.github/workflows/deploy.yml`) does the equivalent
-on every push to `main`: rsync workspace → `docker compose up -d --build` →
-poll `/health`.
+on every push to `main`: rsync the workspace, then `docker compose up -d --build`,
+then poll `/health`.
 
 ### Health checks
 
@@ -56,13 +56,13 @@ docker compose logs --tail=500 memory-server | jq 'select(.event=="http_request"
 
 The logger writes one JSON line per event to stderr. Useful event names:
 
-- `server_listening` — process startup, includes `host` and `port`.
-- `auth_disabled` — emitted when `MCP_AUTH_TOKEN` is unset.
-- `http_request` — every API request: `{requestId, route, method, status, duration_ms}`.
-- `tool_call` — every MCP tool invocation: `{tool, outcome, duration_ms}`.
-- `conflict_detect_failed`, `conflict_record_failed`, `entity_extract_failed` — store-path soft failures.
-- `embedder_init_failed` — `/ready` couldn't load the model.
-- `stop_hook_spawn_failed` — Stop hook couldn't spawn the headless reviewer.
+- `server_listening`: process startup. Includes `host` and `port`.
+- `auth_disabled`: emitted when `MCP_AUTH_TOKEN` is unset.
+- `http_request`: every API request. Fields: `{requestId, route, method, status, duration_ms}`.
+- `tool_call`: every MCP tool invocation. Fields: `{tool, outcome, duration_ms}`.
+- `conflict_detect_failed`, `conflict_record_failed`, `entity_extract_failed`: store-path soft failures.
+- `embedder_init_failed`: `/ready` could not load the model.
+- `stop_hook_spawn_failed`: Stop hook could not spawn the headless reviewer.
 
 ### Metrics
 
@@ -70,21 +70,23 @@ The logger writes one JSON line per event to stderr. Useful event names:
 curl -s -H "Authorization: Bearer $MCP_AUTH_TOKEN" http://127.0.0.1:3200/metrics
 ```
 
-Info gauge: `mcp_build_info{version,node}` — constant 1; the labels pin which
-version/runtime is live (use it for "version deployed" panels and alert annotations).
+Info gauge: `mcp_build_info{version,node}`. Constant 1. The labels pin which
+version and runtime is live. Use it for "version deployed" panels and alert
+annotations.
 Counters: `mcp_tool_calls_total{tool,outcome}`, `api_requests_total{route,method,status}`.
 Histograms: `mcp_tool_latency_seconds`, `api_request_latency_seconds`.
 
 Wire into Grafana on MS-01 for production dashboards. Suggested panels:
-`rate(mcp_tool_calls_total{outcome="error"}[5m])` (tool error rate),
-`histogram_quantile(0.95, rate(api_request_latency_seconds_bucket[5m]))` (p95 latency),
-and a stat panel on `mcp_build_info` to show the running version.
+
+- `rate(mcp_tool_calls_total{outcome="error"}[5m])` (tool error rate)
+- `histogram_quantile(0.95, rate(api_request_latency_seconds_bucket[5m]))` (p95 latency)
+- a stat panel on `mcp_build_info` to show the running version
 
 ## Backups
 
-The DB is a single SQLite file. Preferred: the built-in WAL-safe online backup
-(uses SQLite's Online Backup API — consistent snapshot, no writer blocking, no
-checkpoint required):
+The DB is a single SQLite file. Preferred method: the built-in WAL-safe
+online backup. It uses SQLite's Online Backup API, so you get a consistent
+snapshot with no writer blocking and no checkpoint required:
 
 ```bash
 # Writes <db>.backup-<ISO> next to the DB, or pass --out.
@@ -92,9 +94,13 @@ docker compose exec memory-server node dist/index.js backup --out /data/backup-$
 docker compose cp memory-server:/data/backup-$(date +%Y%m%d).db /opt/backups/
 ```
 
-Restore: stop the server, copy the backup file over `MCP_MEMORY_DB_PATH`
-(`/data/memory.db`), and start again. The backup is a standalone `.db` — no
-`-wal`/`-shm` sidecars needed.
+Restore, in this order:
+
+1. Stop the server.
+2. Copy the backup file over `MCP_MEMORY_DB_PATH` (`/data/memory.db`).
+3. Start the server again.
+
+The backup is a standalone `.db`. No `-wal`/`-shm` sidecars needed.
 
 Equivalent ad-hoc options (no running container):
 
@@ -119,19 +125,21 @@ docker compose exec memory-server \
 Expected output:
 
 ```
-schema_version|11
+schema_version|18
 embedding_dim|384
 ```
 
+`schema_version` should read 18 (or higher; migrations are automatic).
+
 ### Refusing to start: "missing columns…"
 
-The server detected a partial / legacy schema. The error message lists the
+The server detected a partial or legacy schema. The error message lists the
 missing columns. Two paths forward:
 
 1. **Restore from backup.** Replace the DB file with the latest backup.
 2. **Recreate.** Move the DB aside and let the server initialize a fresh
    one. Use `memory_export` or `sqlite3 .dump` first to preserve content,
-   then re-import via `memory_import`.
+   then re-import via `memory_import`. Skipping the export loses the data.
 
 ### Refusing to start: "Embedding dimension mismatch"
 
@@ -146,8 +154,8 @@ Set `MCP_MEMORY_DIMENSIONS` to that value, or rebuild the DB.
 
 ## Incident: duplicate detection looks broken
 
-If two stores of the same content both succeed and `memory_conflicts` doesn't
-grow, regression on C1. Reproduce with:
+If two stores of the same content both succeed and `memory_conflicts` does
+not grow, that is a regression on C1. Reproduce with:
 
 ```bash
 docker compose exec memory-server node -e '
@@ -165,7 +173,7 @@ docker compose exec memory-server node -e '
 '
 ```
 
-Expected: `{ r1: true, r2: false, conflicts: 1 }`. Anything else, ship a
+Expected: `{ r1: true, r2: false, conflicts: 1 }`. Anything else: ship a
 revert and open a CRITICAL bug.
 
 ## Rolling back a deploy
@@ -197,12 +205,12 @@ REST errors use a uniform shape:
 
 Codes:
 
-- `UNAUTHORIZED` — missing or wrong bearer.
-- `RATE_LIMITED` — bucket exhausted; honor `Retry-After`.
-- `INVALID_INPUT` — Zod validation failed; `issues` has details.
-- `NOT_FOUND` — the resource ID doesn't exist.
-- `BAD_HOST` — DNS rebinding guard tripped.
-- `INTERNAL` — anything else. Includes `requestId` to correlate with logs.
+- `UNAUTHORIZED`: missing or wrong bearer.
+- `RATE_LIMITED`: bucket exhausted. Honor `Retry-After`.
+- `INVALID_INPUT`: Zod validation failed. `issues` has details.
+- `NOT_FOUND`: the resource ID does not exist.
+- `BAD_HOST`: DNS rebinding guard tripped.
+- `INTERNAL`: anything else. Includes `requestId` to correlate with logs.
 
 ## Where things live on MS-01
 
@@ -218,6 +226,6 @@ Codes:
 3. `docker compose up -d --force-recreate memory-server`
 4. Verify: `curl -fs -H "Authorization: Bearer $NEW" http://127.0.0.1:3200/health`
 5. Update the token in Claude Code MCP config (`~/.claude/settings.json`) and propagate to team members
-6. The previous token is invalidated on container restart — single-token design, no revocation list needed
+6. The previous token is invalidated on container restart. Single-token design, no revocation list needed.
 
-Recommended cadence: every 90 days, or immediately on suspected exposure.
+Rotate every 90 days, or immediately on suspected exposure.

@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for opening this file — a few minutes here will save us both a code-review round trip.
+Thanks for opening this file. A few minutes here will save us both a code-review round trip.
 
 ## Setup
 
@@ -35,7 +35,7 @@ npm run lint
 npm run build
 ```
 
-The dev server expects a memory server on `http://localhost:3100`. Run that with:
+The dev server expects a memory server on `http://localhost:3100`. Start one with:
 
 ```bash
 MCP_AUTH_OPTIONAL=1 node dist/index.js serve
@@ -47,7 +47,7 @@ Every PR must pass:
 
 - `npm run build` (server) and `npm run build` (web)
 - `tsc --noEmit` (root) and `npm run lint` (web)
-- `npx vitest run --coverage` against no-regression floors: lines 96, statements 95, functions 95, branches 86 (current actual is a bit higher; see the floors + documented exclude list in `vitest.config.ts`). Raise the floors when you add coverage — don't lower them.
+- `npx vitest run --coverage` against no-regression floors: lines 96, statements 95, functions 95, branches 86. Current actual coverage is a bit higher; the floors and the documented exclude list live in `vitest.config.ts`. Raise the floors when you add coverage. Don't lower them.
 - `npm audit --audit-level=high` for both root and `web/`
 - CodeQL (`security-and-quality` query suite)
 
@@ -57,13 +57,13 @@ If a check fails, the PR can't merge. Push fixes; CI re-runs automatically.
 
 - One change per PR. If the PR description has a bullet list of unrelated items, split it.
 - Tests land in the same PR as the code they cover. Regression tests are required for any bug fix.
-- Commit subject in imperative present tense (`fix`, `feat`, `docs`, `test`, `refactor`, `chore`). Body explains *why*, not *what*.
-- Keep diff scope honest: don't slip a refactor into a "fix typo" PR.
+- Commit subject in imperative present tense (`fix`, `feat`, `docs`, `test`, `refactor`, `chore`). The body explains *why*, not *what*.
+- Keep the diff scope honest: don't slip a refactor into a "fix typo" PR.
 
 ## Conventions
 
 - TypeScript: `strict: true`. No `any` in production code (tests may use `as` for fixtures).
-- Errors at HTTP boundaries return `{ error, code, requestId, issues? }` — see `src/api/routes.ts:sendError`.
+- Errors at HTTP boundaries return `{ error, code, requestId, issues? }`. See `src/api/routes.ts:sendError`.
 - Logs go through `src/lib/logger.ts`, not `console.*`. The logger redacts auth/secret keys automatically.
 - Database access goes through `src/db/repository.ts` and `src/lib/direct-access.ts`. Don't construct a `better-sqlite3` connection ad hoc.
 - Schemas live in `src/schemas/index.ts`. New REST inputs derive from existing MCP schemas via `.pick`/`.partial` rather than defining parallel shapes.
@@ -77,14 +77,14 @@ and is **also offered under separate paid commercial licenses** (see
 [COMMERCIAL.md](./COMMERCIAL.md)).
 
 For that dual model to work, the maintainer must be able to license *all* of the
-code — including your contribution — under **both** the noncommercial license and
+code, including your contribution, under **both** the noncommercial license and
 commercial licenses. So, by submitting a pull request, you:
 
 1. **certify the [Developer Certificate of Origin](https://developercertificate.org/)**
    (that you wrote the contribution or have the right to submit it), and
 2. **grant the maintainer (Yonas Valentin Kristensen) a perpetual, irrevocable,
    worldwide license to your contribution, with the right to sublicense and
-   relicense it** — including under the PolyForm Noncommercial License and under
+   relicense it**, including under the PolyForm Noncommercial License and under
    commercial license terms.
 
 You retain copyright in your contribution; this only grants the relicensing right
@@ -100,5 +100,5 @@ See [SECURITY.md](./SECURITY.md). Don't open public GitHub issues for vulnerabil
 
 - No force-push to `main` without consensus.
 - Don't merge your own PR if the CI status is yellow ("missing required check").
-- Don't disable a failing test to land a PR — fix the test or the code.
+- Don't disable a failing test to land a PR. Fix the test or the code.
 - Don't bypass the audit gate (`npm audit --audit-level=high`) by adding ignore-list overrides without a written reason in the PR description.
