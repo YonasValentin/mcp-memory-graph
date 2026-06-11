@@ -6,6 +6,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-06-11
+
+### Fixed
+
+- Official MCP Registry ownership validation: the registry namespace is
+  case-sensitive (`io.github.YonasValentin`), and the check compares it
+  against the `mcpName` inside the published npm tarball. The 2.3.0 tarball
+  carried the lowercase form, so 2.3.1 republishes with the corrected case.
+  Also trimmed the `server.json` description to the registry's 100-char limit.
+
 ### Added
 
 - Official MCP Registry support: `mcpName` (`io.github.yonasvalentin/mcp-memory-graph`)
