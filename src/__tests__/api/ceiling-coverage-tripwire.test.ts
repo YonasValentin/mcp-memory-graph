@@ -73,11 +73,20 @@ const BY_ID_CEILING = [
   'memory_unlinked_mentions',
 ];
 
-// Surfaces that emit NON-memory-classified data (knowledge-graph entity names,
-// vault files) where a per-row access_level does not apply — the documented v2
-// boundary (docs/MULTI-TENANCY.md). Listed so a reviewer sees they were a
-// deliberate exclusion, not an oversight. Not asserted (no ceiling to assert).
-const V2_DEFERRED = ['memory_graph', 'memory_communities', 'vault_sync', 'vault_status'];
+// memory_graph + memory_communities emit a MIX: entity names + mention_count
+// (the namespace-bounded v2 graph-tenancy surface) AND per-row memory id+title /
+// member_memory_ids (the v1 access-classified egress class). Re-battle-6 (the
+// 10th instance) proved the latter leaked confidential/restricted titles+ids to a
+// sub-cap principal — my earlier "entity names only, v2-deferred" categorisation
+// was WRONG. They don't use scopedRead/withCeiling (they carry the ceiling as a
+// positional arg, since their handlers thread it deep into the graph build), so
+// they're pinned on `principalAccessCeiling()` appearing in the registration.
+const POSITIONAL_CEILING = ['memory_graph', 'memory_communities'];
+
+// Surfaces that emit ONLY non-memory-classified data (vault files) where a
+// per-row access_level genuinely does not apply — the documented v2 boundary
+// (docs/MULTI-TENANCY.md). Listed so a reviewer sees the deliberate exclusion.
+const V2_DEFERRED = ['vault_sync', 'vault_status'];
 
 describe('§6 structural coverage — every corpus content/title read is ceiling-wrapped', () => {
   it.each(CONTENT_OR_TITLE_READS)(
@@ -100,6 +109,17 @@ describe('§6 structural coverage — every corpus content/title read is ceiling
         `a sub-ceiling principal could read/mutate an over-ceiling row.`,
     ).toBe(true);
   });
+
+  it.each(POSITIONAL_CEILING)(
+    '%s registration threads principalAccessCeiling() into its memory-row egress',
+    (tool) => {
+      expect(
+        regBlock(tool).includes('principalAccessCeiling()'),
+        `${tool} emits per-row memory id/title (member_memory_ids / memories[]) but ` +
+          `its registration omits principalAccessCeiling() — the re-battle-6 leak.`,
+      ).toBe(true);
+    },
+  );
 
   it('the v2-deferred non-memory surfaces are still registered (documented exclusions)', () => {
     for (const tool of V2_DEFERRED) {

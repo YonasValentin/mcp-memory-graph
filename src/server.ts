@@ -698,7 +698,9 @@ export function createServer(): McpServer {
       // battle-v9 CLASS 2: schema carries no namespace, so force-scope at the
       // handler — entities are shared, so an unforced graph leaks cross-tenant
       // entity names + linked memory ids/titles.
-      return handleGraph(getDb(), parsed, forcedNamespace());
+      // §6 (re-battle-6): the 4th arg gates the returned memories[] (id+title) by
+      // the principal ceiling — graph's memory-row portion is v1 corpus egress.
+      return handleGraph(getDb(), parsed, forcedNamespace(), principalAccessCeiling());
     }),
   );
 
@@ -816,7 +818,9 @@ export function createServer(): McpServer {
       const parsed = MemoryCommunitiesSchema.parse(input);
       // battle-v9 CLASS 2: schema carries no namespace — force-scope community
       // detection + membership to the pinned tenant at the handler.
-      return handleCommunities(getDb(), parsed, forcedNamespace());
+      // §6 (re-battle-6): the 4th arg gates member_memory_ids by the principal
+      // ceiling — community membership is per-row access-classified corpus egress.
+      return handleCommunities(getDb(), parsed, forcedNamespace(), principalAccessCeiling());
     }),
   );
 

@@ -309,6 +309,13 @@ export interface SummarizeCommunitiesOptions {
    * entity can link memories of OTHER tenants.
    */
   namespace?: string;
+  /**
+   * RBAC §6 (re-battle-6): when set, member_memory_ids are restricted to memories
+   * at/below the principal ceiling — member ids are per-row access-classified
+   * egress (the intra-namespace ceiling the namespace filter does NOT cover).
+   * undefined → legacy/local/full-clearance.
+   */
+  accessLevels?: string[];
 }
 
 const DEFAULT_SUMMARY_LIMIT = 20;
@@ -455,6 +462,10 @@ function summarizeFromCommunities(
     // when forced we additionally require m.namespace = ? — which also drops the
     // orphan (m.id IS NULL) rows, since an unattributable link can't be proven to
     // belong to the forced tenant.
+    // §6 (re-battle-6): in the namespace-forced branch, also gate member ids by
+    // the principal ceiling — member_memory_ids are per-row access-classified.
+    const acc = opts.accessLevels && opts.accessLevels.length > 0 ? opts.accessLevels : null;
+    const accClause = acc ? ` AND m.access_level IN (${acc.map(() => '?').join(',')})` : '';
     const links = opts.namespace
       ? db
           .prepare<string[], MemoryEntityRow>(
@@ -463,9 +474,9 @@ function summarizeFromCommunities(
                JOIN memories m ON m.id = me.memory_id
               WHERE me.entity_id IN (${placeholders})
                 AND m.namespace = ?
-                AND m.valid_to IS NULL AND m.tx_expired IS NULL AND m.superseded_at IS NULL`,
+                AND m.valid_to IS NULL AND m.tx_expired IS NULL AND m.superseded_at IS NULL${accClause}`,
           )
-          .all(...batch, opts.namespace)
+          .all(...batch, opts.namespace, ...(acc ?? []))
       : db
           .prepare<string[], MemoryEntityRow>(
             `SELECT me.memory_id AS memory_id, me.entity_id AS entity_id

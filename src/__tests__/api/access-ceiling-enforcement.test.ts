@@ -48,6 +48,9 @@ import { handleInsights } from '../../tools/insights.js';
 import { handleQuestions } from '../../tools/questions.js';
 import { handleMemoryTiers } from '../../tools/tiers.js';
 import { handleVerify } from '../../tools/verify.js';
+import { handleGraph } from '../../tools/graph.js';
+import { handleCommunities } from '../../tools/communities.js';
+import { findOrCreateEntity, linkEntityToMemory } from '../../graph/entity-store.js';
 import { getMemoryById } from '../../db/repository.js';
 import { handleRelated } from '../../tools/related.js';
 import { handleVaultSearch } from '../../tools/vault-search.js';
@@ -553,5 +556,34 @@ describe('§6 reflect / tiers / verify / insights / questions respect the ceilin
       expect(blob).not.toContain(confTitle);
       expect(blob).not.toContain(restrTitle);
     }
+  });
+
+  // Re-battle-6 (10th instance): memory_graph.memories[] and
+  // memory_communities.member_memory_ids carry per-row id+title. We link an
+  // entity to all four levels, then assert the ceiling filters the over-ceiling
+  // rows out of BOTH surfaces (and a full-clearance call still sees them).
+  it('memory_graph + memory_communities omit over-ceiling memory rows (the 10th instance)', () => {
+    const part = { scope: 'project' as const, namespace: NS };
+    const eid = findOrCreateEntity(db, 'Falcon', 'project', part);
+    for (const lvl of ['public', 'internal', 'confidential', 'restricted'] as AccessLevel[]) {
+      linkEntityToMemory(db, ids[lvl], eid, 'mentions', 'test', 1);
+    }
+    // Sanity: full-clearance graph surfaces the linked rows (proves the harness
+    // wired the entity correctly + that the ceiled asserts below aren't vacuous).
+    const gFull = handleGraph(db, { entity: 'Falcon', include_memories: true }, NS);
+    expect((gFull.memories ?? []).map((m) => m.title)).toContain(confTitle);
+
+    // Internal ceiling → memories[] excludes confidential + restricted titles.
+    const g = handleGraph(db, { entity: 'Falcon', include_memories: true }, NS, CEIL);
+    const gTitles = (g.memories ?? []).map((m) => m.title);
+    expect(gTitles).toContain('apollo-internal');
+    expect(gTitles).not.toContain(confTitle);
+    expect(gTitles).not.toContain(restrTitle);
+
+    // communities: internal ceiling → member_memory_ids excludes the over-ceiling ids.
+    const c = handleCommunities(db, {}, NS, CEIL);
+    const memberIds = c.communities.flatMap((x) => x.member_memory_ids);
+    expect(memberIds).not.toContain(ids.confidential);
+    expect(memberIds).not.toContain(ids.restricted);
   });
 });
