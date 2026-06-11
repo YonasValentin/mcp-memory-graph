@@ -24,6 +24,19 @@ import { logger } from '../lib/logger.js';
 
 const DELETED_DIR = '.memory/deleted';
 
+// One-shot latch for the config-unreadable warn. resolveVaultRoot runs on
+// EVERY mirror op, and getConfig re-throws on every call while the config stays
+// broken — so an unguarded warn floods stderr 1:1 with write volume
+// (fix-breaker WAVE 3). Warn once per broken-config EPISODE: set on the first
+// warn, cleared whenever the config reads cleanly again so a later breakage
+// re-warns.
+let configUnreadableWarned = false;
+
+/** Test-only: reset the warn latch between cases. */
+export function __resetVaultMirrorWarnState(): void {
+  configUnreadableWarned = false;
+}
+
 /** Resolve the active vault root, or null when write-through is off. */
 function resolveVaultRoot(): string | null {
   if (process.env.MCP_VAULT_WRITE_THROUGH === '0') return null;
@@ -32,21 +45,27 @@ function resolveVaultRoot(): string | null {
   // Fail-soft on a malformed/unreadable config: write-through is a best-effort
   // mirror (the whole function is fail-soft), so a broken project config must
   // disable mirroring, never throw out of a successful store (fix-breaker S18).
-  // But it must not be SILENT (fix-breaker WAVE 2): emit the same class of
-  // signal an IO mirror failure does, so a team relying on git-shared
-  // write-through can see WHY memories stopped reaching the vault.
+  // But it must not be SILENT (fix-breaker WAVE 2): emit a signal so a team
+  // relying on git-shared write-through can see WHY memories stopped reaching
+  // the vault — once per episode, and WITHOUT echoing the raw error body
+  // (a ZodError/SyntaxError string can carry a rejected config VALUE verbatim,
+  // which the key-name-only log redactor would not catch — fix-breaker WAVE 3).
   let cfg;
   try {
     cfg = getConfig();
   } catch (err) {
-    logger.warn({
-      event: 'vault_mirror_skipped',
-      reason: 'config_unreadable',
-      msg: 'write-through disabled: the config could not be read (run `memory rebuild` to resync the vault once the config is fixed)',
-      error: err instanceof Error ? err.message : String(err),
-    });
+    if (!configUnreadableWarned) {
+      configUnreadableWarned = true;
+      logger.warn({
+        event: 'vault_mirror_skipped',
+        reason: 'config_unreadable',
+        msg: 'write-through disabled: the config could not be read (run `memory rebuild` to resync the vault once the config is fixed)',
+        error_type: err instanceof Error ? err.constructor.name : 'unknown',
+      });
+    }
     return null;
   }
+  configUnreadableWarned = false;
   if (!cfg.vault.path || cfg.vault.write_through === false) return null;
   return cfg.vault.path;
 }
