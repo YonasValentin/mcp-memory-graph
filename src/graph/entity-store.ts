@@ -146,6 +146,10 @@ export function findOrCreateEntity(
     const SPECIFIC_TYPES = new Set([
       'person', 'project', 'tool', 'organization',
       'work_item', 'pull_request', 'commit',
+      // Org-ontology kinds (enterprise-brain): an explicit team/department/sop/
+      // agent extraction must win over a generic regex first-inference, or the
+      // node stays mistyped and invisible to memory_graph's exact type filter.
+      'team', 'department', 'sop', 'agent',
     ]);
     const GENERIC_TYPES = new Set(['concept', 'file', 'pattern']);
     const currentType = db

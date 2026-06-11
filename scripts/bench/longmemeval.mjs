@@ -222,9 +222,14 @@ if (outIdx !== -1 && process.argv[outIdx + 1]) {
   const path = await import('node:path');
   const p = process.argv[outIdx + 1];
   fs.mkdirSync(path.dirname(p), { recursive: true });
+  // perQuestion/officialRows carry answer_ids/official_ids as Sets, which
+  // JSON.stringify silently turns into {} — wiping the gold labels an auditor
+  // needs to re-derive recall from the rankings (fix-breaker S18). Serialize
+  // Sets as arrays so the artifact is actually independently checkable.
+  const setReplacer = (_k, v) => (v instanceof Set ? [...v] : v);
   fs.writeFileSync(
     p,
-    JSON.stringify({ ...report, per_question: perQuestion, official_rows: officialRows }, null, 2),
+    JSON.stringify({ ...report, per_question: perQuestion, official_rows: officialRows }, setReplacer, 2),
   );
   console.error(`Per-question artifact → ${p}`);
 }

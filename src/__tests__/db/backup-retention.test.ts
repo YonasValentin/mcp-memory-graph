@@ -16,8 +16,10 @@ afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// Append the milliseconds+Z that the real auto-generated name carries
+// (toISOString().replace) so the fixture matches the strict auto-backup shape.
 function mkBackup(stamp: string): string {
-  const p = `${dbPath}.backup-${stamp}`;
+  const p = `${dbPath}.backup-${stamp}-000Z`;
   fs.writeFileSync(p, 'b');
   return p;
 }
@@ -64,5 +66,23 @@ describe('pruneBackups retention cap', () => {
   it('negative max is treated as keep-all (defensive)', () => {
     mkBackup('2026-01-01T00-00-00');
     expect(pruneBackups(dbPath, -1)).toEqual([]);
+  });
+
+  it('only prunes strict auto-ISO names — a --out golden-master label is never pruned (fix-breaker S18)', () => {
+    // Auto-generated form: new Date().toISOString().replace(/[:.]/g,'-') -> ...T..-..-..-...Z
+    const iso = (s: string): string => {
+      const p = `${dbPath}.backup-${s}`;
+      fs.writeFileSync(p, 'b');
+      return p;
+    };
+    iso('2026-06-11T14-48-00-001Z');
+    iso('2026-06-11T14-48-01-002Z');
+    iso('2026-06-11T14-48-02-003Z');
+    const golden = `${dbPath}.backup-2025-01-01-RELEASE-golden`; // --out label, sorts first lexically
+    fs.writeFileSync(golden, 'keep');
+    const deleted = pruneBackups(dbPath, 1);
+    expect(fs.existsSync(golden)).toBe(true); // golden master survives
+    expect(deleted.every((p) => /T\d{2}-\d{2}-\d{2}-\d{3}Z$/.test(p))).toBe(true);
+    expect(deleted).toHaveLength(2); // two oldest ISO backups pruned, golden untouched
   });
 });

@@ -37,10 +37,18 @@ export async function backupDatabase(
 export function pruneBackups(dbPath: string, max: number): string[] {
   if (max <= 0) return [];
   const dir = path.dirname(dbPath);
-  const prefix = `${path.basename(dbPath)}.backup-`;
+  // Match ONLY the auto-generated name shape — `<basename>.backup-<ISO>` where
+  // ISO = new Date().toISOString().replace(/[:.]/g,'-') (always UTC, fixed
+  // width, e.g. 2026-06-11T14-48-00-528Z). A `--out` golden master with any
+  // other label does NOT match and is never pruned (fix-breaker S18: a loose
+  // prefix match deleted exactly the file the user pinned to keep, while the
+  // docs promised --out snapshots are safe). The strict UTC shape also keeps
+  // the lexical-sort == age-order invariant exact.
+  const base = path.basename(dbPath).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const autoBackup = new RegExp(`^${base}\\.backup-\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-\\d{3}Z$`);
   const candidates = fs
     .readdirSync(dir)
-    .filter((f) => f.startsWith(prefix))
+    .filter((f) => autoBackup.test(f))
     .sort();
   const excess = candidates.slice(0, Math.max(0, candidates.length - max));
   const deleted: string[] = [];

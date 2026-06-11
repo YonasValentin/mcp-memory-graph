@@ -67,6 +67,14 @@ describe('runVaultInit (B1 / D1-a / D2)', () => {
     expect(localGitConfig('pull.rebase')).toBe('false');
   });
 
+  it('does NOT clobber an explicit user pull.rebase=true (fix-breaker S18)', async () => {
+    fs.mkdirSync(vault, { recursive: true });
+    execFileSync('git', ['init'], { cwd: vault });
+    execFileSync('git', ['config', 'pull.rebase', 'true'], { cwd: vault });
+    await runVaultInit(['--vault', vault]);
+    expect(localGitConfig('pull.rebase')).toBe('true');
+  });
+
   it('D2: first run still seeds the .memory/graph.json sidecar', async () => {
     await runVaultInit(['--vault', vault]);
     expect(fs.existsSync(path.join(vault, SIDECAR_REL))).toBe(true);

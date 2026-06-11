@@ -50,8 +50,20 @@ export async function runVaultInit(argv: string[]): Promise<void> {
   // D1-a: a divergent `git pull` on modern git fatals with 'Need to specify how
   // to reconcile divergent branches' exactly at the concurrent-edit moment, and
   // a REBASE pull would skip the post-merge rebuild hook entirely. Pin merge
-  // pulls — LOCAL to this repo and idempotent, like the merge-driver config.
-  execFileSync('git', ['config', 'pull.rebase', 'false'], { cwd: vaultRoot });
+  // pulls — LOCAL to this repo. Only set when UNSET (fix-breaker S18: an
+  // unconditional set silently clobbered a user's explicit pull.rebase=true on
+  // every idempotent re-run); a user who deliberately chose rebase keeps it.
+  const hasPullRebase = (() => {
+    try {
+      execFileSync('git', ['config', '--local', '--get', 'pull.rebase'], { cwd: vaultRoot, stdio: 'pipe' });
+      return true;
+    } catch {
+      return false; // exit 1 = key not set
+    }
+  })();
+  if (!hasPullRebase) {
+    execFileSync('git', ['config', 'pull.rebase', 'false'], { cwd: vaultRoot });
+  }
 
   const hooksDir = path.join(vaultRoot, '.git', 'hooks');
   fs.mkdirSync(hooksDir, { recursive: true });
