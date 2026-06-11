@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
-import { forcedNamespace } from '../lib/tenancy.js';
+import { forcedNamespace, principalAccessCeiling } from '../lib/tenancy.js';
 import { currentPrincipal } from '../lib/request-context.js';
 import { randomUUID, createHash } from 'node:crypto';
 import type {
@@ -224,7 +224,27 @@ export async function syncVault(
             // already exists (e.g. a memory_export_vault → vault_sync round-trip)
             // must UPDATE that memory in place, not collide on UNIQUE(id) or fork
             // a duplicate. Delete the prior row first, then re-insert.
-            if (getMemoryById(db, row.id)) {
+            const existing = getMemoryById(db, row.id);
+            if (existing) {
+              // §6 + tenancy (re-battle-7, 11th instance): a frontmatter id pointing
+              // at a row OUTSIDE this sync's namespace, or ABOVE the principal
+              // ceiling, must NOT be reconciled — otherwise vault_sync is a
+              // delete-by-id / declassify / cross-tenant-relocate primitive (the
+              // import-overwrite breach on the vault path). row.namespace is the
+              // forced/principal namespace, so a mismatch means a foreign target;
+              // mirror import.ts — leave the row intact and skip this file.
+              const ceiling: readonly string[] | undefined = principalAccessCeiling();
+              if (
+                existing.namespace !== row.namespace ||
+                (ceiling !== undefined && !ceiling.includes(existing.access_level))
+              ) {
+                errors.push(
+                  `Frontmatter id ${row.id} in ${entry.relativePath} targets a ` +
+                    `foreign-namespace or over-ceiling memory — skipped (not reconciled)`,
+                );
+                conflicted++;
+                continue;
+              }
               deleteMemory(db, row.id);
             }
             insertMemory(db, row, embeddings[i]);
@@ -552,7 +572,20 @@ async function ingestLargeFile(
   const insertAll = db.transaction(() => {
     // Reconcile by identity (see smallFiles path): replace an existing memory
     // with the same frontmatter id rather than colliding on UNIQUE(id).
-    if (getMemoryById(db, parentRow.id)) {
+    const existing = getMemoryById(db, parentRow.id);
+    if (existing) {
+      // §6 + tenancy (re-battle-7, 11th instance — the large-file twin of the
+      // smallFiles guard): never delete/overwrite a row outside this sync's
+      // namespace or above the principal ceiling by frontmatter id. Skip the
+      // whole reconcile+insert so vault_sync can't relocate/declassify/destroy a
+      // foreign or over-ceiling memory.
+      const ceiling: readonly string[] | undefined = principalAccessCeiling();
+      if (
+        existing.namespace !== parentRow.namespace ||
+        (ceiling !== undefined && !ceiling.includes(existing.access_level))
+      ) {
+        return;
+      }
       deleteMemory(db, parentRow.id);
     }
     insertMemory(db, parentRow, parentEmbedding);
