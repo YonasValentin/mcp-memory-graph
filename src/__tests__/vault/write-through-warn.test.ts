@@ -84,6 +84,43 @@ describe('vault_mirror_skipped warn (fix-breaker WAVE 3)', () => {
     db.close();
   });
 
+  it('an env override (MCP_VAULT_PATH) ends the unreadable episode — a later real breakage still warns (fix-breaker WAVE 4)', () => {
+    const cfgPath = path.join(dir, 'config.json');
+    fs.writeFileSync(cfgPath, '{ broken ');
+    process.env.MCP_MEMORY_CONFIG_PATH = cfgPath;
+    const db = createTestDb();
+    captureStderr();
+    mirrorMemoryWrite(db, 'm1'); // episode 1: config broken, no env -> 1 warn, latch true
+    // env override = a SUCCESSFUL vault resolution (mirroring works); it ends the
+    // config_unreadable episode just like a clean config read would.
+    process.env.MCP_VAULT_PATH = path.join(dir, 'envvault');
+    mirrorMemoryWrite(db, 'm2'); // healthy via env — must clear the latch
+    // operator removes the override while the config is broken — a genuinely
+    // active config_unreadable state must warn again (latch not stranded true).
+    delete process.env.MCP_VAULT_PATH;
+    clearConfigCache();
+    mirrorMemoryWrite(db, 'm3');
+    expect(warnLines().length).toBe(2); // m1 + m3, not just m1
+    db.close();
+  });
+
+  it('MCP_VAULT_WRITE_THROUGH=0 (explicit disable, not a resolution) does NOT reset the episode — same broken config stays at one warn', () => {
+    const cfgPath = path.join(dir, 'config.json');
+    fs.writeFileSync(cfgPath, '{ broken ');
+    process.env.MCP_MEMORY_CONFIG_PATH = cfgPath;
+    const db = createTestDb();
+    captureStderr();
+    mirrorMemoryWrite(db, 'm1'); // 1 warn, latch true
+    process.env.MCP_VAULT_WRITE_THROUGH = '0'; // disable mirroring — NOT a config read
+    mirrorMemoryWrite(db, 'm2');
+    delete process.env.MCP_VAULT_WRITE_THROUGH; // back on, config STILL broken = same episode
+    clearConfigCache();
+    mirrorMemoryWrite(db, 'm3');
+    delete process.env.MCP_VAULT_WRITE_THROUGH;
+    expect(warnLines().length).toBe(1); // disable/re-enable is not a new episode
+    db.close();
+  });
+
   it('re-warns after the config recovers and breaks again (per-episode, not once-ever)', () => {
     const cfgPath = path.join(dir, 'config.json');
     fs.writeFileSync(cfgPath, '{ broken ');

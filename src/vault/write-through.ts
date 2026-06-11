@@ -39,9 +39,18 @@ export function __resetVaultMirrorWarnState(): void {
 
 /** Resolve the active vault root, or null when write-through is off. */
 function resolveVaultRoot(): string | null {
+  // Explicit disable — NOT a config read, so it does not end a config_unreadable
+  // episode (a later re-enable with the same broken config must stay suppressed).
   if (process.env.MCP_VAULT_WRITE_THROUGH === '0') return null;
   const envPath = process.env.MCP_VAULT_PATH;
-  if (envPath) return envPath;
+  if (envPath) {
+    // A SUCCESSFUL vault resolution via env override ends any config_unreadable
+    // episode, exactly like a clean config read (fix-breaker WAVE 4: otherwise
+    // the latch strands stale-true behind the env shadow and a genuinely-new
+    // breakage after the override is removed is silently suppressed).
+    configUnreadableWarned = false;
+    return envPath;
+  }
   // Fail-soft on a malformed/unreadable config: write-through is a best-effort
   // mirror (the whole function is fail-soft), so a broken project config must
   // disable mirroring, never throw out of a successful store (fix-breaker S18).
