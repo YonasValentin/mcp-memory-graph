@@ -467,8 +467,8 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
   // resolves a legacy env token (byte-identical to before) OR an api-key
   // principal per request, and passes through unauthenticated only when neither
   // is configured. The middleware is ALWAYS mounted (it self-disables when auth
-  // isn't configured) so a key created while serving takes effect within the
-  // key-count TTL without a restart. Skipping auth without a token is opt-in
+  // isn't configured) so a key created while serving takes effect on the next
+  // request (key count consulted per call, no TTL). Skipping auth without a token is opt-in
   // (`MCP_AUTH_OPTIONAL=1`) — by default a remote bind with no auth at all is a
   // startup error so accidental "no auth" deployments don't ship.
   const token = bearerToken();

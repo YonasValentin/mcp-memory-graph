@@ -66,9 +66,9 @@ fully authenticated. On each request:
 3. Otherwise `401` (unknown key and bad legacy token are indistinguishable in
    the response — no oracle).
 
-The server caches the count of live keys and refreshes it every **≤30 s**, so a
-newly created **or** revoked key takes effect within ~30 seconds **without a
-server restart** (no need to bounce the process).
+The live-key count is consulted on **every request** (no cache — a cached
+count was a fail-open window and was removed), so a newly created **or**
+revoked key takes effect on the **next request, without a server restart**.
 
 ### Namespace semantics
 

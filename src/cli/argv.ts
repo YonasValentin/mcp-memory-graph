@@ -125,8 +125,8 @@ current git repository.`,
 
 Per-key RBAC (schema v16): one running server, N API keys, each pinned to a SET
 of namespaces and an access-level ceiling. Legacy single-token MCP_AUTH_TOKEN
-mode is unchanged. A newly created/revoked key takes effect within ~30s without
-a server restart. See docs/MULTI-TENANCY.md.
+mode is unchanged. A newly created/revoked key takes effect on the NEXT request
+(no cache, no restart). See docs/MULTI-TENANCY.md.
 
 Subcommands:
   keys create   mint a key — prints the raw token ONCE (store it now)
