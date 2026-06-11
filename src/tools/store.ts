@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import type { EmbeddingProvider, Memory, MemoryInput, MemoryRow } from '../types.js';
 import { insertMemory, invalidateMemory, getMemoryById, updateMemory, rowToMemory, findNearDuplicates } from '../db/repository.js';
 import { computeContentSignal } from '../search/content-signals.js';
@@ -8,6 +9,7 @@ import { storeExtractedEntities, weaveGraphEdges } from '../graph/entity-store.j
 import { detectConflicts, recordConflicts, type ConflictResult } from '../graph/conflict-resolver.js';
 import { forcedNamespace } from '../lib/tenancy.js';
 import { currentPrincipal } from '../lib/request-context.js';
+import { getConfiguredStoreDefaults } from '../config/loader.js';
 import { detectContradictions, type NliClassifier } from '../graph/contradiction.js';
 import { buildSimilarityEdges } from '../graph/similarity-edges.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
@@ -71,6 +73,25 @@ export async function handleStore(
   accessCeiling?: string[],
 ): Promise<StoreResult> {
   const now = new Date().toISOString();
+
+  // BUG B — config defaults for OMITTED args only: explicit arg > the defaults
+  // the user actually WROTE in a loaded config file > legacy fallback (the
+  // `?? 'global'` / `?? null` below — byte-identical when no config file or no
+  // written defaults exist). Resolved up front so the dedup/NLI partition and
+  // the inserted row see the same (scope, namespace). Tenancy is never
+  // weakened: under MCP_API_NAMESPACE or a principal, server.ts's withForcedNs
+  // has already pinned input.namespace (≠ undefined) before this runs, so the
+  // namespace default can only fill the local single-user case.
+  const cfgDefaults = getConfiguredStoreDefaults();
+  if (cfgDefaults) {
+    if (input.scope === undefined && cfgDefaults.scope !== undefined) {
+      input.scope = cfgDefaults.scope;
+    }
+    if (input.namespace === undefined && cfgDefaults.namespace !== undefined) {
+      input.namespace =
+        cfgDefaults.namespace === 'auto' ? path.basename(process.cwd()) : cfgDefaults.namespace;
+    }
+  }
 
   // M2.1 — inbound secret/poison redaction gate (opt-in via MCP_REDACT_MODE,
   // default 'off' = passthrough). Runs BEFORE embedding + persistence so a leaked

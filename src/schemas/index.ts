@@ -92,7 +92,11 @@ const metadataField = () =>
 export const MemoryStoreSchema = z.object({
   content: z.string().min(1).max(1_000_000).describe('The text content to store as a memory'),
   title: z.string().optional().describe('Short title for the memory'),
-  scope: scopeFieldWithDefault(),
+  // BUG B: no zod default here — 'global' filled in BEFORE the handler could
+  // know the arg was omitted, which made config defaults.scope dead. The
+  // default chain (explicit > config defaults.scope > 'global') lives in
+  // handleStore. Store-only; every other tool keeps scopeFieldWithDefault.
+  scope: scopeField(),
   namespace: namespaceField(),
   document_type: documentTypeField(),
   source: sourceField(),

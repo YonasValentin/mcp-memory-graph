@@ -332,7 +332,7 @@ function installLaunchdPlist(scope: Scope): void {
   dim(`Logs: ${home}/.mcp-memory/consolidation.log`);
 }
 
-function createMcpJson(): void {
+export function createMcpJson(): void {
   const mcpJsonPath = join(process.cwd(), '.mcp.json');
 
   if (existsSync(mcpJsonPath)) {
@@ -341,12 +341,18 @@ function createMcpJson(): void {
   }
 
   const distIndexPath = join(__dirname, '..', 'index.js');
+  // BUG A belt+braces: pin the project config via env so MCP clients whose cwd
+  // differs from the project root still load it (the loader's cwd fallback only
+  // helps clients launched from inside the project). Same path the wizard
+  // writes (resolveWizardConfigPath), so the pin can never drift from it.
+  const { configPath } = resolveWizardConfigPath(true);
   const mcpConfig = {
     mcpServers: {
       'memory-server': {
         type: 'stdio',
         command: 'node',
         args: [distIndexPath],
+        env: { MCP_MEMORY_CONFIG_PATH: configPath },
       },
     },
   };

@@ -105,14 +105,96 @@ const ServerConfigSchema = z.object({
 let cachedConfig: ServerConfig | null = null;
 
 /**
- * Resolves the config file path. Checks the MCP_MEMORY_CONFIG_PATH
- * environment variable first, falling back to ~/.mcp-memory/config.json.
+ * BUG B — the `defaults` keys the user actually WROTE in the loaded config
+ * file. The ServerConfigSchema zod defaults (scope:'project', namespace:'auto')
+ * fill `config.defaults` for every parse — including "no config file at all" —
+ * so consumers that must keep no-config behavior byte-identical (handleStore's
+ * scope/namespace fallback) need this raw-key-gated view instead.
+ */
+export interface ConfiguredStoreDefaults {
+  scope?: MemoryScope;
+  namespace?: string;
+}
+
+let cachedStoreDefaults: ConfiguredStoreDefaults | null = null;
+
+/**
+ * Extract the per-key, user-written `defaults` from the RAW config JSON,
+ * returning the schema-VALIDATED values (so an invalid scope still fails the
+ * parse, never leaks here). Null when the file wrote no usable defaults.
+ */
+function extractWrittenDefaults(raw: unknown, parsed: ServerConfig): ConfiguredStoreDefaults | null {
+  if (raw === null || typeof raw !== 'object') return null;
+  const rawDefaults = (raw as { defaults?: unknown }).defaults;
+  if (rawDefaults === null || typeof rawDefaults !== 'object') return null;
+  const written: ConfiguredStoreDefaults = {};
+  if ((rawDefaults as { scope?: unknown }).scope !== undefined) {
+    written.scope = parsed.defaults.scope;
+  }
+  if ((rawDefaults as { namespace?: unknown }).namespace !== undefined) {
+    written.namespace = parsed.defaults.namespace;
+  }
+  return written.scope !== undefined || written.namespace !== undefined ? written : null;
+}
+
+/**
+ * The store-relevant `defaults` actually written in the loaded config FILE, or
+ * null when no config file was loaded / no defaults section was written.
+ * handleStore uses this for its omitted-arg fallback chain
+ * (explicit arg > config defaults > legacy 'global'/null).
+ */
+export function getConfiguredStoreDefaults(): ConfiguredStoreDefaults | null {
+  getConfig(); // ensure the config (and the defaults snapshot) is loaded
+  return cachedStoreDefaults;
+}
+
+/** The global (home) config location — the lowest-precedence fallback. */
+function homeConfigPath(): string {
+  return path.join(os.homedir(), '.mcp-memory', 'config.json');
+}
+
+/**
+ * Resolves the config file path. Precedence (BUG A — the project config written
+ * by `init --scope project` was previously never read, so every project silently
+ * shared the global home DB):
+ *
+ *   1. MCP_MEMORY_CONFIG_PATH env (explicit pin — also emitted into a project's
+ *      .mcp.json by `init --scope project` for clients whose cwd differs)
+ *   2. <cwd>/.mcp-memory/config.json — only when the file actually exists
+ *   3. ~/.mcp-memory/config.json
+ *
+ * cwd and env are stable for the life of a process, and getConfig() caches the
+ * loaded result, so resolution is effectively computed once per process start.
  */
 function resolveConfigPath(): string {
   if (process.env.MCP_MEMORY_CONFIG_PATH) {
     return process.env.MCP_MEMORY_CONFIG_PATH;
   }
-  return path.join(os.homedir(), '.mcp-memory', 'config.json');
+  const projectConfigPath = path.join(process.cwd(), '.mcp-memory', 'config.json');
+  if (fs.existsSync(projectConfigPath)) {
+    return projectConfigPath;
+  }
+  return homeConfigPath();
+}
+
+/**
+ * BUG A: a RELATIVE storage.db_path / vault.path inside a PROJECT config (any
+ * loaded config that is not the home config — cwd-resolved or env-pointed) must
+ * anchor at that config's directory parent (`<project>` for the canonical
+ * `<project>/.mcp-memory/config.json` layout), never at whatever cwd the client
+ * process happens to use. The HOME config is deliberately skipped so its
+ * behavior stays byte-identical (relative values pass through raw, as before).
+ */
+function anchorProjectRelativePaths(config: ServerConfig, configPath: string): void {
+  const absConfigPath = path.resolve(configPath);
+  if (absConfigPath === homeConfigPath()) return;
+  const projectRoot = path.dirname(path.dirname(absConfigPath));
+  if (config.storage.db_path && !path.isAbsolute(config.storage.db_path)) {
+    config.storage.db_path = path.resolve(projectRoot, config.storage.db_path);
+  }
+  if (config.vault.path && !path.isAbsolute(config.vault.path)) {
+    config.vault.path = path.resolve(projectRoot, config.vault.path);
+  }
 }
 
 /**
@@ -130,13 +212,20 @@ export function getConfig(): ServerConfig {
 
   const configPath = resolveConfigPath();
   let raw: unknown = {};
+  let loadedFromFile = false;
 
   if (fs.existsSync(configPath)) {
     const text = fs.readFileSync(configPath, 'utf-8');
     raw = JSON.parse(text);
+    loadedFromFile = true;
   }
 
-  cachedConfig = ServerConfigSchema.parse(raw) as ServerConfig;
+  const parsed = ServerConfigSchema.parse(raw) as ServerConfig;
+  if (loadedFromFile) {
+    anchorProjectRelativePaths(parsed, configPath);
+  }
+  cachedStoreDefaults = loadedFromFile ? extractWrittenDefaults(raw, parsed) : null;
+  cachedConfig = parsed;
   return cachedConfig;
 }
 
@@ -147,6 +236,7 @@ export function getConfig(): ServerConfig {
  */
 export function clearConfigCache(): void {
   cachedConfig = null;
+  cachedStoreDefaults = null;
 }
 
 /**

@@ -10,6 +10,13 @@ export default defineConfig({
     hookTimeout: 15000,
     env: {
       MCP_LOG_LEVEL: 'error',
+      // No-config baseline (CI parity): pin the loader to a path that can NEVER
+      // exist (children of /dev/null are impossible on POSIX; nonexistent on
+      // Windows too), so a developer's real ~/.mcp-memory/config.json — whose
+      // `defaults` section now feeds handleStore's scope/namespace fallback —
+      // can't leak machine-specific behavior into the suite. Tests that
+      // exercise config resolution set or delete this var themselves.
+      MCP_MEMORY_CONFIG_PATH: '/dev/null/mcp-memory-no-config/config.json',
     },
     coverage: {
       provider: 'v8',
