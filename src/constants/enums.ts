@@ -44,6 +44,36 @@ export const ENTITY_TYPES = [
   'work_item',
   'pull_request',
   'commit',
+  // Org-ontology kinds (enterprise-brain recipe, docs/ENTERPRISE-BRAIN.md):
+  // declared org charts need teams/departments, SOPs and AI agents as
+  // first-class nodes next to people/projects/tools.
+  'team',
+  'department',
+  'sop',
+  'agent',
+] as const;
+
+/**
+ * Knowledge-graph relationship kinds for memory_extract_entities — the single
+ * source for the Zod enum AND the TS union (the handler previously hardcoded
+ * its own copy). Closed set on purpose: free-form predicates sprawl into
+ * near-duplicates ('manage'/'manages') that fragment graph traversal.
+ */
+export const RELATIONSHIP_TYPES = [
+  // software-ecosystem set (original)
+  'uses',
+  'created_by',
+  'depends_on',
+  'related_to',
+  'part_of',
+  'works_with',
+  // org-ontology set (enterprise-brain recipe)
+  'manages',
+  'reports_to',
+  'member_of',
+  'works_on',
+  'owns',
+  'follows',
 ] as const;
 
 /** Categories of auto-extracted learnings. */

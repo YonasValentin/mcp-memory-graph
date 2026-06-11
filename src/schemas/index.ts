@@ -7,6 +7,7 @@ import {
   SEARCH_MODES,
   CONTENT_TYPES,
   ENTITY_TYPES,
+  RELATIONSHIP_TYPES,
   LEARNING_CATEGORIES,
   SORT_FIELDS,
 } from '../constants/enums.js';
@@ -1027,7 +1028,7 @@ export const MemoryExtractEntitiesSchema = z.object({
     .array(z.object({
       source: z.string().describe('Source entity name'),
       target: z.string().describe('Target entity name'),
-      type: z.enum(['uses', 'created_by', 'depends_on', 'related_to', 'part_of', 'works_with'])
+      type: z.enum(RELATIONSHIP_TYPES)
         .describe('Relationship type'),
     }))
     .optional()

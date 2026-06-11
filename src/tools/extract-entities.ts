@@ -6,7 +6,7 @@ import {
   findOrCreateRelationship,
   normalizeName,
 } from '../graph/entity-store.js';
-import type { ENTITY_TYPES } from '../constants/enums.js';
+import type { ENTITY_TYPES, RELATIONSHIP_TYPES } from '../constants/enums.js';
 import { forcedNamespace } from '../lib/tenancy.js';
 import { currentPrincipal } from '../lib/request-context.js';
 
@@ -21,7 +21,9 @@ interface EntityInput {
 interface RelationshipInput {
   source: string;
   target: string;
-  type: 'uses' | 'created_by' | 'depends_on' | 'related_to' | 'part_of' | 'works_with';
+  // Derived from the canonical RELATIONSHIP_TYPES tuple (same lockstep rule as
+  // EntityInput.type above) — this was a hardcoded copy that drifted.
+  type: (typeof RELATIONSHIP_TYPES)[number];
 }
 
 interface ExtractEntitiesInput {
