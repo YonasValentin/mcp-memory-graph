@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import { forcedNamespace, principalAccessCeiling } from '../lib/tenancy.js';
+import { reconcileBlocked } from '../lib/reconcile-guard.js';
 import { currentPrincipal } from '../lib/request-context.js';
 import { randomUUID, createHash } from 'node:crypto';
 import type {
@@ -226,18 +227,15 @@ export async function syncVault(
             // a duplicate. Delete the prior row first, then re-insert.
             const existing = getMemoryById(db, row.id);
             if (existing) {
-              // §6 + tenancy (re-battle-7, 11th instance): a frontmatter id pointing
-              // at a row OUTSIDE this sync's namespace, or ABOVE the principal
-              // ceiling, must NOT be reconciled — otherwise vault_sync is a
-              // delete-by-id / declassify / cross-tenant-relocate primitive (the
-              // import-overwrite breach on the vault path). row.namespace is the
-              // forced/principal namespace, so a mismatch means a foreign target;
-              // mirror import.ts — leave the row intact and skip this file.
-              const ceiling: readonly string[] | undefined = principalAccessCeiling();
-              if (
-                existing.namespace !== row.namespace ||
-                (ceiling !== undefined && !ceiling.includes(existing.access_level))
-              ) {
+              // §6 + tenancy (re-battle-7, 11th instance; now the shared
+              // reconcileBlocked decision — the durable write-path fix): a
+              // frontmatter id pointing at a row OUTSIDE this sync's namespace, or
+              // ABOVE the principal ceiling, must NOT be reconciled — otherwise
+              // vault_sync is a delete-by-id / declassify / cross-tenant-relocate
+              // primitive (the import-overwrite breach on the vault path).
+              // row.namespace is the forced/principal namespace, so the ns check is
+              // unconditional here; leave the row intact and skip this file.
+              if (reconcileBlocked(existing, row.namespace, principalAccessCeiling())) {
                 errors.push(
                   `Frontmatter id ${row.id} in ${entry.relativePath} targets a ` +
                     `foreign-namespace or over-ceiling memory — skipped (not reconciled)`,
@@ -575,15 +573,11 @@ async function ingestLargeFile(
     const existing = getMemoryById(db, parentRow.id);
     if (existing) {
       // §6 + tenancy (re-battle-7, 11th instance — the large-file twin of the
-      // smallFiles guard): never delete/overwrite a row outside this sync's
-      // namespace or above the principal ceiling by frontmatter id. Skip the
-      // whole reconcile+insert so vault_sync can't relocate/declassify/destroy a
-      // foreign or over-ceiling memory.
-      const ceiling: readonly string[] | undefined = principalAccessCeiling();
-      if (
-        existing.namespace !== parentRow.namespace ||
-        (ceiling !== undefined && !ceiling.includes(existing.access_level))
-      ) {
+      // smallFiles guard, sharing reconcileBlocked): never delete/overwrite a row
+      // outside this sync's namespace or above the principal ceiling by frontmatter
+      // id. Skip the whole reconcile+insert so vault_sync can't relocate /
+      // declassify / destroy a foreign or over-ceiling memory.
+      if (reconcileBlocked(existing, parentRow.namespace, principalAccessCeiling())) {
         return;
       }
       deleteMemory(db, parentRow.id);

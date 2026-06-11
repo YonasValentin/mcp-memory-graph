@@ -131,17 +131,17 @@ describe('§6 structural coverage — every corpus content/title read is ceiling
   // WRITE — its V2_DEFERRED "egress only" status does NOT cover the delete/insert
   // path. Both reconcile sites (smallFiles + large-file) must refuse to overwrite
   // a row outside the sync's namespace or above the principal ceiling, or
-  // vault_sync becomes a cross-tenant delete/declassify primitive. Source-pinned
-  // (the guard lives in sync.ts, not a registration).
-  it('vault_sync gates both reconcile-by-id paths on namespace + ceiling', () => {
+  // vault_sync becomes a cross-tenant delete/declassify primitive. The guard now
+  // lives in the shared `reconcileBlocked` decision (task #11) — the full write
+  // path is enforced by `write-path-coverage-tripwire`; this keeps the vault_sync
+  // pin local to the read-tripwire's V2_DEFERRED note.
+  it('vault_sync gates both reconcile-by-id paths via reconcileBlocked + ceiling', () => {
     const syncSrc = readFileSync(
       path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../vault/sync.ts'),
       'utf8',
     );
-    // both delete-by-frontmatter-id sites must be preceded by the foreign-ns /
-    // over-ceiling guard (counted: two reconcile paths).
-    const guards = syncSrc.match(/existing\.namespace !== \w+\.namespace/g) ?? [];
-    expect(guards.length, 'both vault_sync reconcile paths must carry the guard').toBeGreaterThanOrEqual(2);
+    const guards = syncSrc.match(/reconcileBlocked\(/g) ?? [];
+    expect(guards.length, 'both vault_sync reconcile paths must call reconcileBlocked').toBeGreaterThanOrEqual(2);
     expect(syncSrc).toContain('principalAccessCeiling()');
   });
 });

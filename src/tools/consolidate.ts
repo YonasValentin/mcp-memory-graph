@@ -15,6 +15,7 @@ import { contextualizeForEmbedding } from '../search/contextual.js';
 import { computeRetention } from '../search/temporal.js';
 import { l2FromCosineSim } from '../search/scoring.js';
 import { DEDUP_COSINE_SIMILARITY } from '../constants/thresholds.js';
+import { reconcileBlocked } from '../lib/reconcile-guard.js';
 
 /**
  * Below this access count a memory is "weakly held" and eligible for the
@@ -374,14 +375,13 @@ export async function handleConsolidate(
           if (!secondaryRow) continue;
 
           // §6 (re-battle-3): findNearDuplicates scans the (scope,namespace)
-          // partition only — a candidate can be ABOVE the caller's ceiling. Never
-          // merge/delete it (and never echo its content in the memory.deleted
-          // event). The merge-SOURCE scan is already ceiling-filtered via
-          // filterClause; this guards the vec0 TARGET side.
-          if (
-            input.access_level_ceiling &&
-            !input.access_level_ceiling.includes(secondaryRow.access_level)
-          ) {
+          // partition only — so the candidate's namespace already matches (pass
+          // targetNamespace=undefined), but it can be ABOVE the caller's ceiling.
+          // Never merge/delete an over-ceiling row (and never echo its content in
+          // the memory.deleted event). The merge-SOURCE scan is already
+          // ceiling-filtered via filterClause; reconcileBlocked guards the vec0
+          // TARGET side — the same by-id reconcile decision as import/vault_sync.
+          if (reconcileBlocked(secondaryRow, undefined, input.access_level_ceiling)) {
             continue;
           }
 
