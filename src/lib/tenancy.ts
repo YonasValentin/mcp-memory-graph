@@ -1,8 +1,9 @@
 import type Database from 'better-sqlite3';
 import path from 'node:path';
+import { currentPrincipal } from './request-context.js';
 
 /**
- * T1 — single source of truth for MCP_API_NAMESPACE tenancy.
+ * T1 — single source of truth for namespace tenancy.
  *
  * A shared/remote instance can be pinned to exactly one namespace via the
  * MCP_API_NAMESPACE env var. When set, BOTH surfaces (the MCP stdio tools in
@@ -17,14 +18,33 @@ import path from 'node:path';
  * the behaviour is provably identical and the security boundary lives in one
  * place. Unset (the local stdio default) → no scoping; single-user setups are
  * unchanged.
+ *
+ * RBAC v1 (§2): each helper resolves in PRIORITY ORDER —
+ *   1. a per-request {@link currentPrincipal} context (set by the HTTP auth
+ *      middleware for API-key callers) → PRINCIPAL mode: the helper is
+ *      namespace-SET-aware (member → keep, unset → default ctx.namespaces[0],
+ *      foreign → throw 'Namespace not permitted'; by-id/vault checks are set
+ *      membership);
+ *   2. else the MCP_API_NAMESPACE env pin (legacy mode) — byte-identical to
+ *      the pre-RBAC behaviour;
+ *   3. else undefined (local single-user) — unchanged.
+ * The explicit-deny throw (never a silent redirect) is deliberate: silently
+ * rewriting a caller-chosen foreign namespace would corrupt writes.
  */
 
+/** The deny message principal-mode helpers throw; routes map it to a 403. */
+export const NAMESPACE_NOT_PERMITTED = 'Namespace not permitted';
+
 /**
- * The forced namespace, or undefined when scoping is off. Length-checked so an
- * empty `MCP_API_NAMESPACE=""` is treated as unset (not a literal empty
- * namespace), matching both surfaces' previous behaviour.
+ * The forced namespace, or undefined when scoping is off. Principal mode →
+ * ctx.namespaces[0] (the per-request default; set-aware callers use the
+ * helpers below). Env value is length-checked so an empty
+ * `MCP_API_NAMESPACE=""` is treated as unset (not a literal empty namespace),
+ * matching both surfaces' previous behaviour.
  */
 export function forcedNamespace(): string | undefined {
+  const ctx = currentPrincipal();
+  if (ctx) return ctx.namespaces[0];
   const ns = process.env.MCP_API_NAMESPACE;
   return ns && ns.length > 0 ? ns : undefined;
 }
@@ -60,8 +80,17 @@ export function noteTenancyMode(): void {
 /**
  * Force the top-level `namespace` option to the configured namespace (the MCP
  * read/query tools carry namespace at the top level). No-op when scoping is off.
+ * Principal mode: a member namespace is KEPT (a multi-namespace key picks its
+ * effective namespace per call), unset defaults to ctx.namespaces[0], and a
+ * foreign namespace throws — explicit deny, never a silent redirect.
  */
 export function scopeToNamespace<T extends { namespace?: string }>(opts: T): T {
+  const ctx = currentPrincipal();
+  if (ctx) {
+    if (opts.namespace === undefined) return { ...opts, namespace: ctx.namespaces[0] };
+    if (ctx.namespaces.includes(opts.namespace)) return opts;
+    throw new Error(NAMESPACE_NOT_PERMITTED);
+  }
   const ns = forcedNamespace();
   return ns ? { ...opts, namespace: ns } : opts;
 }
@@ -69,12 +98,31 @@ export function scopeToNamespace<T extends { namespace?: string }>(opts: T): T {
 /**
  * Force the namespace nested under `filter` (the memory_query_structured shape
  * carries namespace under `filter`, not top-level). No-op when scoping is off.
+ * Principal mode mirrors {@link scopeToNamespace} on `filter.namespace`.
  */
 export function scopeFilterToNamespace<T extends { filter?: { namespace?: string } }>(
   opts: T,
 ): T {
+  const ctx = currentPrincipal();
+  if (ctx) {
+    const requested = opts.filter?.namespace;
+    if (requested === undefined) {
+      return { ...opts, filter: { ...opts.filter, namespace: ctx.namespaces[0] } };
+    }
+    if (ctx.namespaces.includes(requested)) return opts;
+    throw new Error(NAMESPACE_NOT_PERMITTED);
+  }
   const ns = forcedNamespace();
   return ns ? { ...opts, filter: { ...opts.filter, namespace: ns } } : opts;
+}
+
+function memoryNamespace(
+  db: Database.Database,
+  id: string,
+): { namespace: string | null } | undefined {
+  return db
+    .prepare<[string], { namespace: string | null }>('SELECT namespace FROM memories WHERE id = ?')
+    .get(id);
 }
 
 /**
@@ -82,13 +130,19 @@ export function scopeFilterToNamespace<T extends { filter?: { namespace?: string
  * under the current scoping. A scoped instance must not reveal a memory
  * belonging to another namespace by id. Returns true (no restriction) when
  * scoping is off. The REST surface wraps this in its 404-throwing guard.
+ * Principal mode: SET membership (row.namespace ∈ ctx.namespaces); a missing
+ * row stays false — existence non-confirmation preserved. A NULL-namespace row
+ * is never a member of any principal set (the key grants named namespaces only).
  */
 export function idIsInForcedNamespace(db: Database.Database, id: string): boolean {
+  const ctx = currentPrincipal();
+  if (ctx) {
+    const row = memoryNamespace(db, id);
+    return !!row && row.namespace !== null && ctx.namespaces.includes(row.namespace);
+  }
   const ns = forcedNamespace();
   if (!ns) return true;
-  const row = db
-    .prepare<[string], { namespace: string | null }>('SELECT namespace FROM memories WHERE id = ?')
-    .get(id);
+  const row = memoryNamespace(db, id);
   return !!row && row.namespace === ns;
 }
 
@@ -100,8 +154,12 @@ export function idIsInForcedNamespace(db: Database.Database, id: string): boolea
  * vault a pinned tenant may touch is the one whose basename equals the forced
  * namespace. Returns true (no restriction) when scoping is off. A trailing
  * separator is tolerated so `/v/edc` and `/v/edc/` both resolve to `edc`.
+ * Principal mode: SET membership — any of the key's namespaces names a vault
+ * it may touch.
  */
 export function vaultPathInForcedNamespace(vaultPath: string): boolean {
+  const ctx = currentPrincipal();
+  if (ctx) return ctx.namespaces.includes(path.basename(vaultPath));
   const ns = forcedNamespace();
   if (!ns) return true;
   return path.basename(vaultPath) === ns;

@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { enqueueDelivery, listWebhookTargets, targetWantsEvent } from './store.js';
 import { logger } from '../lib/logger.js';
 import { forcedNamespace } from '../lib/tenancy.js';
+import { currentPrincipal } from '../lib/request-context.js';
 
 /**
  * Event emitter for the active-infrastructure bus (M3.1). Mutation tool handlers
@@ -72,12 +73,23 @@ export function emitMemoryEvent(
     // also means no foreign delivery is ever enqueued, so the shared dispatch
     // queue carries nothing cross-tenant (closes the WH-1 dispatch trigger too).
     // Unforced (single-tenant) behaviour is unchanged: NULL = match-all.
+    //
+    // RBAC §5: under a PRINCIPAL the gate is the EVENT's own partition
+    // (payload.namespace), not the key default — forcedNamespace() is
+    // namespaces[0] there, which would mis-route a multi-namespace key's write
+    // into namespaces[1] (matching [0]'s targets, skipping [1]'s). The payload
+    // namespace comes from the already-scoped row, so it is a member of the key
+    // set by construction; wildcards stay dropped, and a namespace-less payload
+    // matches nothing (fail closed).
+    const ctx = currentPrincipal();
     const fns = forcedNamespace();
     let enqueued = 0;
     for (const t of targets) {
       if (!targetWantsEvent(t, eventType)) continue;
       if (t.scope != null && t.scope !== (payload.scope ?? null)) continue;
-      if (fns !== undefined) {
+      if (ctx) {
+        if (t.namespace == null || t.namespace !== (payload.namespace ?? null)) continue;
+      } else if (fns !== undefined) {
         if (t.namespace !== fns) continue;
       } else if (t.namespace != null && t.namespace !== (payload.namespace ?? null)) {
         continue;

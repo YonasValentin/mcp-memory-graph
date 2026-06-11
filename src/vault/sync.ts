@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import { forcedNamespace } from '../lib/tenancy.js';
+import { currentPrincipal } from '../lib/request-context.js';
 import { randomUUID, createHash } from 'node:crypto';
 import type {
   EmbeddingProvider,
@@ -452,7 +453,18 @@ function buildMemoryRow(
   // the directory basename). Unforced (single-user), honor frontmatter so a
   // memory_export_vault → vault_sync round-trip reconciles to the originating
   // memory instead of minting a duplicate under namespace=<vault>.
-  const forcedNs = forcedNamespace();
+  //
+  // RBAC §5: under a PRINCIPAL the legacy invariant "pin == vault basename"
+  // (the env guard enforces equality before sync runs) generalizes to the
+  // MEMBER basename — pinning to namespaces[0] would corrupt a multi-namespace
+  // key's second vault (vault "b" rows planted into "a"). A NON-member basename
+  // is only reachable when a caller skips vaultPathInForcedNamespace; fall back
+  // to the key default so writes can never leave the key's own namespace set.
+  // Frontmatter stays ignored under a principal, exactly as under env forcing.
+  const ctx = currentPrincipal();
+  const forcedNs = ctx
+    ? (ctx.namespaces.includes(vaultName) ? vaultName : ctx.namespaces[0])
+    : forcedNamespace();
   return {
     id: fmString(fm, 'id') ?? randomUUID(),
     scope: fmScope && VALID_SCOPES.has(fmScope) ? fmScope : 'project',

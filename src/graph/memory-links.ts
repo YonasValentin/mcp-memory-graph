@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import { chunkIds } from './communities.js';
 import { forcedNamespace } from '../lib/tenancy.js';
+import { currentPrincipal } from '../lib/request-context.js';
 
 /** Provenance of an inferred edge — graphify's honest audit model. */
 export type EdgeConfidence = 'EXTRACTED' | 'INFERRED' | 'AMBIGUOUS';
@@ -127,11 +128,24 @@ function edgePartition(
  * read surface validates the endpoint regardless. Returns the SQL fragment +
  * params that constrain `<col>` (the other endpoint) to the forced namespace, or
  * empty when unforced. NULL namespace stored as '' — compare via COALESCE.
+ *
+ * RBAC §5: under a PRINCIPAL the guard is SET-membership (IN the key's
+ * namespaces) — equality against namespaces[0] would hide a multi-namespace
+ * key's own edges whose other endpoint lives in namespaces[1..n]. The visible
+ * set is exactly the rows the key may read by id (idIsInForcedNamespace).
  */
 function foreignEndpointGuard(col: 'source_memory_id' | 'target_memory_id'): {
   sql: string;
   params: string[];
 } {
+  const ctx = currentPrincipal();
+  if (ctx) {
+    const marks = ctx.namespaces.map(() => '?').join(', ');
+    return {
+      sql: ` AND (SELECT COALESCE(namespace, '') FROM memories WHERE id = memory_links.${col}) IN (${marks})`,
+      params: [...ctx.namespaces],
+    };
+  }
   const ns = forcedNamespace();
   if (!ns) return { sql: '', params: [] };
   return {

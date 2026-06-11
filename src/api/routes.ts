@@ -37,7 +37,12 @@ import {
 } from '../schemas/index.js';
 import { logger } from '../lib/logger.js';
 // T1: shared MCP_API_NAMESPACE tenancy policy (one source for MCP + REST).
-import { forcedNamespace, idIsInForcedNamespace } from '../lib/tenancy.js';
+import {
+  forcedNamespace,
+  idIsInForcedNamespace,
+  scopeToNamespace,
+  NAMESPACE_NOT_PERMITTED,
+} from '../lib/tenancy.js';
 import { ReloadGate, maybeBustGraphCache } from '../lib/hot-reload.js';
 import { resolveDbPath } from '../db/db-path.js';
 import { metrics } from './metrics.js';
@@ -108,6 +113,12 @@ function sendError(res: Response, err: unknown): void {
     return;
   }
   const message = err instanceof Error ? err.message : String(err);
+  // RBAC §5: the tenancy helpers throw an explicit deny when a principal names
+  // a namespace outside its key's set — surface it as a clean 403, never a 500.
+  if (message === NAMESPACE_NOT_PERMITTED) {
+    res.status(403).json({ error: message, code: 'NAMESPACE_NOT_PERMITTED', requestId });
+    return;
+  }
   // Safe-by-default: only surface the raw internal message in explicit
   // development. When NODE_ENV is unset (the default for a locally-run binary)
   // or 'production', return a generic message so better-sqlite3 errors, file
@@ -187,7 +198,7 @@ export function registerApiRoutes(
   // ── GET /api/stats ──────────────────────────────────────────────────────
   router.get('/api/stats', asyncHandler('GET /api/stats', (req, res) => {
     const q = parseOrThrow(ApiStatsQuerySchema, req.query);
-    const result = handleStats(getDb(), { ...q, namespace: forcedApiNamespace() ?? q.namespace });
+    const result = handleStats(getDb(), { ...q, namespace: scopeToNamespace({ namespace: q.namespace }).namespace });
     res.json(result);
   }));
 
@@ -197,7 +208,10 @@ export function registerApiRoutes(
     const result = await handleSearch(getDb(), await getEmbedder(), {
       query: q.q,
       scope: q.scope,
-      namespace: forcedApiNamespace() ?? q.namespace,
+      // RBAC §5: scopeToNamespace replaces the ad-hoc `forcedApiNamespace() ??`
+      // — env-forced/unforced byte-identical; a principal gets member-keep /
+      // unset-default / foreign-throw (mapped to 403 in sendError).
+      namespace: scopeToNamespace({ namespace: q.namespace }).namespace,
       department: q.department,
       document_type: q.document_type,
       tags: q.tags,
@@ -216,7 +230,7 @@ export function registerApiRoutes(
   // ── GET /api/memories ───────────────────────────────────────────────────
   router.get('/api/memories', asyncHandler('GET /api/memories', (req, res) => {
     const q = parseOrThrow(ApiListQuerySchema, req.query);
-    const result = handleList(getDb(), { ...q, namespace: forcedApiNamespace() ?? q.namespace });
+    const result = handleList(getDb(), { ...q, namespace: scopeToNamespace({ namespace: q.namespace }).namespace });
     res.json(result);
   }));
 
@@ -345,7 +359,7 @@ export function registerApiRoutes(
   // ── GET /api/manifest ─────────────────────────────────────────────────
   router.get('/api/manifest', asyncHandler('GET /api/manifest', (req, res) => {
     const q = parseOrThrow(ApiManifestQuerySchema, req.query);
-    const result = handleManifest(getDb(), { ...q, namespace: forcedApiNamespace() ?? q.namespace });
+    const result = handleManifest(getDb(), { ...q, namespace: scopeToNamespace({ namespace: q.namespace }).namespace });
     res.json(result);
   }));
 }
@@ -447,7 +461,9 @@ export function registerPublishRoutes(
     res.json(
       handleInsights(getDb(), {
         scope: typeof req.query.scope === 'string' ? req.query.scope : undefined,
-        namespace: forcedApiNamespace() ?? (typeof req.query.namespace === 'string' ? req.query.namespace : undefined),
+        namespace: scopeToNamespace({
+          namespace: typeof req.query.namespace === 'string' ? req.query.namespace : undefined,
+        }).namespace,
         limit: Number.isFinite(limit) ? limit : undefined,
       }),
     );
@@ -458,7 +474,9 @@ export function registerPublishRoutes(
     res.json(
       handleHealth(getDb(), {
         scope: typeof req.query.scope === 'string' ? req.query.scope : undefined,
-        namespace: forcedApiNamespace() ?? (typeof req.query.namespace === 'string' ? req.query.namespace : undefined),
+        namespace: scopeToNamespace({
+          namespace: typeof req.query.namespace === 'string' ? req.query.namespace : undefined,
+        }).namespace,
       }),
     );
   }));
@@ -475,6 +493,15 @@ export function registerPublishRoutes(
 
   router.post('/api/webhooks', asyncHandler('POST /api/webhooks', async (req, res) => {
     const b = (req.body ?? {}) as Record<string, unknown>;
+    // RBAC §5: the pinned tenant for this register is scopeToNamespace over the
+    // caller's namespace — env-forced byte-identical (override); a principal
+    // gets member-keep / unset-default / foreign-throw. Computed BEFORE the
+    // try so the deny surfaces as the 403 mapping, not the 400 wrap below.
+    const pinnedNs =
+      forcedApiNamespace() !== undefined
+        ? scopeToNamespace({ namespace: typeof b.namespace === 'string' ? b.namespace : undefined })
+            .namespace
+        : undefined;
     try {
       res.json(
         await handleWebhook(getDb(), {
@@ -484,7 +511,7 @@ export function registerPublishRoutes(
           events: typeof b.events === 'string' ? b.events : undefined,
           scope: typeof b.scope === 'string' ? b.scope : undefined,
           namespace: typeof b.namespace === 'string' ? b.namespace : undefined,
-        }, forcedApiNamespace()),
+        }, pinnedNs),
       );
     } catch (err) {
       throw new HttpError(400, 'INVALID_INPUT', err instanceof Error ? err.message : 'Invalid webhook target');

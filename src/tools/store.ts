@@ -7,6 +7,7 @@ import { extractEntitiesRegex } from '../graph/entity-extractor.js';
 import { storeExtractedEntities, weaveGraphEdges } from '../graph/entity-store.js';
 import { detectConflicts, recordConflicts, type ConflictResult } from '../graph/conflict-resolver.js';
 import { forcedNamespace } from '../lib/tenancy.js';
+import { currentPrincipal } from '../lib/request-context.js';
 import { detectContradictions, type NliClassifier } from '../graph/contradiction.js';
 import { buildSimilarityEdges } from '../graph/similarity-edges.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
@@ -359,9 +360,13 @@ export async function handleStore(
         // namespace, so one user's global + per-project memories keep sharing one
         // concept row (cross-project bridge) exactly as pre-v14. Scope is stamped
         // informationally; it never partitions identity.
+        // RBAC §5: under a PRINCIPAL the per-call tenant is the ROW's effective
+        // namespace (scopeToNamespace already validated it against the key set);
+        // namespaces[0] would cross-contaminate an explicit member-namespace
+        // store into the default partition. Legacy env / unscoped unchanged.
         storeExtractedEntities(db, row.id, entities, 'regex', {
           scope: row.scope,
-          namespace: forcedNamespace() ?? '',
+          namespace: currentPrincipal() ? (row.namespace ?? '') : (forcedNamespace() ?? ''),
         });
       }
     } catch (err) /* c8 ignore start */ {

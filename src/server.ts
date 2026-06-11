@@ -365,10 +365,16 @@ export function createServer(): McpServer {
       const parsed = MemoryDeleteSchema.parse(input);
       // H3: a by-id delete must respect a forced namespace; a bulk filter-delete
       // must be confined to the forced namespace so it can't reach across tenants.
+      // RBAC §5: the confining namespace comes from scopeFilterToNamespace —
+      // env-forced is byte-identical (filter.namespace overridden to the pin);
+      // a principal gets member-keep / unset-default / foreign-throw. Only
+      // applied when a filter exists, so a pure by-id delete is never widened.
       if (parsed.id && !idInForcedNs(parsed.id)) throw new Error('Memory not found');
       const fns = forcedNamespace();
       const scoped =
-        fns && parsed.filter ? { ...parsed, filter: { ...parsed.filter, namespace: fns } } : parsed;
+        fns && parsed.filter
+          ? { ...parsed, filter: { ...parsed.filter, namespace: scopeFilterToNamespace(parsed).filter?.namespace } }
+          : parsed;
       return handleDelete(getDb(), scoped);
     }),
   );
@@ -868,7 +874,15 @@ export function createServer(): McpServer {
       // battle-v16 WH-TENANCY: pin webhook management to the forced tenant so a
       // register can't create a wildcard/foreign target and list/delete can't
       // reach another tenant's targets.
-      return handleWebhook(getDb(), parsed, forcedNamespace());
+      // RBAC §5: under any forcing (env OR principal) the pinned tenant for this
+      // call is scopeToNamespace over the caller's namespace — env-forced is
+      // byte-identical (override); a principal gets member-keep / unset-default /
+      // foreign-throw. Unforced stays undefined (handleWebhook's unpinned mode).
+      const pinnedNs =
+        forcedNamespace() !== undefined
+          ? scopeToNamespace({ namespace: parsed.namespace }).namespace
+          : undefined;
+      return handleWebhook(getDb(), parsed, pinnedNs);
     }),
   );
 
