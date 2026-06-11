@@ -6,6 +6,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- Official MCP Registry support: `mcpName` (`io.github.yonasvalentin/mcp-memory-graph`)
+  in package.json for npm ownership validation, a `server.json` manifest, and a
+  release-workflow job that publishes to registry.modelcontextprotocol.io
+  (GitHub OIDC, version synced from the tag) right after the npm publish.
+- npm metadata polish: `author`, `exports` map, and
+  `publishConfig` (`access: public`, `provenance: true`); npm version and
+  download badges in the README; the quick start now leads with
+  `npm install -g mcp-memory-graph`.
+
 ### Changed
 
 - Documentation overhaul for readability: README restructured around a

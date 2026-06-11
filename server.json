@@ -1,0 +1,36 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.yonasvalentin/mcp-memory-graph",
+  "description": "Local-first memory for Claude Code and any MCP client: hybrid vector + knowledge-graph search, bi-temporal recall, Obsidian sync. Runs 100% on your machine, $0/token.",
+  "version": "2.3.0",
+  "websiteUrl": "https://github.com/YonasValentin/mcp-memory-graph#readme",
+  "repository": {
+    "url": "https://github.com/YonasValentin/mcp-memory-graph",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "mcp-memory-graph",
+      "version": "2.3.0",
+      "runtimeHint": "npx",
+      "transport": { "type": "stdio" },
+      "environmentVariables": [
+        {
+          "name": "MCP_MEMORY_DB_PATH",
+          "description": "SQLite database file location (default ~/.mcp-memory/memory.db)",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "MCP_MEMORY_MODEL",
+          "description": "HuggingFace embedding model name (default Xenova/all-MiniLM-L6-v2)",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

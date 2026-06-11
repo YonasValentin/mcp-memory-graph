@@ -1,5 +1,7 @@
 # MCP Memory Graph
 
+[![npm version](https://img.shields.io/npm/v/mcp-memory-graph?logo=npm&color=cb3837)](https://www.npmjs.com/package/mcp-memory-graph)
+[![npm downloads](https://img.shields.io/npm/dm/mcp-memory-graph?color=cb3837)](https://www.npmjs.com/package/mcp-memory-graph)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial-1f6feb.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)](./package.json)
 [![MCP server](https://img.shields.io/badge/MCP-server-111111)](https://modelcontextprotocol.io/)
@@ -26,7 +28,13 @@ AI assistants forget everything between sessions. Your decisions, your patterns,
 
 You need Node.js 20 or newer and Claude Code installed.
 
-**1. Clone and build:**
+**1. Get the server.** From npm (easiest):
+
+```bash
+npm install -g mcp-memory-graph
+```
+
+Or from source:
 
 ```bash
 git clone https://github.com/YonasValentin/mcp-memory-graph.git
@@ -38,6 +46,10 @@ npm run build
 **2. Register the server with Claude Code:**
 
 ```bash
+# npm install:
+claude mcp add memory-server -- npx -y mcp-memory-graph
+
+# from source:
 claude mcp add memory-server node /path/to/mcp-memory-graph/dist/index.js
 ```
 

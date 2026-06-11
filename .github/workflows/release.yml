@@ -37,3 +37,29 @@ jobs:
             exit 1
           fi
       - run: npm publish --provenance --access public
+
+  # Publish to the official MCP Registry (registry.modelcontextprotocol.io)
+  # after the npm package is live. Ownership is proven by the mcpName field in
+  # the published package.json; namespace auth uses GitHub OIDC (no secret).
+  mcp-registry:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/').tar.gz" | tar xz mcp-publisher
+      - name: Sync server.json version to the tag
+        run: |
+          V="${GITHUB_REF_NAME#v}" node -e "
+            const fs = require('fs');
+            const j = JSON.parse(fs.readFileSync('server.json', 'utf8'));
+            j.version = process.env.V;
+            for (const p of j.packages) p.version = process.env.V;
+            fs.writeFileSync('server.json', JSON.stringify(j, null, 2) + '\n');
+          "
+      - run: ./mcp-publisher login github-oidc
+      - run: ./mcp-publisher publish
