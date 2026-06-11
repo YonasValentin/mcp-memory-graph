@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.yonasvalentin/mcp-memory-graph",
+  "name": "io.github.YonasValentin/mcp-memory-graph",
   "description": "Local-first memory for Claude Code and any MCP client: hybrid search + knowledge graph, $0/token.",
   "version": "2.3.0",
   "websiteUrl": "https://github.com/YonasValentin/mcp-memory-graph#readme",
