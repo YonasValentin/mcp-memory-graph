@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-06-11
+
+Per-key RBAC v1, a fresh-eyes sandbox E2E wave over install/solo/team flows
+(three simulated humans following only the README), and a hardening band
+adopted from a competitive sweep. All changes backward compatible; schema
+v16 → v18 migrations run automatically.
+
 ### Added
 
 - **Per-key RBAC v1 (schema v16).** One running server can now serve many
@@ -22,8 +29,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
     (by id; never restamps an existing revocation).
   - Auth resolution: the **legacy single token `MCP_AUTH_TOKEN` still works and
     is checked first**; a key-only deployment (no `MCP_AUTH_TOKEN`) is fully
-    authenticated. A newly created/revoked key takes effect within ~30 s
-    without a server restart.
+    authenticated. A newly created/revoked key takes effect on the next
+    request (key liveness is consulted per call — no cache, no restart).
   - Namespace semantics: a multi-namespace key picks its effective namespace
     per call (unset → the key's first namespace); a foreign namespace is denied
     `403 NAMESPACE_NOT_PERMITTED`, never silently redirected. Over-ceiling /
@@ -31,9 +38,69 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
   - **MCP session binding:** a session is owned by the authenticating key;
     replaying another principal's `mcp-session-id` is `403`
     `SESSION_PRINCIPAL_MISMATCH`.
-  - v2-deferred: graph/vault/insights access ceilings (bounded by namespace
-    isolation for now). Separate-DB-per-tenant remains the strongest boundary.
+  - §6 access-level ceilings are enforced across BOTH egress chokepoints —
+    every MCP read tool (by-id, positional, aggregate counts) and the REST
+    surface (`/api/search`, `/api/stats`, `/api/insights`, …) — converged
+    after 12 adversarial battle waves, pinned by four structural tripwire
+    tests. v2 boundary: graph/community entity NAMES aggregate within a
+    namespace (member memory ids are ceiling-filtered).
+    Separate-DB-per-tenant remains the strongest boundary.
   - See `docs/MULTI-TENANCY.md` → "Per-key RBAC (schema v16)".
+- **Embedder-identity guard.** The database records which embedding model
+  built it (`schema_meta.embedding_model`); opening with a different
+  `MCP_MEMORY_MODEL` fails loudly with recovery options instead of silently
+  degrading every search (same dimension ≠ same vector space). Legacy DBs
+  adopt the configured model on first open; `memory rebuild` re-stamps.
+- **Query sanitizer.** `memory_search`/`/api/search` strip system-prompt
+  contamination from overlong queries (>512 code points: last question block →
+  tail sentences → final 400 cp). Bench/eval questions are below the gate by
+  construction; `MCP_QUERY_SANITIZER=off` restores raw. Logs keep the
+  original query.
+- **Org-ontology graph types** for the enterprise-brain pattern
+  (`docs/ENTERPRISE-BRAIN.md`): entity kinds `team`/`department`/`sop`/`agent`
+  and relationship kinds `manages`/`reports_to`/`member_of`/`works_on`/
+  `owns`/`follows` in `memory_extract_entities` + `memory_graph` filters.
+- **Backup retention cap** — `MCP_MEMORY_MAX_BACKUPS` (default 10, 0 = keep
+  all) prunes old `<db>.backup-<ISO>` snapshots after `memory backup`.
+- **npm provenance releases** — tag-triggered workflow publishes with
+  `--provenance` via npm Trusted Publishing (OIDC).
+- **Per-question benchmark artifacts** — all four public-benchmark runners
+  accept `--out <path>` and write the report plus per-question rows
+  (committed under `benchmarks/results/`) so published claims are
+  independently checkable.
+
+### Fixed
+
+- **Project-scope config was never read** (`init --scope project` wrote
+  `<project>/.mcp-memory/config.json`, the runtime only checked the env pin
+  and the home config): resolution is now env → `<cwd>/.mcp-memory/config.json`
+  → home; relative paths in a project config anchor at the project; the
+  generated `.mcp.json` pins `MCP_MEMORY_CONFIG_PATH`. The project-local-DB
+  promise now holds, and config `defaults.scope`/`defaults.namespace`
+  (`"auto"` = directory name) actually reach `memory_store` for omitted args.
+- **Markdown ingest glued headings to their body** (`## Duplicate
+  detectionEvery invoice…`): the chunker's overlap join dropped the
+  inter-chunk separator; restored when whitespace, byte-identical at
+  overlap 0.
+- **Git-vault collaborator on-ramp:** post-merge/post-checkout hooks now pass
+  `--vault "$(git rev-parse --show-toplevel)"` explicitly (no more silently
+  stale DBs when the pulling shell lacks vault config) and leave a stderr
+  breadcrumb on failure; `vault-init` sets `pull.rebase=false` (divergent
+  pulls fatal'd on modern git; rebase pulls skip the hook) and no longer
+  rewrites the committed `graph.json` sidecar on re-run.
+- **Rebuild integrity refusal** runs before the embedder loads and before the
+  old index is unlinked — a tampered-vault refusal no longer SIGABRTs through
+  ONNX static destructors nor costs the existing index; the error now states
+  the documented recovery (delete `.memory/manifest.json`, re-run).
+- **Key-only deployments logged "server is unauthenticated"** while enforcing
+  auth: startup now logs `auth_mode: bearer|api-keys|none` and warns only on
+  `none`.
+- **REST PATCH version snapshots** attribute `changed_by` to the api-key
+  principal (was always `web-dashboard`).
+- `init --scope project` writes a `.gitignore` guard for `.mcp-memory/`
+  (project-local DB + machine-specific config must not be committed).
+- Vault frontmatter rounds `importance_score` to 4 decimals (no more
+  `0.8400000000000001` diff noise in git-reviewed vaults).
 
 ## [2.2.0] - 2026-06-11
 
