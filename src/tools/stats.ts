@@ -1,12 +1,12 @@
 import type Database from 'better-sqlite3';
 import { forcedNamespace } from '../lib/tenancy.js';
 import type { MemoryStats } from '../types.js';
-import { liveConditions, scopeConditions, NOW_ISO_SQL } from '../db/predicates.js';
+import { liveConditions, scopeConditions, accessCeilingCondition, NOW_ISO_SQL } from '../db/predicates.js';
 import { getComputeGovernor } from '../lib/compute-governor.js';
 
 export function handleStats(
   db: Database.Database,
-  input: { scope?: string; namespace?: string; department?: string },
+  input: { scope?: string; namespace?: string; department?: string; access_level_ceiling?: string[] },
 ): MemoryStats {
   // Count only currently-live rows so stats agree with memory_search and don't
   // drift upward with every supersede/soft-delete (BATTLE-PLAN #4). excludeExpired
@@ -15,12 +15,18 @@ export function handleStats(
   // expired_count below still reports them). memory_list intentionally does NOT
   // filter expiry, so stats agrees with search, not list, on expired rows.
   const scope = scopeConditions(input);
-  const conditions = [...liveConditions({ excludeExpired: true }), ...scope.conditions];
+  // RBAC §6 (RB-10): the total / by_scope / by_document_type / by_department /
+  // content-bytes / expired rollups are aggregate COUNT egress — without the
+  // ceiling they disclose the count (and content size) of OVER-ceiling rows in the
+  // namespace to a sub-ceiling principal. Thread the ceiling into every count's
+  // WHERE (no-op when undefined — single-user / full-clearance unchanged).
+  const ceil = accessCeilingCondition(input.access_level_ceiling);
+  const conditions = [...liveConditions({ excludeExpired: true }), ...scope.conditions, ...ceil.conditions];
   // Base live set WITHOUT the exclude-expired clause — used only by the expired
   // count, which intentionally selects expired rows (ANDing the exclude-expired
   // predicate in would contradict `expires_at < now` and always return 0).
-  const baseConditions = [...liveConditions(), ...scope.conditions];
-  const params = scope.params;
+  const baseConditions = [...liveConditions(), ...scope.conditions, ...ceil.conditions];
+  const params = [...scope.params, ...ceil.params];
 
   const whereClause = `WHERE ${conditions.join(' AND ')}`;
   const docWhereClause =

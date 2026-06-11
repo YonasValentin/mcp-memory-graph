@@ -32,10 +32,18 @@ export async function findUnlinkedMentions(
   db: Database.Database,
   embedder: EmbeddingProvider,
   memoryId: string,
-  opts: { limit: number; minSimilarity: number },
+  opts: { limit: number; minSimilarity: number; accessCeiling?: readonly string[] },
 ): Promise<UnlinkedMention[]> {
   const target = getMemoryById(db, memoryId);
   if (!target) return [];
+
+  // RBAC §6 (RB-8): the neighbour scan partitions on (scope, namespace) only —
+  // never access_level — so a same-namespace row ABOVE the principal's ceiling is
+  // in-partition and vector-near, and its title + content snippet would be echoed.
+  // Mirror related.ts: drop any neighbour above the ceiling. Undefined → no ceiling
+  // (legacy/local).
+  const ceiling =
+    opts.accessCeiling && opts.accessCeiling.length > 0 ? new Set(opts.accessCeiling) : undefined;
 
   const embedding = await embedder.embed(
     contextualizeForEmbedding(target.content, {
@@ -102,6 +110,8 @@ export async function findUnlinkedMentions(
       // could otherwise leak onto the unlinked-mentions surface — matches
       // related.ts which already rejects superseded_at).
       if (!row || row.parent_id !== null || row.superseded_at !== null) continue;
+      // RBAC §6: never echo a neighbour above the principal's access ceiling.
+      if (ceiling && !ceiling.has(row.access_level)) continue;
 
       const similarity = cosineSimFromL2(n.distance);
       if (similarity < opts.minSimilarity) continue;

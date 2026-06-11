@@ -27,15 +27,19 @@ const serverSrc = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const src = readFileSync(serverSrc, 'utf8');
 
 describe('server.ts force-scopes every by-id mutation under MCP_API_NAMESPACE (H3 wiring guard)', () => {
+  // The namespace-ownership check (H3) must be present per tool. These assert the
+  // `!idInForcedNs(...)` SUBSTRING rather than the full line, because the §6
+  // re-battle close OR'd an `|| !idWithinCeiling(...)` clause into each of these
+  // same guards — the namespace forcing is intact (asserted here), the ceiling
+  // addition is pinned separately in ceiling-version-tools.test.ts.
   it.each([
-    // tool, exact ownership guard the registration must contain
-    ['memory_update', "if (!idInForcedNs(parsed.id)) throw new Error('Memory not found');"],
-    ['memory_restore', "if (!idInForcedNs(parsed.id)) throw new Error('Memory not found');"],
-    ['memory_forget', "if (!idInForcedNs(parsed.id)) throw new Error('Memory not found');"],
-    ['memory_version_restore', "if (!idInForcedNs(parsed.id)) throw new Error('Memory not found');"],
-    ['memory_extract_entities', "if (!idInForcedNs(parsed.memory_id)) throw new Error('Memory not found');"],
-    ['memory_delete', "if (parsed.id && !idInForcedNs(parsed.id)) throw new Error('Memory not found');"],
-    ['memory_condense', "if (parsed.memories.some((m) => !idInForcedNs(m.id))) throw new Error('Memory not found');"],
+    ['memory_update', '!idInForcedNs(parsed.id)'],
+    ['memory_restore', '!idInForcedNs(parsed.id)'],
+    ['memory_forget', '!idInForcedNs(parsed.id)'],
+    ['memory_version_restore', '!idInForcedNs(parsed.id)'],
+    ['memory_extract_entities', '!idInForcedNs(parsed.memory_id)'],
+    ['memory_delete', '!idInForcedNs(parsed.id)'],
+    ['memory_condense', '!idInForcedNs(m.id)'],
   ])('%s registration carries the id-ownership guard', (_tool, guard) => {
     expect(src).toContain(guard);
   });
@@ -43,8 +47,17 @@ describe('server.ts force-scopes every by-id mutation under MCP_API_NAMESPACE (H
   it('memory_delete forces the bulk-filter namespace to the forced namespace', () => {
     // A filter delete carries its own filter.namespace — on a forced deployment
     // it must be overridden to the forced namespace so a bulk delete cannot reach
-    // across tenants.
+    // across tenants. (The §6 re-battle wrapped this in a conditional spread that
+    // ALSO injects access_level_ceiling, so assert the forcing MECHANISM rather
+    // than the pre-ceiling object-literal shape.)
     expect(src).toContain('forcedNamespace()');
-    expect(src).toMatch(/filter:\s*\{\s*\.\.\.parsed\.filter,\s*namespace:/);
+    expect(src).toMatch(/namespace:\s*scopeFilterToNamespace\(parsed\)\.filter\?\.namespace/);
+  });
+
+  it('memory_delete injects the principal access ceiling into the bulk filter (re-battle close)', () => {
+    // A sub-ceiling principal's bulk filter-delete must not destroy over-ceiling
+    // rows — server.ts injects principalAccessCeiling() into the delete filter.
+    expect(src).toMatch(/access_level_ceiling:\s*ceiling/);
+    expect(src).toContain('principalAccessCeiling()');
   });
 });

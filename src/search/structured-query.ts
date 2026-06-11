@@ -30,6 +30,12 @@ export interface StructuredQuery {
   offset?: number;
   /** Projection: return only these fields. Omit for the full memory. */
   fields?: string[];
+  /**
+   * RBAC §6 egress ceiling (allow-list of permitted access levels). Threaded
+   * from the tenancy chokepoint — NOT a user-supplied filter; rows above the
+   * ceiling are invisible. Undefined leaves the result set unchanged.
+   */
+  access_level_ceiling?: string[];
 }
 
 type SortColumn = 'created_at' | 'updated_at' | 'importance_score' | 'title';
@@ -75,6 +81,11 @@ export function runStructuredQuery(db: Database.Database, q: StructuredQuery): S
   for (const tag of f.tags ?? []) {
     where.push('EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?)');
     params.push(tag);
+  }
+  // RBAC §6 egress ceiling — rows above the principal's access level are invisible.
+  if (q.access_level_ceiling && q.access_level_ceiling.length > 0) {
+    where.push(`access_level IN (${q.access_level_ceiling.map(() => '?').join(',')})`);
+    params.push(...q.access_level_ceiling);
   }
 
   const whereSql = where.join(' AND ');

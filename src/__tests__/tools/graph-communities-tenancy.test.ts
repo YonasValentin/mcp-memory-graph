@@ -94,10 +94,14 @@ describe('server.ts threads forcedNamespace() into graph/communities (wiring gua
     path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../server.ts'),
     'utf8',
   );
+  // The §6 re-battle-6 close added a 4th arg (principalAccessCeiling()) to gate
+  // the per-row memory egress; forcedNamespace() (the CLASS-2 tenancy arg) is
+  // intact. Assert the namespace forcing is still wired (substring, not the
+  // pre-ceiling exact line).
   it('memory_graph passes forcedNamespace() to the handler', () => {
-    expect(src).toContain('return handleGraph(getDb(), parsed, forcedNamespace());');
+    expect(src).toContain('handleGraph(getDb(), parsed, forcedNamespace()');
   });
   it('memory_communities passes forcedNamespace() to the handler', () => {
-    expect(src).toContain('return handleCommunities(getDb(), parsed, forcedNamespace());');
+    expect(src).toContain('handleCommunities(getDb(), parsed, forcedNamespace()');
   });
 });

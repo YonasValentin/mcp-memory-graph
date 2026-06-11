@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { liveConditions, scopeConditions } from '../db/predicates.js';
+import { liveConditions, scopeConditions, accessCeilingCondition } from '../db/predicates.js';
 
 export interface HealthReport {
   status: 'ok' | 'attention';
@@ -41,25 +41,33 @@ function count(db: Database.Database, sql: string, params: unknown[]): number {
  */
 export function handleHealth(
   db: Database.Database,
-  input: { scope?: string; namespace?: string } = {},
+  input: { scope?: string; namespace?: string; access_level_ceiling?: string[] } = {},
 ): HealthReport {
   const f = scopeClause('m', input);
+  // RBAC §6 (RB-10): the memory volume counts (live/retired/stale/aging) are an
+  // aggregate COUNT egress — without the ceiling a sub-ceiling principal observes
+  // the count of OVER-ceiling rows in its namespace. Thread the ceiling into those
+  // five counts (no-op when undefined). The conflict + webhook counts below are
+  // not per-row access-classified, so they are left unchanged.
+  const ceil = accessCeilingCondition(input.access_level_ceiling, 'm');
+  const cSql = ceil.conditions.length ? ` AND ${ceil.conditions.join(' AND ')}` : '';
+  const mp = [...f.params, ...ceil.params];
   const live = liveConditions({ topLevelOnly: true, alias: 'm' }).join(' AND ');
   // The retired predicate is the logical NEGATION of `live` (parent_id IS NULL
   // AND NOT valid) — there is no single-source-of-truth equivalent, so it stays
   // inline by design.
   const retired = `m.parent_id IS NULL AND (m.valid_to IS NOT NULL OR m.tx_expired IS NOT NULL)`;
 
-  const liveCount = count(db, `SELECT COUNT(*) AS n FROM memories m WHERE ${live}${f.sql}`, f.params);
+  const liveCount = count(db, `SELECT COUNT(*) AS n FROM memories m WHERE ${live}${f.sql}${cSql}`, mp);
   const retiredCount = count(
     db,
-    `SELECT COUNT(*) AS n FROM memories m WHERE ${retired}${f.sql}`,
-    f.params,
+    `SELECT COUNT(*) AS n FROM memories m WHERE ${retired}${f.sql}${cSql}`,
+    mp,
   );
   const staleCount = count(
     db,
-    `SELECT COUNT(*) AS n FROM memories m WHERE m.revalidation_status = 'stale' AND ${live}${f.sql}`,
-    f.params,
+    `SELECT COUNT(*) AS n FROM memories m WHERE m.revalidation_status = 'stale' AND ${live}${f.sql}${cSql}`,
+    mp,
   );
   // Aging by transaction-created time. created_at is ISO-8601-with-Z while
   // datetime('now',…) is space-separated — a raw lexical compare mis-collates on
@@ -69,8 +77,8 @@ export function handleHealth(
     count(
       db,
       `SELECT COUNT(*) AS n FROM memories m
-        WHERE ${live} AND julianday(m.created_at) < julianday('now', '-${days} days')${f.sql}`,
-      f.params,
+        WHERE ${live} AND julianday(m.created_at) < julianday('now', '-${days} days')${f.sql}${cSql}`,
+      mp,
     );
   const aging90 = aging(90);
   const aging180 = aging(180);

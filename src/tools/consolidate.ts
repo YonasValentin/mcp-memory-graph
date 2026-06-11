@@ -15,6 +15,7 @@ import { contextualizeForEmbedding } from '../search/contextual.js';
 import { computeRetention } from '../search/temporal.js';
 import { l2FromCosineSim } from '../search/scoring.js';
 import { DEDUP_COSINE_SIMILARITY } from '../constants/thresholds.js';
+import { reconcileBlocked } from '../lib/reconcile-guard.js';
 
 /**
  * Below this access count a memory is "weakly held" and eligible for the
@@ -44,6 +45,11 @@ function mergeContent(primary: string, secondary: string): string {
 function buildFilterClause(
   scope?: string,
   namespace?: string,
+  // RBAC §6 (re-battle-3): a sub-ceiling principal's consolidate must not PRUNE
+  // (hard-delete) or MERGE over-ceiling rows in its namespace. Appends an
+  // `access_level IN (...)` predicate to every prune/merge-source SELECT.
+  // undefined → legacy/local/full-clearance, unchanged.
+  accessCeiling?: string[],
 ): { clause: string; params: unknown[] } {
   const conditions: string[] = [];
   const params: unknown[] = [];
@@ -55,6 +61,10 @@ function buildFilterClause(
   if (namespace !== undefined) {
     conditions.push('namespace = ?');
     params.push(namespace);
+  }
+  if (accessCeiling && accessCeiling.length > 0) {
+    conditions.push(`access_level IN (${accessCeiling.map(() => '?').join(',')})`);
+    params.push(...accessCeiling);
   }
 
   const clause = conditions.length > 0 ? ` AND ${conditions.join(' AND ')}` : '';
@@ -111,6 +121,13 @@ export async function handleConsolidate(
      * Undefined (default) → no forgetting prune happens; behavior is unchanged.
      */
     forgetting_floor?: number;
+    /**
+     * RBAC §6 (re-battle-3): principal egress/integrity ceiling. Confines every
+     * prune + merge to rows at/below the caller's clearance, so a sub-ceiling
+     * principal can't destroy or merge an over-ceiling memory in its namespace.
+     * undefined → legacy/local/full-clearance (no restriction).
+     */
+    access_level_ceiling?: string[];
   },
 ): Promise<ConsolidationReport> {
   const startTime = Date.now();
@@ -137,6 +154,7 @@ export async function handleConsolidate(
   const { clause: filterClause, params: filterParams } = buildFilterClause(
     input.scope,
     input.namespace,
+    input.access_level_ceiling,
   );
 
   let opsPerformed = 0;
@@ -356,6 +374,17 @@ export async function handleConsolidate(
           const secondaryRow = getMemoryById(db, candidate.id);
           if (!secondaryRow) continue;
 
+          // §6 (re-battle-3): findNearDuplicates scans the (scope,namespace)
+          // partition only — so the candidate's namespace already matches (pass
+          // targetNamespace=undefined), but it can be ABOVE the caller's ceiling.
+          // Never merge/delete an over-ceiling row (and never echo its content in
+          // the memory.deleted event). The merge-SOURCE scan is already
+          // ceiling-filtered via filterClause; reconcileBlocked guards the vec0
+          // TARGET side — the same by-id reconcile decision as import/vault_sync.
+          if (reconcileBlocked(secondaryRow, undefined, input.access_level_ceiling)) {
+            continue;
+          }
+
           const primaryRow = getMemoryById(db, mem.id);
           if (!primaryRow) break;
 
@@ -432,13 +461,20 @@ export async function handleConsolidate(
   // partition's own memories when scoped; unforced (filterClause empty) keeps
   // the original store-wide rotation (and still prunes orphaned log rows).
   if (!dryRun) {
+    // §6 (re-battle-5): use a CEILING-FREE clause — memory_access_log is a
+    // telemetry table (access timestamps, not classified content), so the access
+    // ceiling must NOT fold in (it would leave a sub-cap principal's over-ceiling
+    // rows' logs un-rotated forever — the inverse of the leak, an over-block of a
+    // maintenance op). Same principle + fix as the search_log rotation below;
+    // tenancy (scope+namespace) is still enforced via the memories subquery.
+    const accessLog = buildFilterClause(input.scope, input.namespace);
     try {
-      if (filterClause) {
+      if (accessLog.clause) {
         db.prepare(
           `DELETE FROM memory_access_log
             WHERE accessed_at < datetime('now', '-90 days')
-              AND memory_id IN (SELECT id FROM memories WHERE 1=1${filterClause})`,
-        ).run(...filterParams);
+              AND memory_id IN (SELECT id FROM memories WHERE 1=1${accessLog.clause})`,
+        ).run(...accessLog.params);
       } else {
         db.prepare("DELETE FROM memory_access_log WHERE accessed_at < datetime('now', '-90 days')").run();
       }
@@ -452,15 +488,20 @@ export async function handleConsolidate(
 
   // ── Rotate old search-telemetry rows ──────────────────────────────────
   // search_log feeds knowledge-gap detection (Stage 5); bound its growth on the
-  // same 90-day window. search_log carries (scope, namespace) directly, so the
-  // same filterClause applies the SAME tenancy discipline as the access-log
-  // rotation above: a scoped consolidate prunes only its own partition, an
-  // unforced one rotates store-wide.
+  // same 90-day window. search_log carries (scope, namespace) directly, so a
+  // scope+namespace clause applies the SAME tenancy discipline as the access-log
+  // rotation above.
+  // §6 (re-battle-4): build a CEILING-FREE clause here — search_log has NO
+  // access_level column, so reusing the ceiling-bearing filterClause threw
+  // 'no such column: access_level' on EVERY principal consolidate (swallowed to
+  // report.errors, leaving telemetry un-rotated). The access ceiling is a
+  // memories-row concept; it does not apply to the telemetry table.
   if (!dryRun) {
+    const searchLog = buildFilterClause(input.scope, input.namespace);
     try {
       db.prepare(
-        `DELETE FROM search_log WHERE created_at < datetime('now', '-90 days')${filterClause}`,
-      ).run(...filterParams);
+        `DELETE FROM search_log WHERE created_at < datetime('now', '-90 days')${searchLog.clause}`,
+      ).run(...searchLog.params);
     } catch (err) /* c8 ignore start */ {
       report.errors.push(
         `Search log rotation failed: ${err instanceof Error ? err.message : String(err)}`,

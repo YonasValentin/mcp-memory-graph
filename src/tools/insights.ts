@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { liveConditions, scopeConditions } from '../db/predicates.js';
+import { liveConditions, scopeConditions, accessCeilingCondition } from '../db/predicates.js';
 
 const DEFAULT_LIMIT = 20;
 const SNIPPET_LEN = 60;
@@ -25,10 +25,16 @@ export interface InsightsResult {
 
 function scopeFilter(
   alias: string,
-  input: { scope?: string; namespace?: string },
+  input: { scope?: string; namespace?: string; access_level_ceiling?: string[] },
 ): { sql: string; params: unknown[] } {
   const { conditions, params } = scopeConditions(input, alias);
-  return { sql: conditions.length ? ` AND ${conditions.join(' AND ')}` : '', params };
+  // §6 (re-battle-5): insights embed a memory's TITLE/snippet in their advisory
+  // text, so a capped principal's digest must only analyse rows at/below its
+  // ceiling. Applied through the shared scopeFilter so every aliased query gets
+  // it. No-op when undefined (legacy/local/full-clearance).
+  const ceil = accessCeilingCondition(input.access_level_ceiling, alias);
+  const all = [...conditions, ...ceil.conditions];
+  return { sql: all.length ? ` AND ${all.join(' AND ')}` : '', params: [...params, ...ceil.params] };
 }
 
 /**
@@ -50,7 +56,7 @@ function scopeFilter(
  */
 export function handleInsights(
   db: Database.Database,
-  input: { scope?: string; namespace?: string; limit?: number },
+  input: { scope?: string; namespace?: string; limit?: number; access_level_ceiling?: string[] },
 ): InsightsResult {
   const limit = input.limit ?? DEFAULT_LIMIT;
   const live = (a: string) =>

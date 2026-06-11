@@ -1,13 +1,19 @@
 import type Database from 'better-sqlite3';
 import type { MemoryScope, MemoryRow } from '../types.js';
 import { classifyTier, type MemoryTier } from '../search/tiers.js';
-import { liveConditions, scopeConditions } from '../db/predicates.js';
+import { liveConditions, scopeConditions, accessCeilingCondition } from '../db/predicates.js';
 
 interface TiersInput {
   scope?: MemoryScope;
   namespace?: string;
   /** Injected reference time for deterministic classification (tests). */
   now?: Date;
+  /**
+   * RBAC §6 (re-battle-5): hot_memories returns id+title — an over-ceiling row's
+   * title is sensitive egress, so a capped principal's tiers reflect only rows
+   * at/below the ceiling. undefined → legacy/local/full-clearance.
+   */
+  access_level_ceiling?: string[];
 }
 
 interface TiersResult {
@@ -37,11 +43,13 @@ export function handleMemoryTiers(
 
   // Top-level, currently-valid memories only (bi-temporal filter).
   const scope = scopeConditions(input);
+  const ceil = accessCeilingCondition(input.access_level_ceiling);
   const conditions: string[] = [
     ...liveConditions({ topLevelOnly: true }),
     ...scope.conditions,
+    ...ceil.conditions,
   ];
-  const params: unknown[] = [...scope.params];
+  const params: unknown[] = [...scope.params, ...ceil.params];
 
   const whereClause = `WHERE ${conditions.join(' AND ')}`;
 

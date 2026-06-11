@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { EmbeddingProvider, MemoryScope } from '../types.js';
+import type { EmbeddingProvider, MemoryScope, AccessLevel } from '../types.js';
 import { queryGraph, type GraphQueryResult } from '../graph/graph-query.js';
 
 interface QueryInput {
@@ -9,6 +9,8 @@ interface QueryInput {
   seed_limit?: number;
   scope?: MemoryScope;
   namespace?: string;
+  /** RBAC §6 egress ceiling (allow-list of permitted access levels). */
+  access_level_ceiling?: AccessLevel[];
 }
 
 /**
@@ -29,5 +31,6 @@ export async function handleQuery(
     seed_limit: input.seed_limit,
     scope: input.scope,
     namespace: input.namespace,
+    access_level_ceiling: input.access_level_ceiling,
   });
 }

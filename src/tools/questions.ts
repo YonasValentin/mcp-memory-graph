@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { liveConditions, scopeConditions } from '../db/predicates.js';
+import { liveConditions, scopeConditions, accessCeilingCondition } from '../db/predicates.js';
 
 /**
  * Pillar 8 (T23): active "questions to ask" digest.
@@ -51,15 +51,20 @@ export interface QuestionsResult {
  */
 function scopeFilter(
   alias: string,
-  input: { scope?: string; namespace?: string },
+  input: { scope?: string; namespace?: string; access_level_ceiling?: string[] },
 ): { sql: string; params: unknown[] } {
   const { conditions, params } = scopeConditions(input, alias);
-  return { sql: conditions.length ? ` AND ${conditions.join(' AND ')}` : '', params };
+  // §6 (re-battle-5): questions embed a memory's TITLE/label in their text, so a
+  // capped principal's gaps must only cover rows at/below its ceiling. Applied
+  // through the shared scopeFilter so every aliased query gets it. No-op undefined.
+  const ceil = accessCeilingCondition(input.access_level_ceiling, alias);
+  const all = [...conditions, ...ceil.conditions];
+  return { sql: all.length ? ` AND ${all.join(' AND ')}` : '', params: [...params, ...ceil.params] };
 }
 
 export function handleQuestions(
   db: Database.Database,
-  input: { scope?: string; namespace?: string; limit?: number },
+  input: { scope?: string; namespace?: string; limit?: number; access_level_ceiling?: string[] },
 ): QuestionsResult {
   const limit = input.limit ?? DEFAULT_LIMIT;
   // The currently-valid, top-level predicate every "in-scope memory" satisfies.

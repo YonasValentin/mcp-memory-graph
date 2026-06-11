@@ -42,6 +42,9 @@ export function handleCommunities(
   db: Database.Database,
   input: CommunitiesInput = {},
   forcedNamespace?: string,
+  // RBAC §6 (re-battle-6): member_memory_ids are per-row access-classified — gate
+  // them by the principal ceiling. undefined → legacy/local/full-clearance.
+  accessCeiling?: string[],
 ): CommunitiesResult {
   // Single graph build: derive the post-filter summaries AND the true
   // corpus-wide total from ONE community detection pass. battle-v9 CLASS 2: a
@@ -50,6 +53,7 @@ export function handleCommunities(
     limit: input.limit,
     minSize: input.min_size,
     namespace: forcedNamespace,
+    accessLevels: accessCeiling,
   });
 
   return {

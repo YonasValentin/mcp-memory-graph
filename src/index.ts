@@ -70,6 +70,13 @@ async function main(): Promise<void> {
       await runVaultInit(process.argv.slice(3));
       break;
     }
+    case 'keys': {
+      // RBAC v1: manage per-key API keys (create/list/revoke). runKeys opens
+      // the DB read-write so migrations (incl. v16 api_keys) run before use.
+      const { runKeys } = await import('./cli/keys.js');
+      runKeys(process.argv.slice(3));
+      break;
+    }
     case 'sync': {
       const { runSync } = await import('./cli/sync.js');
       await runSync(process.argv.slice(3));

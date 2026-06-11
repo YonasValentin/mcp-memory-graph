@@ -9,7 +9,7 @@ read once at process start unless noted.
 |---|---|---|
 | `MCP_PORT` | `3100` | TCP port for `serve` mode. |
 | `MCP_BIND` | `127.0.0.1` | Interface to bind on. Set to `0.0.0.0` to expose externally; this requires `MCP_AUTH_TOKEN` (or `MCP_AUTH_OPTIONAL=1`) at startup. |
-| `MCP_AUTH_TOKEN` | _unset_ | Bearer token. When set, every request to `/api/*` and `/mcp/*` must carry `Authorization: Bearer <token>` (constant-time comparison). |
+| `MCP_AUTH_TOKEN` | _unset_ | Bearer token — the **single-token legacy mode**. When set, every request to `/api/*` and `/mcp/*` must carry `Authorization: Bearer <token>` (constant-time comparison). For per-key RBAC (one server, N keys, each pinned to a namespace set + access ceiling) use `memory keys` instead (schema v16); this env var is not how RBAC is configured. Legacy mode and per-key RBAC coexist — the legacy token is checked first. See `docs/MULTI-TENANCY.md`. |
 | `MCP_AUTH_OPTIONAL` | _unset_ | Set to `1` to allow unauthenticated access on a non-loopback bind. Should only be used in trusted local networks. |
 | `MCP_ALLOWED_ORIGINS` | `http://localhost:5173` | Comma-separated allowlist for CORS. Origins not in the list receive no `Access-Control-Allow-Origin` header. |
 | `MCP_BODY_LIMIT` | `256kb` | Maximum JSON body size for any request. Larger payloads return 413. |

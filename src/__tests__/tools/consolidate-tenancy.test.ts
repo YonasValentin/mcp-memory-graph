@@ -77,8 +77,11 @@ describe('handleConsolidate — A1: cross-tenant isolation', () => {
 });
 
 describe('server.ts forces the namespace on memory_consolidate (A1 wiring guard)', () => {
-  it('the registration wraps withForcedNs', () => {
+  it('the registration wraps withForcedNs (now composed inside withCeiling for §6)', () => {
     const serverSrc = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../server.ts');
-    expect(readFileSync(serverSrc, 'utf8')).toContain('handleConsolidate(getDb(), await getEmbedder(), withForcedNs(parsed))');
+    // The §6 re-battle-3 close wrapped the namespace force in withCeiling so a
+    // sub-ceiling principal can't prune/merge over-ceiling rows. withForcedNs is
+    // still composed inside it — the A1 cross-tenant guarantee is intact.
+    expect(readFileSync(serverSrc, 'utf8')).toContain('handleConsolidate(getDb(), await getEmbedder(), withCeiling(withForcedNs(parsed)))');
   });
 });

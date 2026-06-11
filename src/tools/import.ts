@@ -4,6 +4,7 @@ import type { EmbeddingProvider, MemoryRow } from '../types.js';
 import { insertMemory, getMemoryById, updateMemory } from '../db/repository.js';
 import { computeContentSignal } from '../search/content-signals.js';
 import { notify, rowToEventPayload } from '../events/hooks.js';
+import { reconcileBlocked } from '../lib/reconcile-guard.js';
 
 /**
  * battle-v15 F1: normalize an imported timestamp to canonical ISO-Z. A restore
@@ -79,6 +80,11 @@ export async function handleImport(
   // is relabeled to it before insert/overwrite. Undefined → no scoping (local
   // single-user default), preserving the per-item namespace (current behaviour).
   forcedNamespace?: string,
+  // RBAC §6 (re-battle-3): a sub-ceiling principal must not OVERWRITE an
+  // over-ceiling row by supplying its id with overwrite:true. The allow-list of
+  // levels the caller may touch (principalAccessCeiling()); undefined →
+  // legacy/local/full-clearance, no restriction.
+  accessCeiling?: string[],
 ): Promise<{ imported: number; skipped: number; errors: number; remapped: number }> {
   let imported = 0;
   let skipped = 0;
@@ -145,21 +151,24 @@ export async function handleImport(
         const existingId = item.id ?? null;
         let existing = existingId ? getMemoryById(db, existingId) : null;
 
-        // battle-v14 #2 (+ round-2 oracle, LOW): TENANCY GUARD. getMemoryById is
-        // namespace-blind, so on a forced deployment an item carrying ANOTHER
-        // tenant's id would hit the overwrite branch and — because we REMAP
-        // item.namespace to the forced value above — both rewrite its content AND
-        // drag the row into the importing tenant (cross-tenant row theft).
+        // TENANCY + §6 CEILING GUARD (battle-v14 #2 / re-battle-3, now centralised
+        // in reconcileBlocked — the durable write-path fix). getMemoryById is
+        // namespace- and ceiling-blind, so on a forced deployment an item carrying
+        // ANOTHER tenant's id (foreign namespace) OR an over-ceiling row would hit
+        // the overwrite branch and — because we REMAP item.namespace to the forced
+        // value above — both rewrite its content AND drag the row into the
+        // importing tenant (cross-tenant theft / declassify).
         //
-        // Treat a foreign-owned id EXACTLY like a brand-new id: drop it and fall
-        // through to a fresh insert (new UUID) in the forced namespace. This both
-        // (a) never touches/claims the foreign row, and (b) makes the response
+        // Treat such a row EXACTLY like a brand-new id: drop it and fall through to
+        // a fresh insert (new UUID) in the forced namespace. This both (a) never
+        // touches/claims/confirms the protected row, and (b) makes the response
         // byte-identical to importing a new item — closing the existence/ownership
         // oracle a plain skip would open (skipped:1 on a foreign id vs imported:1
         // on a fresh id lets a forced tenant probe whether a guessed UUID belongs
-        // to someone else). Unforced (single-user) imports are unaffected.
+        // to someone else). Unforced single-user imports (forcedNamespace =
+        // undefined, no ceiling) are unaffected.
         let effectiveId = existingId;
-        if (existing && forcedNamespace !== undefined && existing.namespace !== forcedNamespace) {
+        if (existing && reconcileBlocked(existing, forcedNamespace, accessCeiling)) {
           existing = null;
           effectiveId = null;
         }

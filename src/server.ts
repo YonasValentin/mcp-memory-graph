@@ -14,8 +14,10 @@ import {
   scopeToNamespace,
   scopeFilterToNamespace,
   idIsInForcedNamespace,
+  idIsWithinAccessCeiling,
   forcedNamespace,
   vaultPathInForcedNamespace,
+  principalAccessCeiling,
 } from './lib/tenancy.js';
 import {
   MemoryStoreSchema,
@@ -248,6 +250,26 @@ export function createServer(): McpServer {
   const withForcedNs = scopeToNamespace;
   const idInForcedNs = (id: string): boolean => idIsInForcedNamespace(getDb(), id);
 
+  // RBAC v1 §6 — egress ceiling. A principal key caps the access level it may
+  // RECEIVE; the read tools below thread principalAccessCeiling() into their
+  // SQL/predicate layer via an `access_level_ceiling` option. `scopedRead`
+  // composes the namespace forcing (withForcedNs) with the ceiling in ONE place
+  // so every content-egress read tool gets both at the same chokepoint (no
+  // per-handler scatter — the battle-vN lesson). undefined ceiling (legacy/local)
+  // leaves the options byte-identical. By-id reads use idWithinCeiling for the
+  // 404 non-confirmation twin of idInForcedNs.
+  const withCeiling = <T extends object>(
+    opts: T,
+  ): T & { access_level_ceiling?: import('./types.js').AccessLevel[] } => {
+    const ceiling = principalAccessCeiling();
+    return ceiling ? { ...opts, access_level_ceiling: ceiling } : opts;
+  };
+  const scopedRead = <T extends { namespace?: string }>(
+    opts: T,
+  ): T & { access_level_ceiling?: import('./types.js').AccessLevel[] } =>
+    withCeiling(withForcedNs(opts));
+  const idWithinCeiling = (id: string): boolean => idIsWithinAccessCeiling(getDb(), id);
+
   // ── MCP tool annotations (SDK behavioral hints) ───────────────────────────
   // `reg` mirrors the deprecated 4-arg `server.tool(name, description, shape,
   // cb)` signature exactly, so every registration below is unchanged — but it
@@ -305,7 +327,9 @@ export function createServer(): McpServer {
       // Mirror the read tools: on a namespace-forced deployment the caller's
       // namespace is OVERRIDDEN to the configured one, so writes can't land in
       // another namespace (read isolation alone would leave a write leak).
-      return handleStore(getDb(), await getEmbedder(), withForcedNs(parsed), getNli());
+      // §6 (RB-8): pass the principal ceiling so the conflict/dedup/contradiction
+      // scan can't surface, echo, or retire an over-ceiling same-namespace row.
+      return handleStore(getDb(), await getEmbedder(), withForcedNs(parsed), getNli(), principalAccessCeiling());
     }),
   );
 
@@ -320,7 +344,7 @@ export function createServer(): McpServer {
       // is the biggest precision lever and raw bi-encoder top-1 is wrong on ~half
       // of keyword-heavy NL questions. Unit tests / REST that call handleSearch
       // without `rerank` stay off, so no 90MB model loads in the test suite.
-      return handleSearch(getDb(), await getEmbedder(), { ...withForcedNs(parsed), rerank: parsed.rerank ?? true });
+      return handleSearch(getDb(), await getEmbedder(), { ...scopedRead(parsed), rerank: parsed.rerank ?? true });
     }),
   );
 
@@ -331,7 +355,11 @@ export function createServer(): McpServer {
     MemoryGetSchema.shape,
     instrument('memory_get', async (input) => {
       const parsed = MemoryGetSchema.parse(input);
-      if (!idInForcedNs(parsed.id)) throw new Error('Memory not found');
+      // §6: an over-ceiling row is indistinguishable from not-found (the same
+      // non-confirmation as the namespace guard) — never confirm it exists.
+      if (!idInForcedNs(parsed.id) || !idWithinCeiling(parsed.id)) {
+        throw new Error('Memory not found');
+      }
       const result = handleGet(getDb(), parsed);
       if (!result) throw new Error('Memory not found');
       return result;
@@ -346,7 +374,9 @@ export function createServer(): McpServer {
     instrument('memory_update', async (input) => {
       const parsed = MemoryUpdateSchema.parse(input);
       // H3: by-id mutation must respect a forced namespace (existence non-confirmation).
-      if (!idInForcedNs(parsed.id)) throw new Error('Memory not found');
+      // §6 (re-battle): also gate the access ceiling — a sub-ceiling principal must
+      // not mutate (or, via the returned row, read) a memory above its clearance.
+      if (!idInForcedNs(parsed.id) || !idWithinCeiling(parsed.id)) throw new Error('Memory not found');
       const result = await handleUpdate(getDb(), await getEmbedder(), parsed);
       if (!result) throw new Error('Memory not found');
       return { updated: true, memory: result };
@@ -365,10 +395,30 @@ export function createServer(): McpServer {
       const parsed = MemoryDeleteSchema.parse(input);
       // H3: a by-id delete must respect a forced namespace; a bulk filter-delete
       // must be confined to the forced namespace so it can't reach across tenants.
-      if (parsed.id && !idInForcedNs(parsed.id)) throw new Error('Memory not found');
+      // RBAC §5: the confining namespace comes from scopeFilterToNamespace —
+      // env-forced is byte-identical (filter.namespace overridden to the pin);
+      // a principal gets member-keep / unset-default / foreign-throw. Only
+      // applied when a filter exists, so a pure by-id delete is never widened.
+      // §6 (re-battle): deleting an over-ceiling row is a destructive write a
+      // sub-ceiling principal must not perform — gate it like the read tools.
+      if (parsed.id && (!idInForcedNs(parsed.id) || !idWithinCeiling(parsed.id))) throw new Error('Memory not found');
       const fns = forcedNamespace();
+      // §6 (re-battle): a sub-ceiling principal's BULK filter-delete must not
+      // destroy over-ceiling rows in its own namespace — inject the ceiling as a
+      // narrowing predicate (undefined in legacy/local → unchanged). Only when a
+      // filter exists; a pure by-id delete is gated by idWithinCeiling above.
+      const ceiling = principalAccessCeiling();
       const scoped =
-        fns && parsed.filter ? { ...parsed, filter: { ...parsed.filter, namespace: fns } } : parsed;
+        parsed.filter
+          ? {
+              ...parsed,
+              filter: {
+                ...parsed.filter,
+                ...(fns ? { namespace: scopeFilterToNamespace(parsed).filter?.namespace } : {}),
+                ...(ceiling ? { access_level_ceiling: ceiling } : {}),
+              },
+            }
+          : parsed;
       return handleDelete(getDb(), scoped);
     }),
   );
@@ -380,7 +430,7 @@ export function createServer(): McpServer {
     MemoryListSchema.shape,
     instrument('memory_list', async (input) => {
       const parsed = MemoryListSchema.parse(input);
-      return handleList(getDb(), withForcedNs(parsed));
+      return handleList(getDb(), scopedRead(parsed));
     }),
   );
 
@@ -391,7 +441,9 @@ export function createServer(): McpServer {
     MemoryIngestSchema.shape,
     instrument('memory_ingest', async (input) => {
       const parsed = MemoryIngestSchema.parse(input);
-      return handleIngest(getDb(), await getEmbedder(), withForcedNs(parsed));
+      // §6 (RB-8): pass the principal ceiling so a colliding source-path can't
+      // reconcile onto a cross-namespace / over-ceiling tracked parent.
+      return handleIngest(getDb(), await getEmbedder(), withForcedNs(parsed), principalAccessCeiling());
     }),
   );
 
@@ -402,8 +454,10 @@ export function createServer(): McpServer {
     MemoryRelatedSchema.shape,
     instrument('memory_related', async (input) => {
       const parsed = MemoryRelatedSchema.parse(input);
-      if (!idInForcedNs(parsed.id)) return { related: [], count: 0 };
-      const result = await handleRelated(getDb(), await getEmbedder(), parsed);
+      // §6: an over-ceiling SEED is treated like a foreign-ns seed (empty result,
+      // non-confirmation); permitted neighbours are filtered by the ceiling too.
+      if (!idInForcedNs(parsed.id) || !idWithinCeiling(parsed.id)) return { related: [], count: 0 };
+      const result = await handleRelated(getDb(), await getEmbedder(), withCeiling(parsed));
       return { related: result, count: result.length };
     }),
   );
@@ -415,7 +469,11 @@ export function createServer(): McpServer {
     MemoryVersionsSchema.shape,
     instrument('memory_versions', async (input) => {
       const parsed = MemoryVersionsSchema.parse(input);
-      if (!idInForcedNs(parsed.id)) return { id: parsed.id, versions: [], count: 0 };
+      // §6: an over-ceiling row is non-confirmed exactly like a foreign-ns one
+      // (mirrors memory_get/memory_related). memory_versions stores full
+      // content+title per row, so omitting the ceiling check egresses
+      // above-clearance content for a row in the key's own namespace.
+      if (!idInForcedNs(parsed.id) || !idWithinCeiling(parsed.id)) return { id: parsed.id, versions: [], count: 0 };
       return handleVersions(getDb(), parsed);
     }),
   );
@@ -427,7 +485,9 @@ export function createServer(): McpServer {
     MemoryStatsSchema.shape,
     instrument('memory_stats', async (input) => {
       const parsed = MemoryStatsSchema.parse(input);
-      return handleStats(getDb(), withForcedNs(parsed));
+      // §6 (RB-10): scopedRead threads the access ceiling so the count rollups
+      // (total/by_scope/by_document_type/bytes) exclude over-ceiling rows.
+      return handleStats(getDb(), scopedRead(parsed));
     }),
   );
 
@@ -444,8 +504,12 @@ export function createServer(): McpServer {
       // integrity status (verified/unsigned/tampered/untrusted) — an existence +
       // provenance oracle across the v14 boundary. Batch mode (no id) is already
       // scoped by withForcedNs.
-      if (parsed.id && !idInForcedNs(parsed.id)) throw new Error('Memory not found');
-      return handleVerify(getDb(), withForcedNs(parsed));
+      // §6 (re-battle): a verify by-id of an over-ceiling row would confirm its
+      // existence (and may echo provenance/content) — treat it as not-found.
+      if (parsed.id && (!idInForcedNs(parsed.id) || !idWithinCeiling(parsed.id))) throw new Error('Memory not found');
+      // §6 (re-battle-5): the batch path returns {id,status} per row — withCeiling
+      // gates it (the by-id path is idWithinCeiling-guarded above).
+      return handleVerify(getDb(), withCeiling(withForcedNs(parsed)));
     }),
   );
 
@@ -456,7 +520,9 @@ export function createServer(): McpServer {
     MemoryTiersSchema.shape,
     instrument('memory_tiers', async (input) => {
       const parsed = MemoryTiersSchema.parse(input);
-      return handleMemoryTiers(getDb(), withForcedNs(parsed));
+      // §6 (re-battle-5): hot_memories returns id+title — scopedRead adds the
+      // egress ceiling so an over-ceiling title can't surface.
+      return handleMemoryTiers(getDb(), scopedRead(parsed));
     }),
   );
 
@@ -469,7 +535,7 @@ export function createServer(): McpServer {
       const parsed = MemoryExportSchema.parse(input);
       // battle-v9 CLASS 2: export carries a top-level namespace; on a forced
       // deployment, omitting it must NOT dump the whole cross-tenant corpus.
-      return handleExport(getDb(), withForcedNs(parsed));
+      return handleExport(getDb(), scopedRead(parsed));
     }),
   );
 
@@ -484,7 +550,9 @@ export function createServer(): McpServer {
       // withForcedNs is a no-op. On a namespace-forced deployment we REMAP every
       // imported item to the forced namespace (4th arg) — closes the tenancy
       // write-leak the other write tools already close.
-      return handleImport(getDb(), await getEmbedder(), parsed, forcedNamespace());
+      // §6 (re-battle-3): the 5th arg is the principal access ceiling — an
+      // overwrite of an over-ceiling existing row is dropped to a fresh insert.
+      return handleImport(getDb(), await getEmbedder(), parsed, forcedNamespace(), principalAccessCeiling());
     }),
   );
 
@@ -516,7 +584,8 @@ export function createServer(): McpServer {
       if (!vaultPathInForcedNamespace(parsed.vault_path)) {
         throw new Error('Vault path is outside the pinned namespace');
       }
-      return handleVaultStatus(getDb(), parsed);
+      // §6 (RB-10): thread the ceiling so memory_count excludes over-ceiling rows.
+      return handleVaultStatus(getDb(), { ...parsed, access_level_ceiling: principalAccessCeiling() });
     }),
   );
 
@@ -533,7 +602,10 @@ export function createServer(): McpServer {
       }
       // withForcedNs pins the namespace to the tenant on a shared deployment so
       // the explicit override cannot read across namespaces; a no-op otherwise.
-      return handleVaultSearch(getDb(), await getEmbedder(), withForcedNs(parsed));
+      // §6 (battle F3): vault_search runs the same hybrid corpus search as
+      // memory_search, so it must honour the egress ceiling too — scopedRead
+      // adds both the namespace force and the access_level_ceiling.
+      return handleVaultSearch(getDb(), await getEmbedder(), scopedRead(parsed));
     }),
   );
 
@@ -552,7 +624,10 @@ export function createServer(): McpServer {
       if (!vaultPathInForcedNamespace(parsed.vault_path)) {
         throw new Error('Vault path is outside the pinned namespace');
       }
-      return handleExportVault(getDb(), withForcedNs(parsed));
+      // §6 (battle F4): export writes content to disk; scopedRead adds the
+      // access ceiling (intersected with the operator vault egress cap) so a
+      // low-clearance key can't mirror above-ceiling rows to a shared vault.
+      return handleExportVault(getDb(), scopedRead(parsed));
     }),
   );
 
@@ -571,7 +646,9 @@ export function createServer(): McpServer {
       if (parsed.vault_path !== undefined && !vaultPathInForcedNamespace(parsed.vault_path)) {
         throw new Error('Vault path is outside the pinned namespace');
       }
-      return handleCanvas(getDb(), withForcedNs(parsed));
+      // §6 (battle F4): canvas serializes node text to disk; scopedRead adds the
+      // access ceiling (intersected with the operator vault egress cap).
+      return handleCanvas(getDb(), scopedRead(parsed));
     }),
   );
 
@@ -586,7 +663,9 @@ export function createServer(): McpServer {
       // confined to the pinned tenant — without this a tenant could hard-delete
       // or merge another tenant's memories (the dedup vec scans are partitioned
       // per-row inside handleConsolidate).
-      return handleConsolidate(getDb(), await getEmbedder(), withForcedNs(parsed));
+      // §6 (re-battle-3): withCeiling adds the principal access ceiling so a
+      // sub-ceiling principal can't prune/merge over-ceiling rows in its own ns.
+      return handleConsolidate(getDb(), await getEmbedder(), withCeiling(withForcedNs(parsed)));
     }),
   );
 
@@ -599,7 +678,9 @@ export function createServer(): McpServer {
       const parsed = MemoryExtractLearningsSchema.parse(input);
       // battle-v9 CLASS 2: with auto_store this WRITES via handleStore using the
       // input namespace — force it so a write can't land in another tenant.
-      return handleExtractLearnings(getDb(), await getEmbedder(), withForcedNs(parsed));
+      // §6 (re-battle-4): withCeiling threads the principal ceiling so auto_store's
+      // dedup-corroboration path can't MUTATE an over-ceiling near-duplicate.
+      return handleExtractLearnings(getDb(), await getEmbedder(), withCeiling(withForcedNs(parsed)));
     }),
   );
 
@@ -610,7 +691,7 @@ export function createServer(): McpServer {
     MemoryManifestSchema.shape,
     instrument('memory_manifest', async (input) => {
       const parsed = MemoryManifestSchema.parse(input);
-      return handleManifest(getDb(), withForcedNs(parsed));
+      return handleManifest(getDb(), scopedRead(parsed));
     }),
   );
 
@@ -624,7 +705,9 @@ export function createServer(): McpServer {
       // battle-v9 CLASS 2: schema carries no namespace, so force-scope at the
       // handler — entities are shared, so an unforced graph leaks cross-tenant
       // entity names + linked memory ids/titles.
-      return handleGraph(getDb(), parsed, forcedNamespace());
+      // §6 (re-battle-6): the 4th arg gates the returned memories[] (id+title) by
+      // the principal ceiling — graph's memory-row portion is v1 corpus egress.
+      return handleGraph(getDb(), parsed, forcedNamespace(), principalAccessCeiling());
     }),
   );
 
@@ -636,7 +719,9 @@ export function createServer(): McpServer {
     instrument('memory_extract_entities', async (input) => {
       const parsed = MemoryExtractEntitiesSchema.parse(input);
       // H3: extracting entities mutates the graph for a specific memory id.
-      if (!idInForcedNs(parsed.memory_id)) throw new Error('Memory not found');
+      // §6 (re-battle systematic close): extraction reads the row's content to
+      // derive entities — an over-ceiling memory must be non-confirmed here too.
+      if (!idInForcedNs(parsed.memory_id) || !idWithinCeiling(parsed.memory_id)) throw new Error('Memory not found');
       return handleExtractEntities(getDb(), parsed);
     }),
   );
@@ -649,7 +734,10 @@ export function createServer(): McpServer {
     instrument('memory_condense', async (input) => {
       const parsed = MemoryCondenseSchema.parse(input);
       // H3: condense mutates each listed memory by id — every one must be owned.
-      if (parsed.memories.some((m) => !idInForcedNs(m.id))) throw new Error('Memory not found');
+      // §6 (re-battle systematic close): condense rewrites content into a summary
+      // (an echo of the original) — every listed id must also be within the
+      // caller's ceiling, else an over-ceiling row leaks via its summary.
+      if (parsed.memories.some((m) => !idInForcedNs(m.id) || !idWithinCeiling(m.id))) throw new Error('Memory not found');
       return handleCondense(getDb(), await getEmbedder(), parsed);
     }),
   );
@@ -662,7 +750,9 @@ export function createServer(): McpServer {
     instrument('memory_restore', async (input) => {
       const parsed = MemoryRestoreSchema.parse(input);
       // H3: restore un-tombstones/uncondenses a specific id.
-      if (!idInForcedNs(parsed.id)) throw new Error('Memory not found');
+      // §6 (re-battle): restoring an over-ceiling row is a write + content echo a
+      // sub-ceiling principal must not perform — gate it like version_restore.
+      if (!idInForcedNs(parsed.id) || !idWithinCeiling(parsed.id)) throw new Error('Memory not found');
       return handleRestore(getDb(), await getEmbedder(), parsed);
     }),
   );
@@ -674,7 +764,7 @@ export function createServer(): McpServer {
     MemoryQuerySchema.shape,
     instrument('memory_query', async (input) => {
       const parsed = MemoryQuerySchema.parse(input);
-      return handleQuery(getDb(), await getEmbedder(), withForcedNs(parsed));
+      return handleQuery(getDb(), await getEmbedder(), scopedRead(parsed));
     }),
   );
 
@@ -718,7 +808,11 @@ export function createServer(): McpServer {
     MemoryReflectSchema.shape,
     instrument('memory_reflect', async (input) => {
       const parsed = MemoryReflectSchema.parse(input);
-      return handleReflect(getDb(), await getEmbedder(), withForcedNs(parsed));
+      // §6 (re-battle-5, 9th instance): gather is a corpus CONTENT read like
+      // memory_list — scopedRead adds the egress ceiling so an over-ceiling row's
+      // content can't surface as reflection material. (store mode writes a new
+      // insight at its own level; the ceiling option is inert there.)
+      return handleReflect(getDb(), await getEmbedder(), scopedRead(parsed));
     }),
   );
 
@@ -731,7 +825,9 @@ export function createServer(): McpServer {
       const parsed = MemoryCommunitiesSchema.parse(input);
       // battle-v9 CLASS 2: schema carries no namespace — force-scope community
       // detection + membership to the pinned tenant at the handler.
-      return handleCommunities(getDb(), parsed, forcedNamespace());
+      // §6 (re-battle-6): the 4th arg gates member_memory_ids by the principal
+      // ceiling — community membership is per-row access-classified corpus egress.
+      return handleCommunities(getDb(), parsed, forcedNamespace(), principalAccessCeiling());
     }),
   );
 
@@ -753,7 +849,9 @@ export function createServer(): McpServer {
     MemorySessionNoteSchema.shape,
     instrument('memory_session_note', async (input) => {
       const parsed = MemorySessionNoteSchema.parse(input);
-      return handleSessionNote(getDb(), await getEmbedder(), withForcedNs(parsed));
+      // §6 (RB-8): namespace-scoped lookup (input.namespace is forced here) plus
+      // the principal ceiling so a reused session_id can't reach another tenant.
+      return handleSessionNote(getDb(), await getEmbedder(), withForcedNs(parsed), principalAccessCeiling());
     }),
   );
 
@@ -765,7 +863,9 @@ export function createServer(): McpServer {
     instrument('memory_attribution', async (input) => {
       const parsed = MemoryAttributionSchema.parse(input);
       // battle-v9 CLASS 2: attribution rollup must count only the forced tenant.
-      return handleAttribution(getDb(), withForcedNs(parsed));
+      // §6 (RB-10): scopedRead threads the access ceiling so by_author / by_agent
+      // / total never disclose author identity or counts of over-ceiling rows.
+      return handleAttribution(getDb(), scopedRead(parsed));
     }),
   );
 
@@ -776,7 +876,9 @@ export function createServer(): McpServer {
     MemoryQuestionsSchema.shape,
     instrument('memory_questions', async (input) => {
       const parsed = MemoryQuestionsSchema.parse(input);
-      return handleQuestions(getDb(), withForcedNs(parsed));
+      // §6 (re-battle-5): questions embed memory titles in their gap text —
+      // withCeiling gates which rows the digest may analyse.
+      return handleQuestions(getDb(), withCeiling(withForcedNs(parsed)));
     }),
   );
 
@@ -788,7 +890,10 @@ export function createServer(): McpServer {
     instrument('memory_forget', async (input) => {
       const parsed = MemoryForgetSchema.parse(input);
       // H3: GDPR forget targets a specific id — never another tenant's memory.
-      if (!idInForcedNs(parsed.id)) throw new Error('Memory not found');
+      // §6 (re-battle): hard-forget EXPORTS the row's content in its response, so an
+      // over-ceiling forget is a content-egress leak (the version_restore class) —
+      // gate the ceiling too.
+      if (!idInForcedNs(parsed.id) || !idWithinCeiling(parsed.id)) throw new Error('Memory not found');
       return handleForget(getDb(), parsed);
     }),
   );
@@ -800,7 +905,9 @@ export function createServer(): McpServer {
     MemoryHistorySchema.shape,
     instrument('memory_history', async (input) => {
       const parsed = MemoryHistorySchema.parse(input);
-      if (!idInForcedNs(parsed.id)) return { memory_id: parsed.id, exists: false };
+      // §6: over-ceiling = non-confirmation (mirrors memory_get); history returns
+      // per-version content, so the ceiling guard must gate it like by-id reads.
+      if (!idInForcedNs(parsed.id) || !idWithinCeiling(parsed.id)) return { memory_id: parsed.id, exists: false };
       return handleHistory(getDb(), parsed);
     }),
   );
@@ -815,8 +922,12 @@ export function createServer(): McpServer {
       // battle-v9 CLASS 2: seed is a by-id read like memory_related — refuse a
       // foreign seed (existence non-confirmation). The neighbour scan is already
       // partitioned to the seed's (scope,namespace) at the graph layer (4d8a1b1).
-      if (!idInForcedNs(parsed.id)) throw new Error('Memory not found');
-      return handleUnlinkedMentions(getDb(), await getEmbedder(), parsed);
+      // §6 (re-battle): an over-ceiling seed must be non-confirmed like the other
+      // by-id reads (it can surface the seed's neighbourhood/content).
+      if (!idInForcedNs(parsed.id) || !idWithinCeiling(parsed.id)) throw new Error('Memory not found');
+      // §6 (RB-8): mirror memory_related — thread the ceiling so neighbour
+      // titles/snippets above the principal's clearance are never echoed.
+      return handleUnlinkedMentions(getDb(), await getEmbedder(), withCeiling(parsed));
     }),
   );
 
@@ -828,7 +939,9 @@ export function createServer(): McpServer {
     instrument('memory_query_structured', async (input) => {
       const parsed = MemoryQueryStructuredSchema.parse(input);
       // T1: query_structured carries namespace under `filter`, not top-level.
-      const scoped = scopeFilterToNamespace(parsed);
+      // §6: the egress ceiling rides the top-level `access_level_ceiling` (a
+      // chokepoint value, NOT a user filter) so over-ceiling rows are invisible.
+      const scoped = withCeiling(scopeFilterToNamespace(parsed));
       return runStructuredQuery(getDb(), scoped);
     }),
   );
@@ -840,7 +953,9 @@ export function createServer(): McpServer {
     MemoryVersionDiffSchema.shape,
     instrument('memory_version_diff', async (input) => {
       const parsed = MemoryVersionDiffSchema.parse(input);
-      if (!idInForcedNs(parsed.id)) throw new Error('Memory not found');
+      // §6: over-ceiling = not-found (mirrors memory_get); a diff returns both the
+      // old AND new version content, so the ceiling guard must gate it too.
+      if (!idInForcedNs(parsed.id) || !idWithinCeiling(parsed.id)) throw new Error('Memory not found');
       return handleVersionDiff(getDb(), parsed);
     }),
   );
@@ -853,7 +968,11 @@ export function createServer(): McpServer {
     instrument('memory_version_restore', async (input) => {
       const parsed = MemoryVersionRestoreSchema.parse(input);
       // H3: version-restore re-embeds a specific id's content.
-      if (!idInForcedNs(parsed.id)) throw new Error('Memory not found');
+      // §6 (re-battle CONFIRMED HIGH): version_restore both MUTATES and ECHOES the
+      // restored content, so without the ceiling a sub-ceiling principal owning the
+      // namespace could read+rewrite an over-ceiling row. Gate it like the read
+      // version tools (the missed WRITE twin of the F1 fix).
+      if (!idInForcedNs(parsed.id) || !idWithinCeiling(parsed.id)) throw new Error('Memory not found');
       return handleVersionRestore(getDb(), await getEmbedder(), parsed);
     }),
   );
@@ -868,7 +987,15 @@ export function createServer(): McpServer {
       // battle-v16 WH-TENANCY: pin webhook management to the forced tenant so a
       // register can't create a wildcard/foreign target and list/delete can't
       // reach another tenant's targets.
-      return handleWebhook(getDb(), parsed, forcedNamespace());
+      // RBAC §5: under any forcing (env OR principal) the pinned tenant for this
+      // call is scopeToNamespace over the caller's namespace — env-forced is
+      // byte-identical (override); a principal gets member-keep / unset-default /
+      // foreign-throw. Unforced stays undefined (handleWebhook's unpinned mode).
+      const pinnedNs =
+        forcedNamespace() !== undefined
+          ? scopeToNamespace({ namespace: parsed.namespace }).namespace
+          : undefined;
+      return handleWebhook(getDb(), parsed, pinnedNs);
     }),
   );
 
@@ -879,7 +1006,9 @@ export function createServer(): McpServer {
     MemoryInsightsSchema.shape,
     instrument('memory_insights', async (input) => {
       const parsed = MemoryInsightsSchema.parse(input);
-      return handleInsights(getDb(), withForcedNs(parsed));
+      // §6 (re-battle-5): insights embed memory titles/snippets in their advisory
+      // text — withCeiling gates which rows the digest may analyse.
+      return handleInsights(getDb(), withCeiling(withForcedNs(parsed)));
     }),
   );
 
@@ -890,7 +1019,9 @@ export function createServer(): McpServer {
     MemoryHealthSchema.shape,
     instrument('memory_health', async (input) => {
       const parsed = MemoryHealthSchema.parse(input);
-      return handleHealth(getDb(), withForcedNs(parsed));
+      // §6 (RB-10): scopedRead threads the access ceiling so the volume counts
+      // (live/retired/stale/aging) exclude over-ceiling rows.
+      return handleHealth(getDb(), scopedRead(parsed));
     }),
   );
 
@@ -904,14 +1035,18 @@ export function createServer(): McpServer {
       // battle-v9 CLASS 2: action=list stays namespace-forced; preview/confirm
       // operate on parsed.id and must refuse a foreign id — confirm even MUTATES
       // (clears the stale flag), so this guards a cross-tenant write too.
+      // §6 (re-battle): also refuse an over-ceiling id (preview leaks the blast
+      // radius; confirm mutates) — the by-id non-confirmation model.
       if (
         (parsed.action === 'preview' || parsed.action === 'confirm') &&
         parsed.id &&
-        !idInForcedNs(parsed.id)
+        (!idInForcedNs(parsed.id) || !idWithinCeiling(parsed.id))
       ) {
         throw new Error('Memory not found');
       }
-      return handleRevalidate(getDb(), withForcedNs(parsed));
+      // §6 (re-battle-5): list mode returns stale {id,title} — withCeiling gates it
+      // (preview/confirm by-id are idWithinCeiling-guarded above).
+      return handleRevalidate(getDb(), withCeiling(withForcedNs(parsed)));
     }),
   );
 
@@ -944,7 +1079,7 @@ export function createServer(): McpServer {
     MemoryExportDatasetSchema.shape,
     instrument('memory_export_dataset', async (input) => {
       const parsed = MemoryExportDatasetSchema.parse(input);
-      return handleExportDataset(getDb(), withForcedNs(parsed));
+      return handleExportDataset(getDb(), scopedRead(parsed));
     }),
   );
 

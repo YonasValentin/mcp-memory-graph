@@ -55,6 +55,12 @@ export function handleGraph(
   db: Database.Database,
   input: GraphInput,
   forcedNamespace?: string,
+  // RBAC §6 (re-battle-6): the returned memories[] carry per-row id+title — an
+  // access-classified corpus egress (the v1 class), NOT just entity names. A
+  // sub-ceiling principal must not receive over-ceiling memory titles/ids via the
+  // graph. undefined → legacy/local/full-clearance. (Entity names + mention_count
+  // remain the namespace-bounded v2 graph-tenancy surface.)
+  accessCeiling?: string[],
 ): GraphResult {
   const limit = input.limit ?? 20;
   const depth = input.depth ?? 1;
@@ -254,13 +260,21 @@ export function handleGraph(
     // the join itself must filter on the forced namespace (not just the entity
     // set) or a foreign memory's id/title/namespace would leak.
     const nsClause = forcedNamespace ? ' AND m.namespace = ?' : '';
-    const params = forcedNamespace ? [...entityIds, forcedNamespace] : [...entityIds];
+    // §6 (re-battle-6): gate the returned memory rows by the principal ceiling.
+    const accClause = accessCeiling && accessCeiling.length > 0
+      ? ` AND m.access_level IN (${accessCeiling.map(() => '?').join(',')})`
+      : '';
+    const params = [
+      ...entityIds,
+      ...(forcedNamespace ? [forcedNamespace] : []),
+      ...(accessCeiling && accessCeiling.length > 0 ? accessCeiling : []),
+    ];
     memories = db.prepare(`
       SELECT DISTINCT m.id, m.title, m.namespace
       FROM memory_entities me
       JOIN memories m ON m.id = me.memory_id
       WHERE me.entity_id IN (${idPlaceholders})
-        AND ${live}${nsClause}
+        AND ${live}${nsClause}${accClause}
       ORDER BY m.importance_score DESC
       LIMIT 50
     `).all(...params) as typeof memories;

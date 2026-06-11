@@ -33,6 +33,8 @@ interface SearchInput {
   document_type?: string;
   tags?: string[];
   access_level?: AccessLevel;
+  /** RBAC §6 egress ceiling (allow-list of permitted access levels). */
+  access_level_ceiling?: AccessLevel[];
   language?: string;
   limit?: number;
   offset?: number;
@@ -62,6 +64,7 @@ export async function handleSearch(
     document_type: input.document_type,
     tags: input.tags,
     access_level: input.access_level,
+    access_level_ceiling: input.access_level_ceiling,
     language: input.language,
     limit: input.limit ?? 10,
     offset: input.offset ?? 0,

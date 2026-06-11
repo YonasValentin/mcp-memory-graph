@@ -8,6 +8,7 @@ import {
 } from '../graph/entity-store.js';
 import type { ENTITY_TYPES } from '../constants/enums.js';
 import { forcedNamespace } from '../lib/tenancy.js';
+import { currentPrincipal } from '../lib/request-context.js';
 
 interface EntityInput {
   name: string;
@@ -54,12 +55,18 @@ export function handleExtractEntities(
     // forced tenant, or '' for the single-user shared graph — NEVER the owning
     // memory's own scope/namespace (which would fragment the graph and diverge
     // from handleStore's write path). The tool is guarded by idInForcedNs upstream.
+    // RBAC §5: under a PRINCIPAL the per-call tenant is the OWNING memory's
+    // namespace — the upstream idInForcedNs guard proved it is in the key set;
+    // namespaces[0] would cross-contaminate a namespaces[1] memory's entities
+    // into the default partition. Legacy env / unscoped unchanged.
     const owner = db
-      .prepare<[string], { scope: string }>('SELECT scope FROM memories WHERE id = ?')
+      .prepare<[string], { scope: string; namespace: string | null }>(
+        'SELECT scope, namespace FROM memories WHERE id = ?',
+      )
       .get(input.memory_id);
     const partition = {
       scope: owner?.scope ?? 'global', // informational only
-      namespace: forcedNamespace() ?? '',
+      namespace: currentPrincipal() ? (owner?.namespace ?? '') : (forcedNamespace() ?? ''),
     };
 
     // Process entities

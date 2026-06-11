@@ -1,7 +1,9 @@
 import type Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
-import { forcedNamespace } from '../lib/tenancy.js';
+import { forcedNamespace, principalAccessCeiling } from '../lib/tenancy.js';
+import { reconcileBlocked } from '../lib/reconcile-guard.js';
+import { currentPrincipal } from '../lib/request-context.js';
 import { randomUUID, createHash } from 'node:crypto';
 import type {
   EmbeddingProvider,
@@ -99,6 +101,17 @@ export async function syncVault(
   for (const filePath of deletedPaths) {
     try {
       const meta = syncMeta.get(filePath)!;
+      // RB-8: never invalidate a foreign-namespace / over-ceiling anchored memory
+      // by removing its vault file — that would be a cross-tenant declassify /
+      // destroy primitive on a shared vault. Skip the tombstone; the row stays.
+      if (anchorReconcileBlocked(db, meta.memory_id)) {
+        errors.push(
+          `Removed file ${filePath} anchors a foreign-namespace or over-ceiling ` +
+            `memory — not invalidated (skipped)`,
+        );
+        conflicted++;
+        continue;
+      }
       // SOFT-tombstone, not hard-delete (battle-v5 round-2, user decision): a
       // removed vault file invalidates its memory (stamps valid_to) so it leaves
       // default recall but stays recoverable via memory_restore with its version
@@ -178,6 +191,18 @@ export async function syncVault(
       if (!isNew) {
         const meta = syncMeta.get(entry.relativePath);
         if (meta) {
+          // RB-8: a CHANGED tracked file hard-deletes + re-inserts its anchored
+          // memory. If that anchor points at a foreign-namespace / over-ceiling
+          // row (shared vault), a sub-ceiling editor must not overwrite/destroy
+          // it — skip the whole file (leave the protected row intact).
+          if (anchorReconcileBlocked(db, meta.memory_id)) {
+            errors.push(
+              `Changed file ${entry.relativePath} anchors a foreign-namespace or ` +
+                `over-ceiling memory — not reconciled (skipped)`,
+            );
+            conflicted++;
+            continue;
+          }
           try {
             deleteOldMemory(db, meta.memory_id, options.vaultPath, entry.relativePath);
           } catch (err) {
@@ -223,7 +248,24 @@ export async function syncVault(
             // already exists (e.g. a memory_export_vault → vault_sync round-trip)
             // must UPDATE that memory in place, not collide on UNIQUE(id) or fork
             // a duplicate. Delete the prior row first, then re-insert.
-            if (getMemoryById(db, row.id)) {
+            const existing = getMemoryById(db, row.id);
+            if (existing) {
+              // §6 + tenancy (re-battle-7, 11th instance; now the shared
+              // reconcileBlocked decision — the durable write-path fix): a
+              // frontmatter id pointing at a row OUTSIDE this sync's namespace, or
+              // ABOVE the principal ceiling, must NOT be reconciled — otherwise
+              // vault_sync is a delete-by-id / declassify / cross-tenant-relocate
+              // primitive (the import-overwrite breach on the vault path).
+              // row.namespace is the forced/principal namespace, so the ns check is
+              // unconditional here; leave the row intact and skip this file.
+              if (reconcileBlocked(existing, row.namespace, principalAccessCeiling())) {
+                errors.push(
+                  `Frontmatter id ${row.id} in ${entry.relativePath} targets a ` +
+                    `foreign-namespace or over-ceiling memory — skipped (not reconciled)`,
+                );
+                conflicted++;
+                continue;
+              }
               deleteMemory(db, row.id);
             }
             insertMemory(db, row, embeddings[i]);
@@ -359,6 +401,21 @@ function touchSyncMtime(
   ).run(mtimeMs, contentHash, vaultPath, filePath);
 }
 
+/**
+ * RB-8 (14th instance): the file-changed and file-removed paths reconcile a
+ * memory by the vault_sync_meta anchor (file→id), NOT a frontmatter id, so the
+ * RB-7 reconcile guard (reconcileBlocked at the insert sites) never sees them. On
+ * a shared/team vault the anchor can point at a higher-clearance or foreign-
+ * namespace row; a sub-ceiling sync must not hard-delete (changed) or invalidate
+ * (removed) it. Returns true when the anchored memory is protected and must be
+ * left untouched. Unforced single-user (forcedNamespace + ceiling undefined) is
+ * never blocked — same shape as import / the insert-side reconcile guard.
+ */
+function anchorReconcileBlocked(db: Database.Database, memoryId: string): boolean {
+  const row = getMemoryById(db, memoryId);
+  return row != null && reconcileBlocked(row, forcedNamespace(), principalAccessCeiling());
+}
+
 function deleteOldMemory(
   db: Database.Database,
   memoryId: string,
@@ -452,7 +509,18 @@ function buildMemoryRow(
   // the directory basename). Unforced (single-user), honor frontmatter so a
   // memory_export_vault → vault_sync round-trip reconciles to the originating
   // memory instead of minting a duplicate under namespace=<vault>.
-  const forcedNs = forcedNamespace();
+  //
+  // RBAC §5: under a PRINCIPAL the legacy invariant "pin == vault basename"
+  // (the env guard enforces equality before sync runs) generalizes to the
+  // MEMBER basename — pinning to namespaces[0] would corrupt a multi-namespace
+  // key's second vault (vault "b" rows planted into "a"). A NON-member basename
+  // is only reachable when a caller skips vaultPathInForcedNamespace; fall back
+  // to the key default so writes can never leave the key's own namespace set.
+  // Frontmatter stays ignored under a principal, exactly as under env forcing.
+  const ctx = currentPrincipal();
+  const forcedNs = ctx
+    ? (ctx.namespaces.includes(vaultName) ? vaultName : ctx.namespaces[0])
+    : forcedNamespace();
   return {
     id: fmString(fm, 'id') ?? randomUUID(),
     scope: fmScope && VALID_SCOPES.has(fmScope) ? fmScope : 'project',
@@ -540,7 +608,16 @@ async function ingestLargeFile(
   const insertAll = db.transaction(() => {
     // Reconcile by identity (see smallFiles path): replace an existing memory
     // with the same frontmatter id rather than colliding on UNIQUE(id).
-    if (getMemoryById(db, parentRow.id)) {
+    const existing = getMemoryById(db, parentRow.id);
+    if (existing) {
+      // §6 + tenancy (re-battle-7, 11th instance — the large-file twin of the
+      // smallFiles guard, sharing reconcileBlocked): never delete/overwrite a row
+      // outside this sync's namespace or above the principal ceiling by frontmatter
+      // id. Skip the whole reconcile+insert so vault_sync can't relocate /
+      // declassify / destroy a foreign or over-ceiling memory.
+      if (reconcileBlocked(existing, parentRow.namespace, principalAccessCeiling())) {
+        return;
+      }
       deleteMemory(db, parentRow.id);
     }
     insertMemory(db, parentRow, parentEmbedding);

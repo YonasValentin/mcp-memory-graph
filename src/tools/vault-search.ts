@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import path from 'node:path';
-import type { EmbeddingProvider, SearchResult, SearchMode, MemoryScope } from '../types.js';
+import type { EmbeddingProvider, SearchResult, SearchMode, MemoryScope, AccessLevel } from '../types.js';
 import { hybridSearch } from '../search/hybrid.js';
 
 export async function handleVaultSearch(
@@ -16,6 +16,9 @@ export async function handleVaultSearch(
     search_mode?: string;
     tags?: string[];
     min_confidence?: number;
+    // RBAC §6 (battle F3): a principal's egress ceiling, threaded by server.ts's
+    // scopedRead wrapper. undefined in legacy/local modes → no-op, byte-identical.
+    access_level_ceiling?: AccessLevel[];
   },
 ): Promise<{ results: SearchResult[]; total: number; truncated: boolean }> {
   // Default the namespace to the vault folder name (back-compat), but honour an
@@ -32,6 +35,7 @@ export async function handleVaultSearch(
     search_mode: (input.search_mode ?? 'hybrid') as SearchMode,
     tags: input.tags,
     min_confidence: input.min_confidence,
+    access_level_ceiling: input.access_level_ceiling,
   });
 
   return { results, total, truncated };

@@ -28,6 +28,12 @@ export interface ExportDatasetInput {
   min_importance?: number;
   min_confidence?: number;
   limit?: number;
+  /**
+   * RBAC §6 egress ceiling (allow-list of permitted access levels) from the
+   * principal. Composes with the env cap (MCP_DATASET_MAX_ACCESS_LEVEL) as an
+   * INTERSECTION — a row must clear BOTH caps to be emitted (the min of the two).
+   */
+  access_level_ceiling?: string[];
 }
 
 export interface ExportDatasetResult {
@@ -89,7 +95,13 @@ export function handleExportDataset(
   const minConfidence = input.min_confidence ?? 0;
 
   const scope = scopeConditions(input);
-  const accessAllow = datasetAccessAllowlist();
+  // Egress cap = the env dataset cap INTERSECTED with the principal's §6 ceiling
+  // (the min of the two): a row must clear BOTH to leave the trust boundary.
+  const envAllow = datasetAccessAllowlist();
+  const accessAllow =
+    input.access_level_ceiling && input.access_level_ceiling.length > 0
+      ? envAllow.filter((lvl) => input.access_level_ceiling!.includes(lvl))
+      : envAllow;
   const conditions = [
     ...liveConditions({ topLevelOnly: true }),
     ...scope.conditions,

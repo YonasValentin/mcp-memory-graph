@@ -194,7 +194,16 @@ export interface ExportVaultResult {
  */
 export function exportMemoriesToVault(
   db: Database.Database,
-  opts: { vaultPath: string; scope?: string; namespace?: string },
+  opts: {
+    vaultPath: string;
+    scope?: string;
+    namespace?: string;
+    // RBAC §6 (battle F4): a principal's egress ceiling (allow-list of levels).
+    // Intersected with the configured vault egress cap so a low-clearance key
+    // can never write above-ceiling content to disk. undefined → config-only
+    // (byte-identical to the pre-RBAC / legacy / local path).
+    accessCeiling?: AccessLevel[];
+  },
 ): ExportVaultResult {
   // Create the vault dir first so we can resolve its real (symlink-free) path.
   fs.mkdirSync(opts.vaultPath, { recursive: true });
@@ -236,7 +245,9 @@ export function exportMemoriesToVault(
     // M2.5: egress filter — a full re-export must NOT reintroduce a memory that
     // exceeds the configured sensitivity cap (or matches a deny_glob). When
     // blocked, applyEgressFilter writes nothing AND purges any stale file.
-    if (!applyEgressFilter(vaultRoot, relPath, memoryToMarkdown(memory), memory, getVaultEgress())) {
+    // F4: intersect the operator's vault egress cap with the caller principal's
+    // access ceiling — the more restrictive of the two wins.
+    if (!applyEgressFilter(vaultRoot, relPath, memoryToMarkdown(memory), memory, intersectEgressWithCeiling(getVaultEgress(), opts.accessCeiling))) {
       continue;
     }
     files.push(relPath);
@@ -305,6 +316,36 @@ export function accessLevelExceedsCap(level: AccessLevel, cap: AccessLevel): boo
   const levelRank = ACCESS_LEVEL_RANK[level] ?? Number.MAX_SAFE_INTEGER;
   const capRank = ACCESS_LEVEL_RANK[cap] ?? 0;
   return levelRank > capRank;
+}
+
+/**
+ * RBAC §6 (battle F4): fold a per-request principal access ceiling (the allow-
+ * list `principalAccessCeiling()` returns — `public..maxAccessLevel`) into the
+ * configured {@link EgressPolicy}, so a disk-writing vault export honours BOTH
+ * the operator's vault cap AND the calling key's clearance. The principal cap is
+ * the highest-ranked level in its allow-list; the effective `max_access_level`
+ * is the MORE restrictive (lower rank) of that and any configured cap. Returns
+ * the policy unchanged when no ceiling applies (legacy/local/full-clearance) so
+ * existing behaviour is byte-identical. deny_globs pass through untouched.
+ */
+export function intersectEgressWithCeiling(
+  policy: EgressPolicy | undefined,
+  ceiling: readonly AccessLevel[] | undefined,
+): EgressPolicy | undefined {
+  if (!ceiling || ceiling.length === 0) return policy;
+  // The ceiling allow-list is contiguous from public up; its cap is the highest
+  // rank present. Fail-closed: an unrecognized member is ignored for the max
+  // (it can't widen the cap).
+  let ceilCap: AccessLevel = 'public';
+  for (const lvl of ceiling) {
+    if ((ACCESS_LEVEL_RANK[lvl] ?? -1) > ACCESS_LEVEL_RANK[ceilCap]) ceilCap = lvl;
+  }
+  const configuredCap = policy?.max_access_level;
+  const effectiveCap =
+    configuredCap && ACCESS_LEVEL_RANK[configuredCap] < ACCESS_LEVEL_RANK[ceilCap]
+      ? configuredCap
+      : ceilCap;
+  return { ...policy, max_access_level: effectiveCap };
 }
 
 /**

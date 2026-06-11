@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import type { ManifestEntry, MemoryScope, MemoryRow } from '../types.js';
-import { liveConditions, scopeConditions } from '../db/predicates.js';
+import { liveConditions, scopeConditions, accessCeilingCondition } from '../db/predicates.js';
 import { CURRENT_SCHEMA_VERSION } from '../db/schema.js';
 
 interface ManifestInput {
@@ -11,6 +11,12 @@ interface ManifestInput {
   document_type?: string;
   limit?: number;
   offset?: number;
+  /**
+   * RBAC §6 egress ceiling. The manifest emits row TITLES — a confidential
+   * title is itself sensitive egress, so a capped principal's manifest (and its
+   * content-hash) reflects only rows at/below the ceiling.
+   */
+  access_level_ceiling?: string[];
 }
 
 export function handleManifest(
@@ -29,6 +35,9 @@ export function handleManifest(
     conditions.push('document_type = ?');
     params.push(input.document_type);
   }
+  const ceiling = accessCeilingCondition(input.access_level_ceiling);
+  conditions.push(...ceiling.conditions);
+  params.push(...ceiling.params);
 
   const whereClause = `WHERE ${conditions.join(' AND ')}`;
   const limit = input.limit ?? 500;
@@ -168,16 +177,22 @@ export function merkleRootFromHashes(hashes: readonly string[]): string {
 export function buildIntegrityManifest(
   db: Database.Database,
   generatedAt: string,
-  filter?: { scope?: string; namespace?: string },
+  filter?: { scope?: string; namespace?: string; accessCeiling?: string[] },
 ): IntegrityManifest {
   // battle-v14 F1: on a namespace-forced deployment the manifest sidecar is
   // committed INTO the tenant's (git-shared) vault, so it must fingerprint ONLY
   // the tenant's corpus — an unscoped manifest leaks the global memory count and
   // a merkle root that moves whenever any other tenant writes. Unscoped (no
   // filter) is the single-user default and stays whole-corpus.
+  // RBAC §6 (battle F4 residual): when a capped principal exports, the .md files
+  // are ceiling-filtered — the manifest MUST fingerprint the same set, else (a)
+  // it leaks the count + a content-hash of above-ceiling rows into a git-shared
+  // file, and (b) it wouldn't match the files actually written. Apply the same
+  // access_level IN (...) predicate; undefined ceiling → whole corpus, unchanged.
   const scope = scopeConditions(filter ?? {});
-  const conditions = [...liveConditions({ topLevelOnly: true }), ...scope.conditions];
-  const params: unknown[] = [...scope.params];
+  const ceil = accessCeilingCondition(filter?.accessCeiling);
+  const conditions = [...liveConditions({ topLevelOnly: true }), ...scope.conditions, ...ceil.conditions];
+  const params: unknown[] = [...scope.params, ...ceil.params];
   const rows = db
     .prepare<unknown[], { id: string; scope: string; access_level: string; content: string }>(
       `SELECT id, scope, access_level, content FROM memories WHERE ${conditions.join(' AND ')}`,

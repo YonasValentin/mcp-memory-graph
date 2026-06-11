@@ -19,12 +19,20 @@ interface VecMatch {
 export async function handleRelated(
   db: Database.Database,
   embedder: EmbeddingProvider,
-  input: { id: string; limit: number; min_similarity?: number },
+  input: { id: string; limit: number; min_similarity?: number; access_level_ceiling?: string[] },
 ): Promise<SearchResult[]> {
   const targetRow = getMemoryById(db, input.id);
   if (!targetRow) {
     return [];
   }
+  // RBAC §6 egress ceiling: a principal must not receive a neighbour above its
+  // access level. Applied as a Set membership in the post-KNN validity loop
+  // (alongside the bitemporal-live gate) so the geometric k-widening still fills
+  // `limit` PERMITTED live neighbours. Undefined → no ceiling (legacy/local).
+  const ceiling =
+    input.access_level_ceiling && input.access_level_ceiling.length > 0
+      ? new Set(input.access_level_ceiling)
+      : undefined;
 
   const targetRowid = getMemoryRowid(db, input.id);
   /* c8 ignore next 3 */
@@ -82,6 +90,8 @@ export async function handleRelated(
       // vec rows are retained on bitemporal invalidation (for as_of); a
       // retired/superseded/forgotten memory is not "related" to current work.
       if (row.valid_to !== null || row.tx_expired !== null || row.superseded_at !== null) continue;
+      // RBAC §6: skip a neighbour above the principal's access-level ceiling.
+      if (ceiling && !ceiling.has(row.access_level)) continue;
       valid.push({ row, similarity });
       if (valid.length >= input.limit) break;
     }

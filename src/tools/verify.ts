@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { liveConditions, scopeConditions } from '../db/predicates.js';
+import { liveConditions, scopeConditions, accessCeilingCondition } from '../db/predicates.js';
 import { verifyEnvelopeAny, trustedPubkeys } from '../provenance/envelope.js';
 
 /** A single memory's verification outcome. */
@@ -64,7 +64,7 @@ const MAX_LIMIT = 1000;
  */
 export function handleVerify(
   db: Database.Database,
-  input: { id?: string; scope?: string; namespace?: string; limit?: number; trusted_pubkeys?: string[] },
+  input: { id?: string; scope?: string; namespace?: string; limit?: number; trusted_pubkeys?: string[]; access_level_ceiling?: string[] },
 ): VerifyResult {
   // Trust allowlist (M2-LOW): own key + MCP_TRUSTED_PUBKEYS files + any PEM keys
   // passed inline on this call. A teammate's valid signature on a synced vault
@@ -78,14 +78,18 @@ export function handleVerify(
       .all(input.id);
   } else {
     const scope = scopeConditions({ scope: input.scope, namespace: input.namespace });
-    const conditions = [...liveConditions(), ...scope.conditions];
+    // §6 (re-battle-5): the batch path returns {id,status} per row — an
+    // over-ceiling existence/provenance oracle. Gate it (the by-id path is
+    // already idWithinCeiling-guarded at the registration). No-op when undefined.
+    const ceil = accessCeilingCondition(input.access_level_ceiling);
+    const conditions = [...liveConditions(), ...scope.conditions, ...ceil.conditions];
     const where = `WHERE ${conditions.join(' AND ')}`;
     const limit = Math.min(Math.max(1, input.limit ?? DEFAULT_LIMIT), MAX_LIMIT);
     rows = db
       .prepare<unknown[], VerifyRow>(
         `SELECT ${SELECT_COLS} FROM memories ${where} ORDER BY created_at DESC LIMIT ?`,
       )
-      .all(...scope.params, limit);
+      .all(...scope.params, ...ceil.params, limit);
   }
 
   const results: VerifyEntry[] = [];

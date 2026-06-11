@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { CURRENT_SCHEMA_VERSION, MEMORY_LINKS_DDL, CORE_MEMORY_DDL, WEBHOOKS_DDL, SEARCH_LOG_DDL } from './schema.js';
+import { CURRENT_SCHEMA_VERSION, MEMORY_LINKS_DDL, CORE_MEMORY_DDL, WEBHOOKS_DDL, SEARCH_LOG_DDL, API_KEYS_DDL } from './schema.js';
 
 interface Migration {
   version: number;
@@ -7,6 +7,19 @@ interface Migration {
 }
 
 export { CURRENT_SCHEMA_VERSION };
+
+/** True when `table` exists (for migrations that recreate an index / add a
+ *  column on a core table — a real DB always has it from v1, but the synthetic
+ *  per-migration unit fixtures stamp a version with only schema_meta present). */
+function tableExists(db: Database.Database, table: string): boolean {
+  return (
+    db
+      .prepare<[string], { name: string }>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+      )
+      .get(table) != null
+  );
+}
 
 /** True when `table` has a column named `col` (for migrations that must tolerate
  *  a minimal/ancient base schema — e.g. the synthetic from-0 upgrade path). */
@@ -556,6 +569,71 @@ const migrations: Migration[] = [
       // host's global history would re-pollute every fresh consolidation with
       // cross-project queries — the exact leak this migration closes.
       db.exec(SEARCH_LOG_DDL);
+    },
+  },
+  {
+    version: 16,
+    up: (db) => {
+      // RBAC v1 — per-key API principals (see src/db/api-keys.ts). Create-only
+      // and idempotent (CREATE TABLE IF NOT EXISTS); the table stays empty until
+      // an operator mints keys, so existing deployments are unaffected.
+      db.exec(API_KEYS_DDL);
+    },
+  },
+  {
+    version: 17,
+    up: (db) => {
+      // RBAC (RB-8, 15th instance): idx_session_source_live was UNIQUE on
+      // `source` GLOBALLY, so only one live session row per source could exist
+      // across ALL namespaces — and handleSessionNote matched it by source alone.
+      // On a shared/multi-tenant DB a principal could append to (re-embed,
+      // version-bump, vault-mirror) ANOTHER namespace's session row just by
+      // reusing its session_id. Re-scope the uniqueness to (source, namespace) so
+      // each namespace owns its session note independently; the handler scopes its
+      // lookup to the forced namespace to match. IFNULL(namespace,'') folds the
+      // single-user NULL namespace to one row per source (single-user behaviour
+      // for a given namespace is unchanged). The SECURITY fix is the
+      // namespace-scoped lookup in handleSessionNote (always active); this index
+      // re-scope only swaps the concurrency backstop. Guard on the OLD index
+      // existing: it is created by initializeSchema, which guarantees the full
+      // memories shape (source/document_type/parent_id/valid_to/tx_expired) the
+      // partial predicate needs — so a synthetic per-migration fixture or a pure
+      // migration-chain DB that never ran initializeSchema is tolerated (nothing
+      // to re-scope), while every real DB has it.
+      const hasSessionIdx = db
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_session_source_live'")
+        .get();
+      if (!hasSessionIdx) return;
+      db.exec(`
+        DROP INDEX IF EXISTS idx_session_source_live;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_session_source_live
+          ON memories(source, IFNULL(namespace, ''))
+          WHERE document_type = 'session' AND parent_id IS NULL
+            AND valid_to IS NULL AND tx_expired IS NULL;
+      `);
+    },
+  },
+  {
+    version: 18,
+    up: (db) => {
+      // RBAC (RB-8): ingest_source_tracking was keyed by source_path GLOBALLY (a
+      // UNIQUE index on source_path alone), so a re-ingest of a colliding
+      // source-path in ANOTHER namespace clobbered the victim's tracking row via
+      // INSERT OR REPLACE — a cross-tenant anchor hijack. Add a namespace column
+      // and re-scope the uniqueness to (source_path, namespace) so each namespace
+      // tracks its own ingests; getIngestSourceByPath also filters by namespace.
+      // Legacy rows keep namespace NULL (folded to '' — single-user unchanged); a
+      // namespaced re-ingest of a legacy source simply re-tracks fresh. (The table
+      // exists on a real DB; the guard tolerates the synthetic unit fixtures.)
+      if (!tableExists(db, 'ingest_source_tracking')) return;
+      if (!columnExists(db, 'ingest_source_tracking', 'namespace')) {
+        db.exec('ALTER TABLE ingest_source_tracking ADD COLUMN namespace TEXT;');
+      }
+      db.exec(`
+        DROP INDEX IF EXISTS idx_ingest_source_path;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_source_path
+          ON ingest_source_tracking(source_path, IFNULL(namespace, ''));
+      `);
     },
   },
 ];

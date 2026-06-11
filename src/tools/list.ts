@@ -6,6 +6,7 @@ import type {
   MemoryScope,
   SortField,
   SortOrder,
+  AccessLevel,
 } from '../types.js';
 import { listMemories, rowToMemory } from '../db/repository.js';
 
@@ -19,6 +20,8 @@ interface ListInput {
   sort_by?: SortField;
   sort_order?: SortOrder;
   as_of?: string;
+  /** RBAC §6 egress ceiling (allow-list of permitted access levels). */
+  access_level_ceiling?: AccessLevel[];
 }
 
 export function handleList(
@@ -35,6 +38,7 @@ export function handleList(
     sort_by: input.sort_by ?? 'created_at',
     sort_order: input.sort_order ?? 'desc',
     as_of: input.as_of,
+    access_level_ceiling: input.access_level_ceiling,
   };
 
   const { memories, total } = listMemories(db, options);

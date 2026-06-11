@@ -16,6 +16,7 @@ import type { EmbeddingProvider, MemoryScope } from '../types.js';
 import { handleStore } from './store.js';
 import { handleUpdate } from './update.js';
 import { liveConditions } from '../db/predicates.js';
+import { reconcileBlocked } from '../lib/reconcile-guard.js';
 
 export interface SessionNoteInput {
   session_id: string;
@@ -60,8 +61,19 @@ export async function handleSessionNote(
   db: Database.Database,
   embedder: EmbeddingProvider,
   input: SessionNoteInput,
+  accessCeiling?: string[],
 ): Promise<SessionNoteResult> {
   const source = sessionSource(input.session_id);
+  // RBAC (RB-8, 15th instance): the lookup MUST be scoped to the caller's
+  // namespace. `source` is fully caller-controlled ('session:'+session_id), and
+  // the pre-fix query matched by source ALONE — so on a forced/multi-tenant DB a
+  // principal could find, append to, re-embed, version-bump and vault-mirror
+  // ANOTHER namespace's session row by reusing its session_id (a cross-tenant
+  // overwrite + id-echo primitive). input.namespace is already the forced/principal
+  // namespace (withForcedNs at registration); fold NULL to '' to match the
+  // (source, namespace) unique index. Unforced single-user is unchanged for a
+  // given namespace.
+  const ns = input.namespace ?? null;
 
   // battle-v9 CLASS 3: the create-or-append is a read-modify-write over a shared
   // session row. Two concurrent processes could (a) both see no row and each
@@ -74,15 +86,23 @@ export async function handleSessionNote(
   //     version since we read, updateMemory returns null and we re-read + retry.
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const existing = db
-      .prepare<[string], { id: string; content: string; version: number }>(
-        `SELECT id, content, version FROM memories
-           WHERE source = ? AND ${liveConditions({ topLevelOnly: true }).join(' AND ')}
+      .prepare<[string, string | null], { id: string; content: string; version: number; namespace: string | null; access_level: string }>(
+        `SELECT id, content, version, namespace, access_level FROM memories
+           WHERE source = ? AND IFNULL(namespace, '') = IFNULL(?, '')
+             AND ${liveConditions({ topLevelOnly: true }).join(' AND ')}
            ORDER BY created_at ASC
            LIMIT 1`,
       )
-      .get(source);
+      .get(source, ns);
 
     if (existing) {
+      // Defence-in-depth: the lookup is already namespace-scoped, but also refuse
+      // to append to an over-ceiling row (session rows are normally public, so
+      // this never fires in practice — it pins the invariant via the shared
+      // decision). targetNamespace=undefined: the namespace was matched in SQL.
+      if (reconcileBlocked(existing, undefined, accessCeiling)) {
+        throw new Error('memory_session_note: session row is above the caller access ceiling');
+      }
       const merged = `${existing.content}\n\n${input.text}`;
       const updated = await handleUpdate(db, embedder, {
         id: existing.id,

@@ -470,8 +470,11 @@ See **Team & solo sharing (Bruno-style git)** above for the model and trade-offs
 
 ### Security notes
 
-- `MCP_AUTH_TOKEN` is a single **shared** secret, not per-user accounts — fine for
-  a trusted group; rotate it by restarting the server with a new value.
+- `MCP_AUTH_TOKEN` is a single **shared** secret, fine for a trusted group; rotate
+  it by restarting the server with a new value. For **per-key RBAC** (one server,
+  N keys, each pinned to a namespace set + access-level ceiling) use `memory keys
+  create|list|revoke` (schema v16) — the legacy shared token still works and is
+  checked first. See [docs/MULTI-TENANCY.md](docs/MULTI-TENANCY.md#per-key-rbac-schema-v16).
 - **Never commit a token.** The `--remote` default keeps it in an env var by design.
 - Bind to `127.0.0.1` (the default) unless you front the server with a proxy/WAF
   that terminates TLS, then set `MCP_BIND=0.0.0.0`.

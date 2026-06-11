@@ -165,6 +165,14 @@ export interface SearchOptions {
   document_type?: string;
   tags?: string[];
   access_level?: AccessLevel;
+  /**
+   * RBAC v1 §6 — egress ceiling: when set, only rows whose `access_level` is IN
+   * this allow-list are returned (a MAX, distinct from the positive single-level
+   * `access_level` filter above — both apply as an intersection). Threaded from
+   * the tenancy chokepoint via {@link import('../lib/tenancy.js').principalAccessCeiling};
+   * undefined leaves the result set unchanged (legacy/local modes).
+   */
+  access_level_ceiling?: AccessLevel[];
   language?: string;
   limit: number;
   /** Pagination start; defaults to 0 when omitted (an omitted offset means "from the start"). */
@@ -325,6 +333,8 @@ export interface ListOptions {
   sort_order: SortOrder;
   /** ISO-8601 instant: return what was valid at this point in time instead of currently-valid. */
   as_of?: string;
+  /** RBAC v1 §6 — egress ceiling: only rows with access_level IN this allow-list. */
+  access_level_ceiling?: AccessLevel[];
 }
 
 export interface PaginatedResult<T> {
@@ -461,6 +471,13 @@ export interface IngestSourceRecord {
   ingested_at: string;
   last_checked_at: string;
   status: 'current' | 'stale' | 'deleted';
+  /**
+   * RBAC (RB-8): the namespace that owns this ingest tracking row. The
+   * (source_path, namespace) pair is unique, so a re-ingest of the same
+   * source-path in another namespace can't clobber a foreign tenant's anchor.
+   * NULL = single-user / legacy.
+   */
+  namespace: string | null;
 }
 
 export interface ConsolidationReport {

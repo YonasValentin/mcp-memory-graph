@@ -2,7 +2,9 @@ import type Database from 'better-sqlite3';
 import type { EmbeddingProvider, MemoryScope } from '../types.js';
 import { handleStore } from './store.js';
 import { createMemoryLink } from '../graph/memory-links.js';
-import { liveConditions, scopeConditions } from '../db/predicates.js';
+import { liveConditions, scopeConditions, accessCeilingCondition } from '../db/predicates.js';
+import { reconcileBlocked } from '../lib/reconcile-guard.js';
+import { forcedNamespace } from '../lib/tenancy.js';
 
 interface ReflectInput {
   /** 'gather' (default): collect reflection material. 'store': persist a synthesized insight. */
@@ -17,6 +19,13 @@ interface ReflectInput {
   source_ids?: string[];
   /** store: optional title for the stored insight. */
   title?: string;
+  /**
+   * RBAC §6 (re-battle-5, the 9th instance): gather is a corpus CONTENT read
+   * (it returns id+title+content snippets) structurally identical to
+   * memory_list — so it must honour the principal egress ceiling. The allow-list
+   * of levels the caller may receive; undefined → legacy/local/full-clearance.
+   */
+  access_level_ceiling?: string[];
 }
 
 interface ReflectMaterial {
@@ -93,11 +102,15 @@ function gatherMaterial(db: Database.Database, input: ReflectInput): GatherResul
   // Top-level, currently-valid memories only (bi-temporal filter), ranked by
   // importance then recency — the reflection-worthiness ordering.
   const scope = scopeConditions(input);
+  // §6: an over-ceiling row's content must never reach a sub-ceiling principal
+  // via the reflection material (the 9th-instance leak). No-op when undefined.
+  const ceil = accessCeilingCondition(input.access_level_ceiling);
   const conditions: string[] = [
     ...liveConditions({ topLevelOnly: true }),
     ...scope.conditions,
+    ...ceil.conditions,
   ];
-  const params: unknown[] = [...scope.params];
+  const params: unknown[] = [...scope.params, ...ceil.params];
 
   const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
@@ -141,13 +154,22 @@ async function storeInsight(
     return { error: 'store mode requires a non-empty "source_ids" array' };
   }
 
-  const stored = await handleStore(db, embedder, {
-    content: input.insight,
-    scope: input.scope,
-    namespace: input.namespace,
-    document_type: 'insight',
-    title: input.title,
-  });
+  const stored = await handleStore(
+    db,
+    embedder,
+    {
+      content: input.insight,
+      scope: input.scope,
+      namespace: input.namespace,
+      document_type: 'insight',
+      title: input.title,
+    },
+    undefined,
+    // §6 (RB-8): thread the principal ceiling so the insight's conflict scan can't
+    // NOOP-echo (or retire) an over-ceiling same-namespace near-duplicate — the
+    // memory_store registration passes this, storeInsight must too.
+    input.access_level_ceiling,
+  );
 
   // On the default on_conflict='add' path handleStore returns NOOP (stored:false)
   // when the insight near-duplicates an EXISTING memory, handing back that
@@ -171,8 +193,8 @@ async function storeInsight(
   let linksCreated = 0;
   for (const sourceId of input.source_ids) {
     const exists = db
-      .prepare<[string], { id: string }>(
-        `SELECT id FROM memories
+      .prepare<[string], { namespace: string | null; access_level: string }>(
+        `SELECT namespace, access_level FROM memories
           WHERE id = ?
             AND valid_to IS NULL
             AND tx_expired IS NULL
@@ -180,6 +202,14 @@ async function storeInsight(
       )
       .get(sourceId);
     if (!exists) continue;
+    // RBAC §6 (RB-9): a source_id pointing at a FOREIGN-namespace or OVER-ceiling
+    // row must be treated EXACTLY like a non-existent id — never linked (a same-ns
+    // over-ceiling derived_from edge would persist) and never counted. Counting it
+    // (links_created++) even on a refused cross-ns edge was a 1-bit existence /
+    // liveness oracle defeating the by-id non-confirmation invariant. Mirrors
+    // import/store; unforced single-user (forcedNamespace + ceiling undefined) is
+    // unchanged.
+    if (reconcileBlocked(exists, forcedNamespace(), input.access_level_ceiling)) continue;
     createMemoryLink(db, {
       sourceId: insightId,
       targetId: sourceId,

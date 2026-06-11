@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { liveConditions, scopeConditions } from '../db/predicates.js';
+import { liveConditions, scopeConditions, accessCeilingCondition } from '../db/predicates.js';
 
 const UNATTRIBUTED = 'unattributed';
 
@@ -25,17 +25,24 @@ export interface AttributionResult {
  */
 export function handleAttribution(
   db: Database.Database,
-  input: { scope?: string; namespace?: string },
+  input: { scope?: string; namespace?: string; access_level_ceiling?: string[] },
 ): AttributionResult {
   // battle-v9 CLASS 4: use the single-source live predicate so a restored-but-
   // still-superseded fact is NOT counted (the docstring promises retired facts
   // are excluded; the hand-written list omitted superseded_at IS NULL).
+  // RBAC §6 (RB-10): the by_author / by_agent / total rollups are an aggregate
+  // COUNT egress — without the ceiling they disclose the author identity and the
+  // per-author/agent count of OVER-ceiling memories to a sub-ceiling principal (the
+  // same count-oracle class as battle-v9 mention_count / re-battle-6 community
+  // counts). Drop over-ceiling rows from the count. No-op when ceiling undefined.
   const scope = scopeConditions(input);
+  const ceil = accessCeilingCondition(input.access_level_ceiling);
   const conditions: string[] = [
     ...liveConditions({ excludeSuperseded: true, topLevelOnly: true }),
     ...scope.conditions,
+    ...ceil.conditions,
   ];
-  const params: unknown[] = [...scope.params];
+  const params: unknown[] = [...scope.params, ...ceil.params];
 
   const whereClause = `WHERE ${conditions.join(' AND ')}`;
 

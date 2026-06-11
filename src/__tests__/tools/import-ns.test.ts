@@ -33,7 +33,10 @@ describe('memory_import wiring guard (server.ts passes the forced namespace)', (
       fileURLToPath(new URL('../../server.ts', import.meta.url)),
       'utf8',
     );
-    expect(serverSrc).toContain('handleImport(getDb(), await getEmbedder(), parsed, forcedNamespace())');
+    // The §6 re-battle-3 close added a 5th arg (principalAccessCeiling()) so an
+    // over-ceiling overwrite drops to a fresh insert. forcedNamespace() (4th arg,
+    // the REMAP guarantee) is intact — assert the call carries both.
+    expect(serverSrc).toContain('handleImport(getDb(), await getEmbedder(), parsed, forcedNamespace(), principalAccessCeiling())');
     // order-independent: forcedNamespace is imported from tenancy.js (a later
     // battle-v9 fix added vaultPathInForcedNamespace to the same import block).
     expect(serverSrc).toMatch(/import \{[^}]*\bforcedNamespace\b[^}]*\} from '\.\/lib\/tenancy\.js'/s);
