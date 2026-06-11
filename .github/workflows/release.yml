@@ -1,0 +1,39 @@
+# Tag-triggered npm release with provenance attestation.
+#
+# Publishing uses npm Trusted Publishing (GitHub OIDC, no long-lived NPM_TOKEN):
+# configure this repo as a trusted publisher for the package on npmjs.com once
+# (package settings → Trusted Publishers → GitHub Actions, repo
+# YonasValentin/mcp-memory-server, workflow release.yml). `--provenance` then
+# attaches a verifiable build attestation (Sigstore) linking the published
+# tarball to this exact commit + workflow run.
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write # OIDC for npm Trusted Publishing + provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+      - run: npm ci
+      - run: npm run build
+      - run: npx vitest run
+      - name: Verify tag matches package.json version
+        run: |
+          PKG_V="v$(node -p "require('./package.json').version")"
+          if [ "$PKG_V" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME != package.json $PKG_V" >&2
+            exit 1
+          fi
+      - run: npm publish --provenance --access public

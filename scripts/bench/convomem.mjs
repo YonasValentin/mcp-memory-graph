@@ -175,3 +175,15 @@ const report = {
 };
 
 console.log(JSON.stringify(report, null, 2));
+
+// --out <path>: also write the report + per-question rows as a committable
+// artifact (benchmark-integrity: aggregate claims stay independently checkable).
+const outIdx = process.argv.indexOf('--out');
+if (outIdx !== -1 && process.argv[outIdx + 1]) {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const p = process.argv[outIdx + 1];
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, JSON.stringify({ ...report, per_question: rows }, null, 2));
+  console.error(`Per-question artifact → ${p}`);
+}
