@@ -16,7 +16,7 @@ info:
 servers:
   - url: http://127.0.0.1:3100
     description: Local development
-  - url: https://mcp.yonasvalentin.dk
+  - url: https://memory.example.com
     description: Reference deployment (Cloudflare Access fronted)
 
 security:

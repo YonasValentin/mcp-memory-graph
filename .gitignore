@@ -33,3 +33,8 @@ scripts/battle/web-shots/
 # battle-v7 workflow scratch (scripts + preserved artifacts) + skeptic worktrees
 .battle/
 .battle-skeptic*/
+
+# Internal process artifacts — never commit
+.planning/
+.battle/
+.claude/commands/

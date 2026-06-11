@@ -1,13 +1,13 @@
 # REST API & Ops (reference)
 
-The HTTP surface (dashboard + JSON-RPC + public wiki) and the deploy/run story. The MCP stdio path needs none of this — use this when serving over HTTP or operating the MS-01 deploy.
+The HTTP surface (dashboard + JSON-RPC + public wiki) and the deploy/run story. The MCP stdio path needs none of this — use this when serving over HTTP or operating the self-hosted deploy.
 
 > **Security:** never put a literal bearer token in code, logs, commits, or this skill. Always use the `$MCP_AUTH_TOKEN` env placeholder. The operator's live token lives only in their private config.
 
 ## Contents
 1. REST endpoint contract
 2. Auth, rate limiting, security
-3. Docker / MS-01 deploy
+3. Docker / self-hosted deploy
 4. Operator commands
 5. Backup / restore / recover
 
@@ -15,7 +15,7 @@ The HTTP surface (dashboard + JSON-RPC + public wiki) and the deploy/run story. 
 
 ## 1. REST endpoint contract
 
-Base: `http://127.0.0.1:3100` (dev) / `https://mcp.yonasvalentin.dk` (prod, behind Cloudflare Access).
+Base: `http://127.0.0.1:3100` (dev) / `https://memory.example.com` (prod, behind Cloudflare Access).
 
 **Probe routes (public, no auth):**
 | Method | Path | Notes |
@@ -52,18 +52,18 @@ Base: `http://127.0.0.1:3100` (dev) / `https://mcp.yonasvalentin.dk` (prod, behi
 - Middleware order: requestId → security-headers → localhost Host validation → `express.json(limit)` → CORS → rate-limit → bearer → publish limiter.
 - `/metrics` needs its **own** bearer guard — if metrics enabled with no token, it's unauthenticated.
 
-## 3. Docker / MS-01 deploy
+## 3. Docker / self-hosted deploy
 
-Single container on MS-01; Cloudflare Access fronts `mcp.yonasvalentin.dk`. Host port **3200** → container 3100. Compose dir `/opt/stacks/mcp-memory-server`.
+Single container on the deploy host; Cloudflare Access fronts `memory.example.com`. Host port **3200** → container 3100. Compose dir `/opt/stacks/mcp-memory-server`.
 - **Volumes:** `mcp-data` (SQLite at `/data/memory.db`), `mcp-cache` (HF model cache, `HF_HOME=/cache`).
 - **Env:** `MCP_AUTH_TOKEN`, `MCP_AUTH_OPTIONAL`, `MCP_METRICS_ENABLED=1`, `MCP_MEMORY_DB_PATH=/data/memory.db`, `MCP_MEMORY_DIMENSIONS` (must match persisted `embedding_dim`), `MCP_BODY_LIMIT`. `.env` at the compose dir.
 - Dockerfile: `NODE_ENV=production`, unprivileged `node` user, read-only rootfs, `cap_drop ALL`, `MALLOC_ARENA_MAX=2`.
-- **CI:** `.github/workflows/deploy.yml` on push→`main` → self-hosted MS-01 runner → rsync → `docker compose up -d --build` → poll `/health`.
+- **CI:** `.github/workflows/deploy.yml` on push→`main` → self-hosted self-hosted runner → rsync → `docker compose up -d --build` → poll `/health`.
 
 ## 4. Operator commands
 
 ```bash
-ssh ms01 && cd /opt/stacks/mcp-memory-server
+ssh your-host && cd /opt/stacks/mcp-memory-server
 docker compose up -d                       # start
 docker compose restart memory-server
 docker compose logs --tail=200 -f memory-server          # JSON lines on stderr

@@ -39,7 +39,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
   removed. No commands, numbers, or security caveats changed.
 - Repository renamed `YonasValentin/mcp-memory-server` → `YonasValentin/mcp-memory-graph`
   to match the npm package and binary name (old GitHub URLs redirect).
-  `package.json` repository/bugs/homepage updated. The MS-01 deploy stack dir
+  `package.json` repository/bugs/homepage updated. The self-hosted deploy stack dir
   keeps its legacy path (`/opt/stacks/mcp-memory-server`).
 
 ### Fixed

@@ -39,7 +39,7 @@ const SEED = [
   { title: 'Reranker', content: 'A cross-encoder reranker reorders hybrid search hits by relevance.', document_type: 'note', tags: ['ml', 'search'], scope: 'global', namespace: null, importance: 0.6 },
   { title: 'Dashboard stack', content: 'The web dashboard is a React 19 SPA built with Vite and Tailwind v4.', document_type: 'note', tags: ['frontend', 'web'], scope: 'project', namespace: 'puregate', importance: 0.75 },
   { title: 'Graph view', content: 'The KnowledgeGraph page renders memory links with a D3 force layout.', document_type: 'note', tags: ['frontend', 'graph'], scope: 'project', namespace: 'puregate', importance: 0.65 },
-  { title: 'Deployment host', content: 'Everything runs on the MS-01 homelab server behind a Cloudflare tunnel.', document_type: 'note', tags: ['infra', 'deploy'], scope: 'user', namespace: 'yonas', importance: 0.55 },
+  { title: 'Deployment host', content: 'Everything runs on the staging server behind a Cloudflare tunnel.', document_type: 'note', tags: ['infra', 'deploy'], scope: 'user', namespace: 'yonas', importance: 0.55 },
   { title: 'Backup policy', content: 'Nightly SQLite backups are written to /opt/backups on the host.', document_type: 'policy', tags: ['infra', 'backup'], scope: 'user', namespace: 'yonas', importance: 0.5 },
   { title: 'Rate limiting', content: 'The REST API and MCP endpoints share a token-bucket rate limiter.', document_type: 'decision', tags: ['security', 'api'], scope: 'project', namespace: 'puregate', importance: 0.6 },
   { title: 'Search modes', content: 'Search supports hybrid, vector, and keyword modes via a query param.', document_type: 'note', tags: ['search', 'api'], scope: 'global', namespace: null, importance: 0.7 },

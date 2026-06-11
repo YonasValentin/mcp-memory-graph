@@ -1,8 +1,8 @@
 # Operational runbook
 
 How to operate the MCP Memory Graph in production. The reference deployment
-is a single Docker container on MS-01, fronted by Cloudflare Access at
-`mcp.yonasvalentin.dk`. The SQLite database is mounted on a host volume.
+is a single Docker container on the deploy host, fronted by Cloudflare Access at
+`memory.example.com`. The SQLite database is mounted on a host volume.
 
 ## Surface area
 
@@ -20,7 +20,7 @@ is a single Docker container on MS-01, fronted by Cloudflare Access at
 ### Start / stop
 
 ```bash
-ssh ms01
+ssh your-host
 cd /opt/stacks/mcp-memory-graph
 
 docker compose up -d
@@ -76,7 +76,7 @@ annotations.
 Counters: `mcp_tool_calls_total{tool,outcome}`, `api_requests_total{route,method,status}`.
 Histograms: `mcp_tool_latency_seconds`, `api_request_latency_seconds`.
 
-Wire into Grafana on MS-01 for production dashboards. Suggested panels:
+Wire into Grafana on the deploy host for production dashboards. Suggested panels:
 
 - `rate(mcp_tool_calls_total{outcome="error"}[5m])` (tool error rate)
 - `histogram_quantile(0.95, rate(api_request_latency_seconds_bucket[5m]))` (p95 latency)
@@ -179,7 +179,7 @@ revert and open a CRITICAL bug.
 ## Rolling back a deploy
 
 ```bash
-ssh ms01
+ssh your-host
 cd /opt/stacks/mcp-memory-graph
 git log --oneline -5         # find the previous good SHA
 git checkout <sha>
@@ -212,7 +212,7 @@ Codes:
 - `BAD_HOST`: DNS rebinding guard tripped.
 - `INTERNAL`: anything else. Includes `requestId` to correlate with logs.
 
-## Where things live on MS-01
+## Where things live on the deploy host
 
 - Compose file: `/opt/stacks/mcp-memory-graph/docker-compose.yml`
 - DB volume: `mcp-data` (named volume; data at `/var/lib/docker/volumes/mcp-data/_data`)
@@ -222,7 +222,7 @@ Codes:
 ## Bearer Token Rotation
 
 1. Generate a new token: `openssl rand -hex 32`
-2. Update `MCP_AUTH_TOKEN` in `/opt/stacks/mcp-memory-graph/.env` on MS-01
+2. Update `MCP_AUTH_TOKEN` in `/opt/stacks/mcp-memory-graph/.env` on the deploy host
 3. `docker compose up -d --force-recreate memory-server`
 4. Verify: `curl -fs -H "Authorization: Bearer $NEW" http://127.0.0.1:3200/health`
 5. Update the token in Claude Code MCP config (`~/.claude/settings.json`) and propagate to team members
