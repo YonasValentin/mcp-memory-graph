@@ -1,0 +1,14 @@
+# Force LF in every working tree, including Windows runners (autocrlf there
+# rewrote sources to CRLF, which broke the source-string tripwire tests and
+# any byte-length assertion). Binary-ish assets are excluded below.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.onnx binary
+*.db binary

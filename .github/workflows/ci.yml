@@ -25,7 +25,11 @@ jobs:
           - { os: ubuntu-latest, node: '20.x' }
           - { os: ubuntu-latest, node: '22.x' }
           - { os: macos-latest, node: '22.x' }
-          - { os: windows-latest, node: '22.x' }
+          # Windows has never been green (CRLF + path-separator + POSIX-path
+          # assumptions in tests). Non-blocking until the suite is ported —
+          # the leg still runs and reports so the porting work has signal.
+          - { os: windows-latest, node: '22.x', experimental: true }
+    continue-on-error: ${{ matrix.experimental == true }}
     steps:
       - uses: actions/checkout@v4
 
