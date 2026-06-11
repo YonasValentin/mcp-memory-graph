@@ -15,11 +15,16 @@ import { securityHeadersMiddleware } from '../api/security-headers.js';
 import { dispatchPendingWebhooks } from '../events/dispatcher.js';
 import { webhooksEnabled } from '../events/emitter.js';
 import { logger } from '../lib/logger.js';
+import { findApiKeyByToken, touchLastUsed } from '../db/api-keys.js';
+import { runWithPrincipal } from '../lib/request-context.js';
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Application, Request, Response, NextFunction } from 'express';
 import type Database from 'better-sqlite3';
 import type { EmbeddingProvider } from '../types.js';
+
+/** The session-owner sentinel for a session minted under the legacy env token. */
+const LEGACY_OWNER = '__legacy__';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -100,24 +105,118 @@ export function timingSafeStrEqual(a: string, b: string): boolean {
 }
 
 /**
- * Bearer-token middleware. When MCP_AUTH_TOKEN is set, every request to the
- * mounted prefix must present `Authorization: Bearer <token>`. Constant-time
- * comparison via `crypto.timingSafeEqual` (length-guarded) to avoid timing attacks.
+ * Cached non-revoked api_key count with a ≤30s TTL. The auth-activation rule
+ * (auth configured ⇔ env token set OR ≥1 non-revoked key) and the auth
+ * middleware both consult this — counting on every request would add a SELECT to
+ * the unauthenticated hot path. A key created (or revoked) while the server runs
+ * takes effect within {@link KEY_COUNT_TTL_MS}; this window is documented in
+ * docs/MULTI-TENANCY.md.
  */
-function bearerMiddleware(token: string) {
-  const expected = `Bearer ${token}`;
-  return function bearerMw(req: Request, res: Response, next: NextFunction): void {
-    const got = req.header('authorization') ?? '';
-    const ok = timingSafeStrEqual(got, expected);
-    if (!ok) {
-      res.status(401).json({
-        error: 'Unauthorized',
-        code: 'UNAUTHORIZED',
-        requestId: res.locals.requestId,
-      });
+const KEY_COUNT_TTL_MS = 30_000;
+let keyCountCache: { value: number; expiresAt: number } | undefined;
+
+function liveKeyCount(getDb: () => Database.Database): number {
+  const now = Date.now();
+  if (keyCountCache && now < keyCountCache.expiresAt) return keyCountCache.value;
+  let count = 0;
+  try {
+    count =
+      getDb()
+        .prepare<[], { c: number }>('SELECT COUNT(*) AS c FROM api_keys WHERE revoked_at IS NULL')
+        .get()?.c ?? 0;
+  /* c8 ignore start */
+  } catch {
+    // No api_keys table (pre-v16 DB) → no keys; auth-activation falls back to the
+    // env-token rule. Never let a counting failure crash the request path.
+    count = 0;
+  }
+  /* c8 ignore stop */
+  keyCountCache = { value: count, expiresAt: now + KEY_COUNT_TTL_MS };
+  return count;
+}
+
+/** Test-only: drop the cached key count so a per-test DB swap is observed at once. */
+export function clearKeyCountCache(): void {
+  keyCountCache = undefined;
+}
+
+/**
+ * Whether auth is configured: an env token is set OR at least one non-revoked
+ * api_key exists. The /api + /mcp mount and the remote-bind startup gate both
+ * key off this — so a key-only deployment (no MCP_AUTH_TOKEN) is authenticated.
+ */
+function authConfigured(getDb: () => Database.Database, envToken: string | undefined): boolean {
+  return envToken !== undefined || liveKeyCount(getDb) > 0;
+}
+
+/**
+ * RBAC v1 §4 — auth middleware for /api and /mcp. Resolution order (legacy FIRST
+ * so existing single-token deployments are byte-identical):
+ *   1. No / malformed Authorization → 401 (when auth is configured).
+ *   2. `Bearer <envToken>` (constant-time, only when envToken set) → LEGACY mode:
+ *      next() WITHOUT establishing an ALS principal (env-pin / no-pin behaviour
+ *      is exactly today's). res.locals.principalKeyId = '__legacy__'.
+ *   3. Else resolve the token via findApiKeyByToken (which already rejects
+ *      revoked/expired). Found → build a PrincipalContext, touchLastUsed,
+ *      res.locals.principalKeyId = keyId, and run the rest of the request inside
+ *      runWithPrincipal so the tenancy helpers (and the §6 ceiling) read it.
+ *   4. Else 401 — UNKNOWN-key and BAD-legacy-token share ONE envelope (no
+ *      enumeration oracle).
+ *
+ * When auth is NOT configured (no env token AND no keys), every request passes
+ * with no principal — the local loopback default, unchanged.
+ */
+function authMiddleware(getDb: () => Database.Database, envToken: string | undefined) {
+  const legacyExpected = envToken !== undefined ? `Bearer ${envToken}` : undefined;
+  function unauthorized(res: Response): void {
+    res.status(401).json({
+      error: 'Unauthorized',
+      code: 'UNAUTHORIZED',
+      requestId: res.locals.requestId,
+    });
+  }
+  return function authMw(req: Request, res: Response, next: NextFunction): void {
+    // Unauthenticated mode: no token configured and no keys exist → pass through
+    // with no principal (loopback local default, byte-identical to MCP_AUTH_OPTIONAL).
+    if (!authConfigured(getDb, envToken)) {
+      next();
       return;
     }
-    next();
+
+    const got = req.header('authorization') ?? '';
+
+    // (2) Legacy env token — checked FIRST and constant-time, so a single-token
+    // deployment never touches the ALS path.
+    if (legacyExpected !== undefined && timingSafeStrEqual(got, legacyExpected)) {
+      res.locals.principalKeyId = LEGACY_OWNER;
+      next();
+      return;
+    }
+
+    // Extract the presented token; anything that isn't `Bearer <token>` is a 401.
+    if (!got.startsWith('Bearer ')) {
+      unauthorized(res);
+      return;
+    }
+    const token = got.slice('Bearer '.length);
+
+    // (3) API-key principal. findApiKeyByToken rejects revoked/expired internally.
+    const key = findApiKeyByToken(getDb(), token);
+    if (!key) {
+      unauthorized(res);
+      return;
+    }
+    touchLastUsed(getDb(), key.id);
+    res.locals.principalKeyId = key.id;
+    runWithPrincipal(
+      {
+        principal: key.principal,
+        keyId: key.id,
+        namespaces: key.namespaces,
+        maxAccessLevel: key.maxAccessLevel,
+      },
+      () => next(),
+    );
   };
 }
 
@@ -211,7 +310,36 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
 
   const transports: Record<string, StreamableHTTPServerTransport> = {};
   const servers: Record<string, McpServer> = {};
+  // RBAC v1 §4 — mcp-session-id → owning identity (a key id, or '__legacy__' for
+  // a session minted under the env token / unauthenticated mode). A session is
+  // OWNED by whoever initialized it; a later request on that sid carrying a
+  // DIFFERENT authenticated identity is refused (403), so a valid key can never
+  // ride another principal's open transport.
+  const sessionOwner: Record<string, string> = {};
   let embedderWarm = false;
+
+  // The authenticated identity for THIS request: the key id (set by authMw),
+  // '__legacy__' for the env token, or '__legacy__' as the unauthenticated
+  // default (no principal == the legacy ownership class, which is correct: an
+  // unauthenticated deployment has exactly one trust class).
+  const requestOwner = (res: Response): string =>
+    (res.locals.principalKeyId as string | undefined) ?? LEGACY_OWNER;
+
+  // Refuse a follow-up /mcp request whose authenticated identity differs from the
+  // session's owner. Returns true when it sent the 403 (caller must NOT touch the
+  // transport). A session id we don't know is left to the per-handler "invalid
+  // session" path.
+  const sessionMismatch = (req: Request, res: Response): boolean => {
+    const sid = req.headers['mcp-session-id'] as string | undefined;
+    if (!sid || !(sid in sessionOwner)) return false;
+    if (sessionOwner[sid] === requestOwner(res)) return false;
+    res.status(403).json({
+      error: 'Session belongs to a different principal',
+      code: 'SESSION_PRINCIPAL_MISMATCH',
+      requestId: res.locals.requestId,
+    });
+    return true;
+  };
 
   // Health endpoint: cheap probe (no DB hit) for liveness.
   app.get('/live', (_req, res) => {
@@ -277,8 +405,9 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
     const tok = bearerToken();
     if (tok) {
       const expected = `Bearer ${tok}`;
-      // Constant-time compare, matching the /api + /mcp bearerMiddleware — a
-      // plain !== leaks the secret via response-timing on this guarded path.
+      // Constant-time compare, matching the /api + /mcp auth path — a plain !==
+      // leaks the secret via response-timing on this guarded path. /metrics is an
+      // operator surface: env token ONLY, an api-key principal is NOT accepted.
       if (!timingSafeStrEqual(req.header('authorization') ?? '', expected)) {
         res.status(401).json({ error: 'Unauthorized', code: 'UNAUTHORIZED' });
         return;
@@ -293,17 +422,24 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
   app.use('/api', limitMw);
   app.use('/mcp', limitMw);
 
-  // Bearer auth: applied to BOTH /api and /mcp when MCP_AUTH_TOKEN is set.
-  // Skipping auth without a token is opt-in (`MCP_AUTH_OPTIONAL=1`) — by default
-  // a missing token is a startup error so accidental "no auth" deployments don't ship.
+  // Auth: applied to BOTH /api and /mcp. RBAC v1 §4 — auth is "configured" when
+  // MCP_AUTH_TOKEN is set OR ≥1 non-revoked api_key exists; the middleware itself
+  // resolves a legacy env token (byte-identical to before) OR an api-key
+  // principal per request, and passes through unauthenticated only when neither
+  // is configured. The middleware is ALWAYS mounted (it self-disables when auth
+  // isn't configured) so a key created while serving takes effect within the
+  // key-count TTL without a restart. Skipping auth without a token is opt-in
+  // (`MCP_AUTH_OPTIONAL=1`) — by default a remote bind with no auth at all is a
+  // startup error so accidental "no auth" deployments don't ship.
   const token = bearerToken();
-  if (token) {
-    app.use('/api', bearerMiddleware(token));
-    app.use('/mcp', bearerMiddleware(token));
-  } else if (process.env.MCP_AUTH_OPTIONAL !== '1' && isRemote) {
+  const authMw = authMiddleware(deps.getDb, token);
+  app.use('/api', authMw);
+  app.use('/mcp', authMw);
+  if (!authConfigured(deps.getDb, token) && process.env.MCP_AUTH_OPTIONAL !== '1' && isRemote) {
     throw new Error(
       'MCP_AUTH_TOKEN is not set and MCP_BIND is not loopback. ' +
-      'Set MCP_AUTH_TOKEN, bind to 127.0.0.1, or set MCP_AUTH_OPTIONAL=1 to allow unauthenticated access.',
+      'Set MCP_AUTH_TOKEN, create an API key (memory keys create), bind to 127.0.0.1, ' +
+      'or set MCP_AUTH_OPTIONAL=1 to allow unauthenticated access.',
     );
   }
 
@@ -323,15 +459,21 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
     if (sessionId && transports[sessionId]) {
+      // §4 session binding: a key may only drive a session it owns. Refuse a
+      // mismatch BEFORE touching the transport (no state mutation, no leak).
+      if (sessionMismatch(req, res)) return;
       await transports[sessionId].handleRequest(req, res, req.body);
       return;
     }
 
     if (!sessionId && isInitializeRequest(req.body)) {
+      // Bind the new session to the identity that authenticated THIS initialize.
+      const owner = requestOwner(res);
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (sid) => {
           transports[sid] = transport;
+          sessionOwner[sid] = owner;
         },
       });
 
@@ -340,6 +482,7 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
         if (sid) {
           delete transports[sid];
           delete servers[sid];
+          delete sessionOwner[sid];
         }
       };
 
@@ -347,6 +490,7 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
       const sid = transport.sessionId;
       if (sid) {
         servers[sid] = server;
+        sessionOwner[sid] = owner;
       }
 
       await server.connect(transport);
@@ -371,6 +515,7 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
       });
       return;
     }
+    if (sessionMismatch(req, res)) return;
     await transports[sessionId].handleRequest(req, res);
   });
 
@@ -384,9 +529,11 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
       });
       return;
     }
+    if (sessionMismatch(req, res)) return;
     await transports[sessionId].close();
     delete transports[sessionId];
     delete servers[sessionId];
+    delete sessionOwner[sessionId];
     res.status(200).end();
   });
 
