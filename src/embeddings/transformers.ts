@@ -1,6 +1,5 @@
 import type { EmbeddingProvider } from './provider.js';
-import { configuredDimensions } from '../db/schema.js';
-import { DEFAULT_EMBEDDING_MODEL } from '../constants/enums.js';
+import { configuredDimensions, configuredModelName } from '../db/schema.js';
 
 const BATCH_SIZE = 32;
 
@@ -16,7 +15,11 @@ export class TransformersEmbeddingProvider implements EmbeddingProvider {
     modelName?: string,
     dims?: number,
   ) {
-    this.modelName = modelName ?? process.env.MCP_MEMORY_MODEL ?? DEFAULT_EMBEDDING_MODEL;
+    // Resolve the env-fallback through the SAME helper the schema guard uses so
+    // the recorded modelName and the embedder-identity stamp always agree —
+    // including the empty/whitespace MCP_MEMORY_MODEL case, which both treat as
+    // "no model specified" (transformers.js then auto-loads the default).
+    this.modelName = modelName ?? configuredModelName();
     // Reuse the single validated parser (guards NaN / out-of-range and throws a
     // clear error) instead of a second unguarded parseInt that could yield NaN.
     this.dimensions = dims ?? configuredDimensions();

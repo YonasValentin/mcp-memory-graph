@@ -548,9 +548,15 @@ export function initializeSchema(db: Database.Database): void {
 }
 
 /** The embedding model the process is configured to load (mirrors the
- * TransformersEmbeddingProvider default chain exactly). */
+ * TransformersEmbeddingProvider default chain exactly). An empty or
+ * whitespace-only MCP_MEMORY_MODEL (a realistic Docker `-e MCP_MEMORY_MODEL` /
+ * compose `environment: - MCP_MEMORY_MODEL` footgun) is treated the same way
+ * transformers.js treats it — as "no model specified" — and resolves to the
+ * default. Otherwise the guard would stamp/compare '' while the provider
+ * actually loaded the default model, bricking a healthy DB on next restart. */
 export function configuredModelName(): string {
-  return process.env.MCP_MEMORY_MODEL ?? DEFAULT_EMBEDDING_MODEL;
+  const m = process.env.MCP_MEMORY_MODEL;
+  return m && m.trim() ? m : DEFAULT_EMBEDDING_MODEL;
 }
 
 /**

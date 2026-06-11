@@ -77,4 +77,29 @@ describe('embedder identity guard (schema_meta.embedding_model)', () => {
     expect(() => assertEmbedderIdentity(db, 'other/model')).toThrow(/Embedding model mismatch/);
     db.close();
   });
+
+  // CONFIRMED HIGH (fix-breaker battle): an empty-string MCP_MEMORY_MODEL is a
+  // realistic Docker footgun (`-e MCP_MEMORY_MODEL` / compose `environment: -
+  // MCP_MEMORY_MODEL`). transformers.js treats '' as "no model" and loads the
+  // real default all-MiniLM-L6-v2, so the vectors ARE the default model's — but
+  // the guard used to stamp/compare '' and brick the DB on the next restart.
+  it('DB stamped under empty MCP_MEMORY_MODEL re-opens cleanly when the var is unset', () => {
+    process.env.MCP_MEMORY_MODEL = '';
+    const db = freshDb();
+    initializeSchema(db);
+    // Vectors are the default model's, so the stamp must be the default model.
+    expect(storedModel(db)).toBe(DEFAULT_EMBEDDING_MODEL);
+    delete process.env.MCP_MEMORY_MODEL;
+    expect(() => initializeSchema(db)).not.toThrow();
+    db.close();
+  });
+
+  it('default-stamped DB opened with an empty MCP_MEMORY_MODEL does NOT throw', () => {
+    delete process.env.MCP_MEMORY_MODEL;
+    const db = freshDb();
+    initializeSchema(db);
+    process.env.MCP_MEMORY_MODEL = '';
+    expect(() => initializeSchema(db)).not.toThrow();
+    db.close();
+  });
 });
