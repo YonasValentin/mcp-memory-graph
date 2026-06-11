@@ -16,6 +16,7 @@ jobs:
     timeout-minutes: 20
 
     env:
+      # Host stack dir on MS-01 keeps the legacy name; the repo/package is mcp-memory-graph.
       DEPLOY_ROOT: /opt/stacks/mcp-memory-server
       HEALTH_URL: http://localhost:3200/health
 

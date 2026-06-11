@@ -280,7 +280,7 @@ function installLaunchdPlist(scope: Scope): void {
   if (!schedulesGlobalConsolidation(scope)) {
     info('Project scope — skipping the machine-global consolidation schedule');
     dim('A global launchd/cron job would target the default DB, not this project.');
-    dim('Run `mcp-memory-server init` (user scope) to schedule the default DB, or add a project cron manually:');
+    dim('Run `mcp-memory-graph init` (user scope) to schedule the default DB, or add a project cron manually:');
     dim(`  0 3 * * * MCP_MEMORY_DB_PATH=<project-db> node ${join(__dirname, '..', 'index.js')} consolidate`);
     return;
   }

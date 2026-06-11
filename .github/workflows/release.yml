@@ -3,7 +3,7 @@
 # Publishing uses npm Trusted Publishing (GitHub OIDC, no long-lived NPM_TOKEN):
 # configure this repo as a trusted publisher for the package on npmjs.com once
 # (package settings → Trusted Publishers → GitHub Actions, repo
-# YonasValentin/mcp-memory-server, workflow release.yml). `--provenance` then
+# YonasValentin/mcp-memory-graph, workflow release.yml). `--provenance` then
 # attaches a verifiable build attestation (Sigstore) linking the published
 # tarball to this exact commit + workflow run.
 name: release

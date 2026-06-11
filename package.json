@@ -60,12 +60,12 @@
   "license": "PolyForm-Noncommercial-1.0.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/YonasValentin/mcp-memory-server.git"
+    "url": "git+https://github.com/YonasValentin/mcp-memory-graph.git"
   },
   "bugs": {
-    "url": "https://github.com/YonasValentin/mcp-memory-server/issues"
+    "url": "https://github.com/YonasValentin/mcp-memory-graph/issues"
   },
-  "homepage": "https://github.com/YonasValentin/mcp-memory-server#readme",
+  "homepage": "https://github.com/YonasValentin/mcp-memory-graph#readme",
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
