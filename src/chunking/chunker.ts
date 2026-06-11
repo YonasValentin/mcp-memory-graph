@@ -29,13 +29,23 @@ export function chunkContent(content: string, options: ChunkingOptions): ChunkRe
       // `overlapText + chunk.content` join fabricates adjacency that never
       // existed in the document ('## 4. Duplicate detection' + 'Every invoice'
       // -> 'detectionEvery') — corrupting quotes and merging FTS tokens.
-      // Re-insert the inter-chunk source separator when it is pure whitespace.
+      // Re-insert a separator when the inter-chunk gap is pure whitespace.
       // Truly abutting chunks (code sections, hard-split pieces) have an empty
       // gap -> join unchanged; a NON-whitespace gap only occurs when the gap
       // text was re-synthesized into this chunk's markdown heading-context
       // prefix -> keep the bare join there so the heading is not duplicated.
+      //
+      // BOUND the separator (fix-breaker MED): this join runs AFTER
+      // enforceMaxChunkSize, so re-inserting the RAW gap re-opens battle-v7 M4 —
+      // a large source whitespace run (e.g. 200 blank lines) would push the
+      // chunk back past chunk_size, its tail unsearchable past the embedder's
+      // window. The boundary only needs a separator to EXIST, not the literal
+      // run; a derived search chunk need not preserve blank lines (the parent
+      // memory keeps full content). Collapse a whitespace-only gap to a single
+      // normalized boundary (<=2 chars): '\n\n' when it spans lines (keeps the
+      // heading\n+body boundary the heading-boundary test asserts) else ' '.
       const gap = content.slice(prevChunk.end_offset, chunk.start_offset);
-      const separator = /^\s+$/.test(gap) ? gap : '';
+      const separator = /^\s+$/.test(gap) ? (gap.includes('\n') ? '\n\n' : ' ') : '';
       return {
         ...chunk,
         content: overlapText + separator + chunk.content,
