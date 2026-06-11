@@ -20,6 +20,10 @@
     "access": "public",
     "provenance": true
   },
+  "funding": [
+    "https://github.com/sponsors/YonasValentin",
+    "https://www.buymeacoffee.com/YonasValentin"
+  ],
   "scripts": {
     "build": "tsc",
     "build:web": "cd web && npm run build",
