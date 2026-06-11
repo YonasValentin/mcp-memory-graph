@@ -43,6 +43,11 @@ import { handleDelete } from '../../tools/delete.js';
 import { handleImport } from '../../tools/import.js';
 import { handleConsolidate } from '../../tools/consolidate.js';
 import { handleExtractLearnings } from '../../tools/extract-learnings.js';
+import { handleReflect } from '../../tools/reflect.js';
+import { handleInsights } from '../../tools/insights.js';
+import { handleQuestions } from '../../tools/questions.js';
+import { handleMemoryTiers } from '../../tools/tiers.js';
+import { handleVerify } from '../../tools/verify.js';
 import { getMemoryById } from '../../db/repository.js';
 import { handleRelated } from '../../tools/related.js';
 import { handleVaultSearch } from '../../tools/vault-search.js';
@@ -498,5 +503,55 @@ describe('§6 import-overwrite + consolidate honour the ceiling (re-battle-3)', 
     expect(after.version).toBe(before.version);
     // ...and its id never leaks back to the caller (no existence oracle).
     expect(res.memory_ids).not.toContain(ids.confidential);
+  });
+});
+
+/**
+ * RBAC re-battle-5 — the 9th instance (memory_reflect, HIGH content leak) + the
+ * id/title-oracle siblings (tiers/verify/insights/questions) the completeness
+ * sweep surfaced. Each is a corpus content/title read that must honour the
+ * ceiling. A full-clearance call (undefined ceiling) still sees everything.
+ */
+describe('§6 reflect / tiers / verify / insights / questions respect the ceiling (re-battle-5)', () => {
+  const CEIL: AccessLevel[] = ['public', 'internal'];
+  const confTitle = 'apollo-confidential';
+  const restrTitle = 'apollo-restricted';
+
+  it('memory_reflect gather omits over-ceiling content + title (the 9th instance)', async () => {
+    const blob = JSON.stringify(
+      await handleReflect(db, embedder, { scope: 'project', namespace: NS, access_level_ceiling: CEIL }),
+    );
+    expect(blob).not.toContain(confTitle);
+    expect(blob).not.toContain(restrTitle);
+    expect(blob).not.toContain('confidential band');
+    expect(blob).not.toContain('restricted band');
+    // full clearance (no ceiling) still surfaces them (proves no over-block + that
+    // the negative asserts above aren't vacuously passing on an empty result)
+    const full = JSON.stringify(await handleReflect(db, embedder, { scope: 'project', namespace: NS }));
+    expect(full).toContain(confTitle);
+  });
+
+  it('memory_tiers hot_memories omits over-ceiling titles', () => {
+    const res = handleMemoryTiers(db, { scope: 'project', namespace: NS, access_level_ceiling: CEIL });
+    const titles = res.hot_memories.map((m) => m.title);
+    expect(titles).not.toContain(confTitle);
+    expect(titles).not.toContain(restrTitle);
+  });
+
+  it('memory_verify batch omits over-ceiling rows', () => {
+    const res = handleVerify(db, { scope: 'project', namespace: NS, access_level_ceiling: CEIL });
+    const ids2 = res.results.map((r) => r.id);
+    expect(ids2).not.toContain(ids.confidential);
+    expect(ids2).not.toContain(ids.restricted);
+    expect(ids2).toContain(ids.internal);
+  });
+
+  it('memory_insights + memory_questions never embed an over-ceiling title', () => {
+    const ins = JSON.stringify(handleInsights(db, { scope: 'project', namespace: NS, access_level_ceiling: CEIL }));
+    const qs = JSON.stringify(handleQuestions(db, { scope: 'project', namespace: NS, access_level_ceiling: CEIL }));
+    for (const blob of [ins, qs]) {
+      expect(blob).not.toContain(confTitle);
+      expect(blob).not.toContain(restrTitle);
+    }
   });
 });

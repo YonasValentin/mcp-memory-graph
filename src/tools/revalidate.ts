@@ -20,6 +20,8 @@ export interface RevalidateInput {
   scope?: string;
   namespace?: string;
   limit?: number;
+  /** RBAC §6 (re-battle-5): list mode returns stale {id,title} — ceiling-gate it. */
+  access_level_ceiling?: string[];
 }
 
 export interface RevalidateResult {
@@ -65,6 +67,7 @@ export function handleRevalidate(db: Database.Database, input: RevalidateInput):
     scope: input.scope,
     namespace: input.namespace,
     limit: input.limit,
+    access_level_ceiling: input.access_level_ceiling,
   });
   return { action: 'list', stale, count: stale.length };
 }

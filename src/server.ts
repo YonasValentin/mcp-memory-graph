@@ -501,7 +501,9 @@ export function createServer(): McpServer {
       // §6 (re-battle): a verify by-id of an over-ceiling row would confirm its
       // existence (and may echo provenance/content) — treat it as not-found.
       if (parsed.id && (!idInForcedNs(parsed.id) || !idWithinCeiling(parsed.id))) throw new Error('Memory not found');
-      return handleVerify(getDb(), withForcedNs(parsed));
+      // §6 (re-battle-5): the batch path returns {id,status} per row — withCeiling
+      // gates it (the by-id path is idWithinCeiling-guarded above).
+      return handleVerify(getDb(), withCeiling(withForcedNs(parsed)));
     }),
   );
 
@@ -512,7 +514,9 @@ export function createServer(): McpServer {
     MemoryTiersSchema.shape,
     instrument('memory_tiers', async (input) => {
       const parsed = MemoryTiersSchema.parse(input);
-      return handleMemoryTiers(getDb(), withForcedNs(parsed));
+      // §6 (re-battle-5): hot_memories returns id+title — scopedRead adds the
+      // egress ceiling so an over-ceiling title can't surface.
+      return handleMemoryTiers(getDb(), scopedRead(parsed));
     }),
   );
 
@@ -795,7 +799,11 @@ export function createServer(): McpServer {
     MemoryReflectSchema.shape,
     instrument('memory_reflect', async (input) => {
       const parsed = MemoryReflectSchema.parse(input);
-      return handleReflect(getDb(), await getEmbedder(), withForcedNs(parsed));
+      // §6 (re-battle-5, 9th instance): gather is a corpus CONTENT read like
+      // memory_list — scopedRead adds the egress ceiling so an over-ceiling row's
+      // content can't surface as reflection material. (store mode writes a new
+      // insight at its own level; the ceiling option is inert there.)
+      return handleReflect(getDb(), await getEmbedder(), scopedRead(parsed));
     }),
   );
 
@@ -853,7 +861,9 @@ export function createServer(): McpServer {
     MemoryQuestionsSchema.shape,
     instrument('memory_questions', async (input) => {
       const parsed = MemoryQuestionsSchema.parse(input);
-      return handleQuestions(getDb(), withForcedNs(parsed));
+      // §6 (re-battle-5): questions embed memory titles in their gap text —
+      // withCeiling gates which rows the digest may analyse.
+      return handleQuestions(getDb(), withCeiling(withForcedNs(parsed)));
     }),
   );
 
@@ -979,7 +989,9 @@ export function createServer(): McpServer {
     MemoryInsightsSchema.shape,
     instrument('memory_insights', async (input) => {
       const parsed = MemoryInsightsSchema.parse(input);
-      return handleInsights(getDb(), withForcedNs(parsed));
+      // §6 (re-battle-5): insights embed memory titles/snippets in their advisory
+      // text — withCeiling gates which rows the digest may analyse.
+      return handleInsights(getDb(), withCeiling(withForcedNs(parsed)));
     }),
   );
 
@@ -1013,7 +1025,9 @@ export function createServer(): McpServer {
       ) {
         throw new Error('Memory not found');
       }
-      return handleRevalidate(getDb(), withForcedNs(parsed));
+      // §6 (re-battle-5): list mode returns stale {id,title} — withCeiling gates it
+      // (preview/confirm by-id are idWithinCeiling-guarded above).
+      return handleRevalidate(getDb(), withCeiling(withForcedNs(parsed)));
     }),
   );
 

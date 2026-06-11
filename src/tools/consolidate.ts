@@ -461,13 +461,20 @@ export async function handleConsolidate(
   // partition's own memories when scoped; unforced (filterClause empty) keeps
   // the original store-wide rotation (and still prunes orphaned log rows).
   if (!dryRun) {
+    // §6 (re-battle-5): use a CEILING-FREE clause — memory_access_log is a
+    // telemetry table (access timestamps, not classified content), so the access
+    // ceiling must NOT fold in (it would leave a sub-cap principal's over-ceiling
+    // rows' logs un-rotated forever — the inverse of the leak, an over-block of a
+    // maintenance op). Same principle + fix as the search_log rotation below;
+    // tenancy (scope+namespace) is still enforced via the memories subquery.
+    const accessLog = buildFilterClause(input.scope, input.namespace);
     try {
-      if (filterClause) {
+      if (accessLog.clause) {
         db.prepare(
           `DELETE FROM memory_access_log
             WHERE accessed_at < datetime('now', '-90 days')
-              AND memory_id IN (SELECT id FROM memories WHERE 1=1${filterClause})`,
-        ).run(...filterParams);
+              AND memory_id IN (SELECT id FROM memories WHERE 1=1${accessLog.clause})`,
+        ).run(...accessLog.params);
       } else {
         db.prepare("DELETE FROM memory_access_log WHERE accessed_at < datetime('now', '-90 days')").run();
       }

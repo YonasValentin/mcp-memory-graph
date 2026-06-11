@@ -129,7 +129,7 @@ export function clearRevalidation(db: Database.Database, memoryId: string): bool
 /** List currently-valid memories flagged stale (for `memory_insights`/revalidate). */
 export function listStaleMemories(
   db: Database.Database,
-  filter: { scope?: string; namespace?: string; limit?: number } = {},
+  filter: { scope?: string; namespace?: string; limit?: number; access_level_ceiling?: string[] } = {},
 ): Array<{ id: string; title: string | null; scope: string; namespace: string | null }> {
   const conds = ["revalidation_status = 'stale'", 'valid_to IS NULL', 'tx_expired IS NULL'];
   const params: unknown[] = [];
@@ -140,6 +140,12 @@ export function listStaleMemories(
   if (filter.namespace !== undefined) {
     conds.push('namespace = ?');
     params.push(filter.namespace);
+  }
+  // §6 (re-battle-5): list mode returns stale {id,title} — gate over-ceiling
+  // titles for a capped principal. No-op when undefined (legacy/local).
+  if (filter.access_level_ceiling && filter.access_level_ceiling.length > 0) {
+    conds.push(`access_level IN (${filter.access_level_ceiling.map(() => '?').join(',')})`);
+    params.push(...filter.access_level_ceiling);
   }
   params.push(filter.limit ?? 100);
   return db

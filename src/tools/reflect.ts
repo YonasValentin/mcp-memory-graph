@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3';
 import type { EmbeddingProvider, MemoryScope } from '../types.js';
 import { handleStore } from './store.js';
 import { createMemoryLink } from '../graph/memory-links.js';
-import { liveConditions, scopeConditions } from '../db/predicates.js';
+import { liveConditions, scopeConditions, accessCeilingCondition } from '../db/predicates.js';
 
 interface ReflectInput {
   /** 'gather' (default): collect reflection material. 'store': persist a synthesized insight. */
@@ -17,6 +17,13 @@ interface ReflectInput {
   source_ids?: string[];
   /** store: optional title for the stored insight. */
   title?: string;
+  /**
+   * RBAC §6 (re-battle-5, the 9th instance): gather is a corpus CONTENT read
+   * (it returns id+title+content snippets) structurally identical to
+   * memory_list — so it must honour the principal egress ceiling. The allow-list
+   * of levels the caller may receive; undefined → legacy/local/full-clearance.
+   */
+  access_level_ceiling?: string[];
 }
 
 interface ReflectMaterial {
@@ -93,11 +100,15 @@ function gatherMaterial(db: Database.Database, input: ReflectInput): GatherResul
   // Top-level, currently-valid memories only (bi-temporal filter), ranked by
   // importance then recency — the reflection-worthiness ordering.
   const scope = scopeConditions(input);
+  // §6: an over-ceiling row's content must never reach a sub-ceiling principal
+  // via the reflection material (the 9th-instance leak). No-op when undefined.
+  const ceil = accessCeilingCondition(input.access_level_ceiling);
   const conditions: string[] = [
     ...liveConditions({ topLevelOnly: true }),
     ...scope.conditions,
+    ...ceil.conditions,
   ];
-  const params: unknown[] = [...scope.params];
+  const params: unknown[] = [...scope.params, ...ceil.params];
 
   const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
