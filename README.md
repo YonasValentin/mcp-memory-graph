@@ -479,6 +479,11 @@ See **Team & solo sharing (Bruno-style git)** above for the model and trade-offs
 - Bind to `127.0.0.1` (the default) unless you front the server with a proxy/WAF
   that terminates TLS, then set `MCP_BIND=0.0.0.0`.
 
+> **Building an org-wide "AI brain"?** One server, a key per employee, an org
+> chart the AI can traverse (people / teams / SOPs / tools as typed graph
+> nodes), enforced who-sees-what: the full recipe on existing primitives is
+> [docs/ENTERPRISE-BRAIN.md](docs/ENTERPRISE-BRAIN.md).
+
 ---
 
 ## Configuration
