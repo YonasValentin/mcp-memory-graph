@@ -11,6 +11,7 @@ import type {
 } from '../types.js';
 import { hybridSearch, toSummary, toIdOnly } from '../search/hybrid.js';
 import { CrossEncoderReranker, type Reranker } from '../search/reranker.js';
+import { sanitizeSearchQuery } from '../search/query-sanitizer.js';
 import { recordAccess, recordSearch } from '../db/repository.js';
 import { getComputeGovernor } from '../lib/compute-governor.js';
 
@@ -56,8 +57,17 @@ export async function handleSearch(
   embedder: EmbeddingProvider,
   input: SearchInput,
 ): Promise<{ results: unknown[]; total: number; truncated: boolean; detail_level: string; token_budget?: { limit: number; estimated_used: number } }> {
+  // Contamination guard (mempalace-class 89.8%→1.0% R@10 cliff): a system-prompt
+  // wall passed as the query embeds to garbage and FTS-ANDs to nothing. Sanitize
+  // ONCE here — the single user-facing entry (MCP memory_search and REST
+  // /api/search both land in handleSearch). Internal/derived consumers
+  // (graph-query, vault-search, the REST verify path) call hybridSearch directly
+  // and stay untouched. ≤200-char queries — every bench/eval query — pass through
+  // verbatim by construction. recordAccess/recordSearch below keep input.query:
+  // the ORIGINAL is what search_log and memory_access_log record.
+  const effectiveQuery = sanitizeSearchQuery(input.query);
   const options: SearchOptions = {
-    query: input.query,
+    query: effectiveQuery,
     scope: input.scope,
     namespace: input.namespace,
     department: input.department,
