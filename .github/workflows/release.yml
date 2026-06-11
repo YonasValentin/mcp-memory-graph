@@ -26,6 +26,9 @@ jobs:
         with:
           node-version: 22
           registry-url: 'https://registry.npmjs.org'
+      # Trusted Publishing's OIDC token exchange needs npm >= 11.5; Node 22
+      # bundles npm 10, which silently publishes unauthenticated (PUT 404).
+      - run: npm install -g npm@latest
       - run: npm ci
       # prepublishOnly runs build:all, which compiles the web dashboard too
       - run: npm ci --prefix web
