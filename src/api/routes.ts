@@ -45,6 +45,7 @@ import {
   principalAccessCeiling,
   NAMESPACE_NOT_PERMITTED,
 } from '../lib/tenancy.js';
+import { currentPrincipal } from '../lib/request-context.js';
 import { ReloadGate, maybeBustGraphCache } from '../lib/hot-reload.js';
 import { resolveDbPath } from '../db/db-path.js';
 import { metrics } from './metrics.js';
@@ -304,7 +305,12 @@ export function registerApiRoutes(
       tags: body.tags,
       metadata: body.metadata,
       expires_at: body.expires_at,
-      changed_by: body.changed_by ?? 'web-dashboard',
+      // Audit attribution: an api-key request snapshots under the KEY'S
+      // principal name (ALS context set by the §4 auth middleware); legacy
+      // env-token / unauthenticated requests keep 'web-dashboard'. An explicit
+      // body.changed_by always wins. (The MCP path has its own agent
+      // attribution — untouched here.)
+      changed_by: body.changed_by ?? currentPrincipal()?.principal ?? 'web-dashboard',
     });
     if (!result) {
       throw new HttpError(404, 'NOT_FOUND', 'Memory not found');
