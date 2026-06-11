@@ -3,6 +3,8 @@ import type { EmbeddingProvider, MemoryScope } from '../types.js';
 import { handleStore } from './store.js';
 import { createMemoryLink } from '../graph/memory-links.js';
 import { liveConditions, scopeConditions, accessCeilingCondition } from '../db/predicates.js';
+import { reconcileBlocked } from '../lib/reconcile-guard.js';
+import { forcedNamespace } from '../lib/tenancy.js';
 
 interface ReflectInput {
   /** 'gather' (default): collect reflection material. 'store': persist a synthesized insight. */
@@ -191,8 +193,8 @@ async function storeInsight(
   let linksCreated = 0;
   for (const sourceId of input.source_ids) {
     const exists = db
-      .prepare<[string], { id: string }>(
-        `SELECT id FROM memories
+      .prepare<[string], { namespace: string | null; access_level: string }>(
+        `SELECT namespace, access_level FROM memories
           WHERE id = ?
             AND valid_to IS NULL
             AND tx_expired IS NULL
@@ -200,6 +202,14 @@ async function storeInsight(
       )
       .get(sourceId);
     if (!exists) continue;
+    // RBAC §6 (RB-9): a source_id pointing at a FOREIGN-namespace or OVER-ceiling
+    // row must be treated EXACTLY like a non-existent id — never linked (a same-ns
+    // over-ceiling derived_from edge would persist) and never counted. Counting it
+    // (links_created++) even on a refused cross-ns edge was a 1-bit existence /
+    // liveness oracle defeating the by-id non-confirmation invariant. Mirrors
+    // import/store; unforced single-user (forcedNamespace + ceiling undefined) is
+    // unchanged.
+    if (reconcileBlocked(exists, forcedNamespace(), input.access_level_ceiling)) continue;
     createMemoryLink(db, {
       sourceId: insightId,
       targetId: sourceId,

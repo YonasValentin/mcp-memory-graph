@@ -3,10 +3,11 @@ import path from 'node:path';
 import type { VaultStatus, VaultSyncMeta } from '../types.js';
 import { scanVault } from '../vault/scanner.js';
 import { assertVaultDir } from '../vault/guard.js';
+import { accessCeilingCondition } from '../db/predicates.js';
 
 export function handleVaultStatus(
   db: Database.Database,
-  input: { vault_path: string },
+  input: { vault_path: string; access_level_ceiling?: string[] },
 ): VaultStatus {
   assertVaultDir(input.vault_path);
 
@@ -52,11 +53,17 @@ export function handleVaultStatus(
     }
   }
 
+  // RBAC §6 (RB-10): the memory_count is an aggregate COUNT egress — exclude
+  // over-ceiling rows so a sub-ceiling principal can't read the namespace's total
+  // (including confidential/restricted) via a vault-status poll. No-op when the
+  // ceiling is undefined (single-user / full-clearance).
+  const ceil = accessCeilingCondition(input.access_level_ceiling);
+  const ceilSql = ceil.conditions.length ? ` AND ${ceil.conditions.join(' AND ')}` : '';
   const countRow = db
-    .prepare<[string], { count: number }>(
-      "SELECT COUNT(*) as count FROM memories WHERE scope = 'project' AND namespace = ?",
+    .prepare<unknown[], { count: number }>(
+      `SELECT COUNT(*) as count FROM memories WHERE scope = 'project' AND namespace = ?${ceilSql}`,
     )
-    .get(vaultName);
+    .get(vaultName, ...ceil.params);
   const memoryCount = countRow?.count ?? 0;
 
   const lastSyncRow = db

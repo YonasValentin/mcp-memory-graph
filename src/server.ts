@@ -485,7 +485,9 @@ export function createServer(): McpServer {
     MemoryStatsSchema.shape,
     instrument('memory_stats', async (input) => {
       const parsed = MemoryStatsSchema.parse(input);
-      return handleStats(getDb(), withForcedNs(parsed));
+      // §6 (RB-10): scopedRead threads the access ceiling so the count rollups
+      // (total/by_scope/by_document_type/bytes) exclude over-ceiling rows.
+      return handleStats(getDb(), scopedRead(parsed));
     }),
   );
 
@@ -582,7 +584,8 @@ export function createServer(): McpServer {
       if (!vaultPathInForcedNamespace(parsed.vault_path)) {
         throw new Error('Vault path is outside the pinned namespace');
       }
-      return handleVaultStatus(getDb(), parsed);
+      // §6 (RB-10): thread the ceiling so memory_count excludes over-ceiling rows.
+      return handleVaultStatus(getDb(), { ...parsed, access_level_ceiling: principalAccessCeiling() });
     }),
   );
 
@@ -860,7 +863,9 @@ export function createServer(): McpServer {
     instrument('memory_attribution', async (input) => {
       const parsed = MemoryAttributionSchema.parse(input);
       // battle-v9 CLASS 2: attribution rollup must count only the forced tenant.
-      return handleAttribution(getDb(), withForcedNs(parsed));
+      // §6 (RB-10): scopedRead threads the access ceiling so by_author / by_agent
+      // / total never disclose author identity or counts of over-ceiling rows.
+      return handleAttribution(getDb(), scopedRead(parsed));
     }),
   );
 
@@ -1014,7 +1019,9 @@ export function createServer(): McpServer {
     MemoryHealthSchema.shape,
     instrument('memory_health', async (input) => {
       const parsed = MemoryHealthSchema.parse(input);
-      return handleHealth(getDb(), withForcedNs(parsed));
+      // §6 (RB-10): scopedRead threads the access ceiling so the volume counts
+      // (live/retired/stale/aging) exclude over-ceiling rows.
+      return handleHealth(getDb(), scopedRead(parsed));
     }),
   );
 

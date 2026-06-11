@@ -37,11 +37,10 @@ function regBlock(tool: string): string {
 }
 
 describe('server.ts forces tenancy on every read/egress registration (battle-v9 CLASS 2 wiring guard)', () => {
-  it('memory_attribution registration wraps input in withForcedNs', () => {
-    expect(regBlock('memory_attribution')).toContain(
-      'return handleAttribution(getDb(), withForcedNs(parsed));',
-    );
-  });
+  // memory_attribution moved to scopedRead in RB-10 (its by_author/by_agent/total
+  // count rollups must exclude over-ceiling rows) — withForcedNs is still composed
+  // inside scopedRead, so the CLASS-2 forcing holds. Asserted in the scopedRead
+  // it.each below.
 
   // memory_extract_learnings: the §6 re-battle-4 close wrapped its withForcedNs in
   // withCeiling (auto_store's dedup-corroboration path could MUTATE an over-ceiling
@@ -63,6 +62,9 @@ describe('server.ts forces tenancy on every read/egress registration (battle-v9 
     ['memory_export', 'return handleExport(getDb(), scopedRead(parsed));'],
     ['memory_export_vault', 'return handleExportVault(getDb(), scopedRead(parsed));'],
     ['memory_canvas', 'return handleCanvas(getDb(), scopedRead(parsed));'],
+    ['memory_attribution', 'return handleAttribution(getDb(), scopedRead(parsed));'],
+    ['memory_stats', 'return handleStats(getDb(), scopedRead(parsed));'],
+    ['memory_health', 'return handleHealth(getDb(), scopedRead(parsed));'],
   ])('%s registration uses scopedRead (namespace forcing + §6 ceiling)', (tool, call) => {
     expect(regBlock(tool)).toContain(call);
   });

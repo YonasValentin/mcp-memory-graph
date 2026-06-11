@@ -86,6 +86,16 @@ const BY_ID_CEILING = [
 // they're pinned on `principalAccessCeiling()` appearing in the registration.
 const POSITIONAL_CEILING = ['memory_graph', 'memory_communities'];
 
+// Aggregate-COUNT rollups (RB-10, 16th-instance class). These return per-row
+// COUNT/GROUP BY/SUM over the corpus — total, by_author/by_agent (identity!),
+// by_scope/by_document_type, content bytes, live/retired/stale volume. Without the
+// ceiling they disclose the COUNT (and, for attribution, the AUTHOR identity) of
+// over-ceiling rows to a sub-ceiling principal — the same count-oracle class as
+// battle-v9 mention_count and re-battle-6 community membership counts. Each must
+// thread the ceiling via scopedRead/withCeiling at its registration AND apply
+// accessCeilingCondition in its handler.
+const AGGREGATE_COUNT_READS = ['memory_attribution', 'memory_stats', 'memory_health', 'vault_status'];
+
 // Surfaces that emit ONLY non-memory-classified data (vault files) where a
 // per-row access_level genuinely does not apply — the documented v2 boundary
 // (docs/MULTI-TENANCY.md). Listed so a reviewer sees the deliberate exclusion.
@@ -123,6 +133,41 @@ describe('§6 structural coverage — every corpus content/title read is ceiling
       ).toBe(true);
     },
   );
+
+  it.each(AGGREGATE_COUNT_READS)(
+    '%s registration threads the ceiling for its count rollup',
+    (tool) => {
+      const block = regBlock(tool);
+      // vault_status is keyed by vault_path (not a scoped input), so it passes the
+      // ceiling inline via principalAccessCeiling(); the others use scopedRead/withCeiling.
+      expect(
+        block.includes('scopedRead(') ||
+          block.includes('withCeiling(') ||
+          block.includes('principalAccessCeiling()'),
+        `${tool} emits aggregate COUNT/identity rollups over the corpus but its ` +
+          `registration threads no ceiling — a sub-ceiling principal could count ` +
+          `over-ceiling rows (the RB-10 count-oracle class). Wrap it + apply ` +
+          `accessCeilingCondition in the handler.`,
+      ).toBe(true);
+    },
+  );
+
+  it.each(AGGREGATE_COUNT_READS)('%s handler applies accessCeilingCondition', (tool) => {
+    const file = {
+      memory_attribution: 'attribution',
+      memory_stats: 'stats',
+      memory_health: 'health',
+      vault_status: 'vault-status',
+    }[tool];
+    const src = readFileSync(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), `../../tools/${file}.ts`),
+      'utf8',
+    );
+    expect(
+      src.includes('accessCeilingCondition('),
+      `${tool}'s handler must apply accessCeilingCondition so the COUNT excludes over-ceiling rows.`,
+    ).toBe(true);
+  });
 
   it('the v2-deferred non-memory surfaces are still registered (documented exclusions)', () => {
     for (const tool of V2_DEFERRED) {
