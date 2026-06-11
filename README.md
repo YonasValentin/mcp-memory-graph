@@ -1174,7 +1174,7 @@ What's actually next, in rough order:
 
 Source-available, not open source. Licensed under the [PolyForm Noncommercial License 1.0.0](./LICENSE): free for any noncommercial purpose (personal projects, hobby, study, research, charitable, educational, public-research, and government use). Commercial use requires a paid license; see [COMMERCIAL.md](./COMMERCIAL.md).
 
-If you're unsure whether your use counts as commercial, check the safe harbors in the [license](./LICENSE) or just ask: yonasklibi@gmail.com.
+If you're unsure whether your use counts as commercial, check the safe harbors in the [license](./LICENSE) or just ask: yonasmougaard@gmail.com.
 
 ## Keywords
 

@@ -34,7 +34,7 @@ deploy. It's cheaper than guessing.
 
 ## Get a commercial license
 
-Email **yonasklibi@gmail.com** with:
+Email **yonasmougaard@gmail.com** with:
 
 - Your company name and approximate size (people + revenue band).
 - How you intend to use it (internal tool, embedded in a product, hosted
