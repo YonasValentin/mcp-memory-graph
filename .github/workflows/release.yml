@@ -27,6 +27,8 @@ jobs:
           node-version: 22
           registry-url: 'https://registry.npmjs.org'
       - run: npm ci
+      # prepublishOnly runs build:all, which compiles the web dashboard too
+      - run: npm ci --prefix web
       - run: npm run build
       - run: npx vitest run
       - name: Verify tag matches package.json version
