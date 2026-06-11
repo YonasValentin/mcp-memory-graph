@@ -17,6 +17,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 - CLI hint and team-workflow docs referenced a nonexistent `mcp-memory-server`
   binary — corrected to `mcp-memory-graph` (the actual `bin` name).
+- Docker build was broken since the better-sqlite3 12.x bump: no usable
+  prebuild on `node:20-slim`, so `npm ci` fell back to a source build and
+  failed on missing Python. Image now uses `node:22-slim` (the repo's Node
+  baseline) with a builder-stage native toolchain (python3/make/g++).
 
 ## [2.3.0] - 2026-06-11
 
