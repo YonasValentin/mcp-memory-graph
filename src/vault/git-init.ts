@@ -50,6 +50,16 @@ export function vaultGitattributes(): string {
  * Output lands in `.memory/last-rebuild.log` (truncated each run) instead of
  * /dev/null — discarding it made quarantined conflicted notes invisible after a
  * merge. stdout stays quiet and the git op is never blocked.
+ *
+ * B1 (two-developer sim): the vault is passed EXPLICITLY via
+ * `--vault "$(git rev-parse --show-toplevel)"` — git runs these hooks with
+ * cwd = repo toplevel and the vault IS that repo. A bare `rebuild` resolved the
+ * vault from MCP_VAULT_PATH/config, ambient state the pulling shell usually
+ * lacks (it lives in the MCP server's env), so every pull "succeeded" while
+ * rebuild died with 'No vault configured' and the index went silently stale.
+ * On failure, one stderr breadcrumb names the log; the terminal `|| true`
+ * still guarantees a failed rebuild (or even a failed echo) never blocks the
+ * git op.
  */
 export function rebuildHook(distEntry: string): string {
   return [
@@ -64,7 +74,9 @@ export function rebuildHook(distEntry: string): string {
     '# Log the rebuild (truncated each run) instead of discarding it: a quarantined',
     '# conflicted note was invisible when everything went to /dev/null.',
     'mkdir -p .memory',
-    `node "${distEntry}" rebuild > .memory/last-rebuild.log 2>&1 || true`,
+    '# The vault is THIS repo (hooks run at the toplevel) — pass it explicitly so',
+    '# the rebuild never depends on the pulling shell carrying the server env.',
+    `node "${distEntry}" rebuild --vault "$(git rev-parse --show-toplevel)" > .memory/last-rebuild.log 2>&1 || echo "mcp-memory: rebuild failed; memory index may be stale. See .memory/last-rebuild.log" >&2 || true`,
     '',
   ].join('\n');
 }

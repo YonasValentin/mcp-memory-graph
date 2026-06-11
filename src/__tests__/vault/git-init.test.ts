@@ -59,4 +59,28 @@ describe('vault git scaffolding content (P1.4)', () => {
       hook.indexOf('" rebuild'),
     );
   });
+
+  it('rebuild hook passes the vault EXPLICITLY (--vault from the git toplevel), never relying on shell env (B1)', () => {
+    // Two-developer sim: the bare `rebuild` resolved the vault from
+    // MCP_VAULT_PATH / config.json — ambient state the pulling SHELL usually
+    // lacks (it lives in the MCP server's env block). Every `git pull` then
+    // "succeeded" while rebuild died with 'No vault configured' inside the log,
+    // leaving the collaborator's index silently stale. Git runs these hooks
+    // with cwd = repo toplevel and THE VAULT IS THAT REPO, so derive it at run
+    // time — portable across clone moves, no env needed.
+    const hook = rebuildHook('/opt/app/dist/index.js');
+    expect(hook).toContain('rebuild --vault "$(git rev-parse --show-toplevel)"');
+  });
+
+  it('rebuild hook leaves ONE stderr breadcrumb on failure (pointing at the log) with || true still terminal (B1)', () => {
+    // A failed rebuild must never block the merge, but it must not be FULLY
+    // silent either: with everything redirected into the log and `|| true`
+    // swallowing the exit code, a broken rebuild was invisible. One echo to
+    // stderr names the log; the terminal `|| true` still guarantees the git op
+    // succeeds even if the echo itself fails.
+    const hook = rebuildHook('/opt/app/dist/index.js');
+    expect(hook).toMatch(/\|\| echo "[^"]*\.memory\/last-rebuild\.log[^"]*" >&2/);
+    expect(hook).toContain('|| true');
+    expect(hook.indexOf('|| echo')).toBeLessThan(hook.indexOf('|| true'));
+  });
 });
