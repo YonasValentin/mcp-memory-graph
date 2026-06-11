@@ -382,6 +382,14 @@ export interface DeleteFilter {
   document_type?: string;
   before_date?: string;
   expired_only?: boolean;
+  /**
+   * RBAC §6 (re-battle): a per-principal egress/integrity ceiling injected by
+   * server.ts. A sub-ceiling principal's bulk delete must NOT destroy rows above
+   * its clearance. Applied as a NARROWING `access_level IN (...)` predicate — it
+   * can only REDUCE the doomed set, never widen it, and (critically) it does not
+   * rescue an otherwise-empty filter past the delete-everything guard.
+   */
+  access_level_ceiling?: string[];
 }
 
 /**
@@ -418,7 +426,17 @@ function filterToWhere(filter: DeleteFilter): { whereClause: string; params: unk
     conditions.push(`expires_at IS NOT NULL AND expires_at < ${NOW_ISO_SQL}`);
   }
 
+  // Delete-everything guard runs on the USER conditions ONLY: an empty filter is
+  // null (no delete), and the ceiling below must never rescue it into a delete.
   if (conditions.length === 0) return null;
+
+  // RBAC §6: the principal ceiling is a NARROWING restriction appended after the
+  // guard — it shrinks the doomed set to rows at/below the caller's clearance.
+  // No-op (undefined/empty) for legacy/local/full-clearance callers.
+  if (filter.access_level_ceiling && filter.access_level_ceiling.length > 0) {
+    conditions.push(`access_level IN (${filter.access_level_ceiling.map(() => '?').join(',')})`);
+    params.push(...filter.access_level_ceiling);
+  }
   return { whereClause: conditions.join(' AND '), params };
 }
 

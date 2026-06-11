@@ -13,10 +13,21 @@
  * access_level_ceiling = principalAccessCeiling() inside runWithPrincipal, which
  * is what server.ts's scopedRead/withCeiling pass.
  *
+ * Part C (vault egress — battle F3/F4): the disk-/vault-writing surfaces also
+ * thread the ceiling. F3: vault_search forwards access_level_ceiling into
+ * hybridSearch → no over-ceiling rows. F4: export_vault + canvas fold the
+ * principal ceiling INTO the configured vault egress cap via
+ * intersectEgressWithCeiling (the MORE restrictive of the two wins), so a
+ * low-clearance key writes no above-ceiling content to disk and boards none on a
+ * canvas. The helper is also unit-tested directly.
+ *
  * Legacy/local mode (no principal) returns undefined ceiling → every row visible.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import http from 'node:http';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
 import type { Application } from 'express';
@@ -28,9 +39,18 @@ import { handleStore } from '../../tools/store.js';
 import { handleQuery } from '../../tools/query.js';
 import { handleExport } from '../../tools/export.js';
 import { handleExportDataset } from '../../tools/export-dataset.js';
+import { handleDelete } from '../../tools/delete.js';
+import { handleImport } from '../../tools/import.js';
+import { handleConsolidate } from '../../tools/consolidate.js';
+import { handleExtractLearnings } from '../../tools/extract-learnings.js';
+import { getMemoryById } from '../../db/repository.js';
 import { handleRelated } from '../../tools/related.js';
+import { handleVaultSearch } from '../../tools/vault-search.js';
+import { handleExportVault } from '../../tools/export-vault.js';
+import { handleCanvas } from '../../tools/canvas.js';
 import { runStructuredQuery } from '../../search/structured-query.js';
 import { registerApiRoutes } from '../../api/routes.js';
+import { intersectEgressWithCeiling, ACCESS_LEVEL_RANK } from '../../vault/writer.js';
 import { runWithPrincipal, type PrincipalContext } from '../../lib/request-context.js';
 import { principalAccessCeiling } from '../../lib/tenancy.js';
 import type { AccessLevel } from '../../types.js';
@@ -262,5 +282,221 @@ describe('§6 legacy/local mode — no ceiling, everything visible', () => {
     } finally {
       await new Promise<void>((r) => s2.close(() => r()));
     }
+  });
+});
+
+describe('§6 vault egress — F3/F4 ceiling threading on the disk-writing surfaces', () => {
+  it('F3: vault_search returns no confidential/restricted rows but ≥1 permitted row', async () => {
+    await runWithPrincipal(INTERNAL_KEY, async () => {
+      const ceiling = principalAccessCeiling();
+      // vault_path basename === NS so the search is in-namespace (the common
+      // post-export layout); handleVaultSearch reads the DB via hybridSearch.
+      const out = await handleVaultSearch(db, embedder, {
+        vault_path: `${os.tmpdir()}/${NS}`,
+        query: 'apollo rocket telemetry',
+        namespace: NS,
+        limit: 50,
+        access_level_ceiling: ceiling,
+      });
+      const levels = new Set(out.results.map((r) => r.memory.access_level));
+      expect(levels.has('confidential')).toBe(false);
+      expect(levels.has('restricted')).toBe(false);
+      expect(out.results.length).toBeGreaterThan(0);
+      // Without the ceiling forward, the same query DOES surface them — proving
+      // the option is load-bearing, not incidental.
+      const unguarded = await handleVaultSearch(db, embedder, {
+        vault_path: `${os.tmpdir()}/${NS}`,
+        query: 'apollo rocket telemetry',
+        namespace: NS,
+        limit: 50,
+      });
+      const allLevels = new Set(unguarded.results.map((r) => r.memory.access_level));
+      expect(allLevels.has('confidential')).toBe(true);
+    });
+  });
+
+  it('F4: export_vault writes NO confidential/restricted .md (content absent from disk)', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rbac-export-'));
+    try {
+      runWithPrincipal(INTERNAL_KEY, () => {
+        const ceiling = principalAccessCeiling();
+        const result = handleExportVault(db, {
+          vault_path: tmpDir,
+          namespace: NS,
+          access_level_ceiling: ceiling,
+        });
+        // No file for an over-ceiling memory (its safe filename derives from the
+        // title, so the confidential/restricted titles must not appear).
+        const written = result.files.join('\n');
+        expect(written).not.toMatch(/apollo-confidential/i);
+        expect(written).not.toMatch(/apollo-restricted/i);
+        // Walk every written .md and assert the confidential/restricted BODY is
+        // nowhere on disk (the egress filter wrote nothing for those rows).
+        const all = fs
+          .readdirSync(result.vault_path, { recursive: true })
+          .map((f) => f.toString())
+          .filter((f) => f.endsWith('.md'))
+          .map((f) => fs.readFileSync(path.join(result.vault_path, f), 'utf8'))
+          .join('\n');
+        expect(all).not.toContain('apollo rocket telemetry confidential band');
+        expect(all).not.toContain('apollo rocket telemetry restricted band');
+        // ...but a permitted row IS exported (the fix doesn't over-block).
+        expect(all).toContain('apollo rocket telemetry internal band');
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('F4: canvas boards NO confidential/restricted node text under the ceiling', () => {
+    runWithPrincipal(INTERNAL_KEY, () => {
+      const ceiling = principalAccessCeiling();
+      const { canvas } = handleCanvas(db, {
+        namespace: NS,
+        limit: 50,
+        access_level_ceiling: ceiling,
+      });
+      const allText = canvas.nodes.map((n) => n.text).join('\n');
+      expect(allText).not.toContain('apollo-confidential');
+      expect(allText).not.toContain('apollo-restricted');
+      expect(allText).not.toContain('apollo rocket telemetry confidential band');
+      expect(allText).not.toContain('apollo rocket telemetry restricted band');
+      // A permitted node is still boarded.
+      expect(allText).toContain('apollo-internal');
+    });
+  });
+});
+
+describe('§6 intersectEgressWithCeiling — unit (F4 helper)', () => {
+  it('undefined / empty ceiling leaves the policy unchanged', () => {
+    const policy = { max_access_level: 'confidential' as AccessLevel, deny_globs: ['secrets/**'] };
+    expect(intersectEgressWithCeiling(policy, undefined)).toBe(policy);
+    expect(intersectEgressWithCeiling(policy, [])).toBe(policy);
+    // No policy + no ceiling → still no policy (byte-identical no-op).
+    expect(intersectEgressWithCeiling(undefined, undefined)).toBeUndefined();
+  });
+
+  it('a public ceiling caps max_access_level at public even with no configured policy', () => {
+    const out = intersectEgressWithCeiling(undefined, ['public']);
+    expect(out?.max_access_level).toBe('public');
+  });
+
+  it('picks the MORE restrictive of the configured cap and the ceiling cap', () => {
+    // configured cap = confidential, principal ceiling cap = internal → internal.
+    const internalCeiling: AccessLevel[] = ['public', 'internal'];
+    const out = intersectEgressWithCeiling({ max_access_level: 'confidential' }, internalCeiling);
+    expect(out?.max_access_level).toBe('internal');
+    expect(ACCESS_LEVEL_RANK[out!.max_access_level!]).toBeLessThan(ACCESS_LEVEL_RANK.confidential);
+
+    // configured cap = public, principal ceiling cap = confidential → public
+    // (the configured cap is the more restrictive one this time).
+    const confCeiling: AccessLevel[] = ['public', 'internal', 'confidential'];
+    const out2 = intersectEgressWithCeiling({ max_access_level: 'public' }, confCeiling);
+    expect(out2?.max_access_level).toBe('public');
+  });
+
+  it('deny_globs pass through untouched', () => {
+    const out = intersectEgressWithCeiling(
+      { max_access_level: 'confidential', deny_globs: ['secrets/**', '*.key'] },
+      ['public'],
+    );
+    expect(out?.deny_globs).toEqual(['secrets/**', '*.key']);
+    expect(out?.max_access_level).toBe('public');
+  });
+});
+
+/**
+ * RBAC §6 re-battle close — a BULK filter-delete honours the ceiling. The by-id
+ * delete is gated by idWithinCeiling; the bulk path (handleDelete with a filter)
+ * injects access_level_ceiling into the WHERE so a sub-ceiling principal can
+ * never DESTROY rows above its clearance — while the delete-everything guard
+ * (empty filter → no-op) is preserved (the ceiling narrows, never rescues).
+ */
+describe('§6 bulk filter-delete respects the access ceiling', () => {
+  it('a public+internal ceiling deletes only those levels; confidential/restricted survive', () => {
+    const removed = handleDelete(db, {
+      filter: { namespace: NS, access_level_ceiling: ['public', 'internal'] },
+    });
+    expect(removed.deleted).toBeGreaterThan(0);
+    const survivors = new Set(
+      db
+        .prepare<[], { access_level: string }>('SELECT access_level FROM memories WHERE valid_to IS NULL')
+        .all()
+        .map((r) => r.access_level),
+    );
+    expect(survivors.has('confidential')).toBe(true);
+    expect(survivors.has('restricted')).toBe(true);
+    expect(survivors.has('public')).toBe(false);
+    expect(survivors.has('internal')).toBe(false);
+  });
+
+  it('a ceiling-ONLY filter (no other condition) is a no-op — the delete-everything guard holds', () => {
+    const before = db.prepare<[], { c: number }>('SELECT COUNT(*) c FROM memories').get()!.c;
+    const removed = handleDelete(db, { filter: { access_level_ceiling: ['public'] } });
+    expect(removed.deleted).toBe(0);
+    const after = db.prepare<[], { c: number }>('SELECT COUNT(*) c FROM memories').get()!.c;
+    expect(after).toBe(before);
+  });
+});
+
+/**
+ * RBAC re-battle-3 residuals — the two variant-shaped bulk/by-id mutators the
+ * systematic `parsed.id` close missed. Both let a sub-ceiling principal MUTATE
+ * or DESTROY an over-ceiling row in its OWN namespace (integrity, not egress).
+ */
+describe('§6 import-overwrite + consolidate honour the ceiling (re-battle-3)', () => {
+  const CEIL: AccessLevel[] = ['public', 'internal'];
+
+  it('memory_import {overwrite} cannot rewrite an over-ceiling row (drops to a fresh insert)', async () => {
+    const before = getMemoryById(db, ids.confidential)!;
+    const res = await handleImport(
+      db,
+      embedder,
+      { data: [{ id: ids.confidential, content: 'TAMPERED by an internal-cap key', access_level: 'confidential' }], overwrite: true },
+      undefined, // no forced namespace
+      CEIL, // internal ceiling
+    );
+    const after = getMemoryById(db, ids.confidential)!;
+    // the confidential row is untouched...
+    expect(after.content).toBe(before.content);
+    expect(after.content).not.toContain('TAMPERED');
+    // ...and the import landed as a fresh, non-confirming insert, not an overwrite.
+    expect(res.imported).toBe(1);
+  });
+
+  it('memory_consolidate prune cannot hard-delete an over-ceiling row', async () => {
+    // make the confidential row expired so prune_expired would target it.
+    db.prepare("UPDATE memories SET expires_at = '2000-01-01T00:00:00.000Z' WHERE id = ?").run(
+      ids.confidential,
+    );
+    const report = await handleConsolidate(db, embedder, {
+      scope: 'project',
+      namespace: NS,
+      prune_expired: true,
+      access_level_ceiling: CEIL,
+    });
+    // the over-ceiling row survived the prune (still present, even if expired)...
+    expect(getMemoryById(db, ids.confidential)).toBeTruthy();
+    // ...and the search_log rotation did NOT throw (re-battle-4: the ceiling
+    // clause must not reach search_log, which has no access_level column).
+    expect(report.errors.filter((e) => e.includes('access_level'))).toEqual([]);
+  });
+
+  it('memory_extract_learnings {auto_store} cannot corroborate (mutate) an over-ceiling near-duplicate', async () => {
+    const before = getMemoryById(db, ids.confidential)!;
+    const res = await handleExtractLearnings(db, embedder, {
+      // a transcript whose decision-pattern extracts the confidential row's content
+      transcript: `In planning we decided: ${before.content}`,
+      scope: 'project',
+      namespace: NS,
+      auto_store: true,
+      access_level_ceiling: CEIL, // internal cap — confidential row is invisible
+    });
+    const after = getMemoryById(db, ids.confidential)!;
+    // the confidential row's metadata + version are untouched (no corroboration)...
+    expect(after.metadata).toBe(before.metadata);
+    expect(after.version).toBe(before.version);
+    // ...and its id never leaks back to the caller (no existence oracle).
+    expect(res.memory_ids).not.toContain(ids.confidential);
   });
 });

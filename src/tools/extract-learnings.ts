@@ -181,6 +181,10 @@ export async function handleExtractLearnings(
     source?: string;
     categories?: ExtractedLearning['type'][];
     auto_store?: boolean;
+    // RBAC §6 (re-battle-4): a sub-ceiling principal must not corroborate (bump
+    // metadata + version of) an over-ceiling near-duplicate. The allow-list of
+    // levels the caller may touch; undefined → legacy/local/full-clearance.
+    access_level_ceiling?: string[];
   },
 ): Promise<ExtractLearningsResult> {
   const learnings = extractFromTranscript(input.transcript, input.categories);
@@ -205,10 +209,31 @@ export async function handleExtractLearnings(
     // own (scope, namespace). Unpartitioned, a foreign-tenant near-match could be
     // returned AND — under auto_store — get its corroboration_count MUTATED below
     // (a cross-tenant write). Mirrors store.ts's partition.
-    const duplicates = findNearDuplicates(db, embedding, DEDUP_DISTANCE_THRESHOLD, 3, {
+    let duplicates = findNearDuplicates(db, embedding, DEDUP_DISTANCE_THRESHOLD, 3, {
       scope: input.scope ?? 'global',
       namespace: input.namespace ?? null,
     });
+
+    // §6 (re-battle-4): an over-ceiling near-dup is invisible to this caller. It
+    // must NOT be corroborated (a cross-clearance metadata+version MUTATE of a row
+    // the caller can't read). It also must not fall through to the store-anew
+    // path, because handleStore's own dedup is partition-only (not ceiling-aware)
+    // and would NOOP against the same over-ceiling row and echo its id — an
+    // existence oracle. So: keep only ceiling-visible dups for corroboration, and
+    // if the ONLY matches were over-ceiling, SUPPRESS this learning entirely
+    // (the caller learns nothing about the unseen row). No-op when undefined.
+    if (input.access_level_ceiling) {
+      const ceiling = input.access_level_ceiling;
+      const visible: typeof duplicates = [];
+      let hadOverCeiling = false;
+      for (const d of duplicates) {
+        const row = getMemoryById(db, d.id);
+        if (row && ceiling.includes(row.access_level)) visible.push(d);
+        else if (row) hadOverCeiling = true;
+      }
+      duplicates = visible;
+      if (duplicates.length === 0 && hadOverCeiling) continue;
+    }
 
     if (duplicates.length > 0) {
       if (input.auto_store) {

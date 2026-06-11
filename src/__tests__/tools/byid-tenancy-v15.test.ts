@@ -113,12 +113,17 @@ describe('RT-1 — memory_verify by-id is namespace-forced (source wiring guard)
   const src = readFileSync(serverSrc, 'utf8');
 
   it('memory_verify registration carries the by-id ownership guard', () => {
-    // Mirror memory_get: optional id, guard only when present.
-    expect(src).toContain("if (parsed.id && !idInForcedNs(parsed.id)) throw new Error('Memory not found');");
-    // And the guard must appear in the memory_verify registration block.
+    // Mirror memory_get: optional id, guard only when present. The §6 re-battle
+    // close OR'd an `|| !idWithinCeiling(parsed.id)` clause into the SAME guard,
+    // so assert the namespace substring (intact) not the pre-ceiling full line.
+    expect(src).toContain('parsed.id && (!idInForcedNs(parsed.id)');
+    // And the guard (namespace + ceiling) must appear in the memory_verify block.
     const verifyIdx = src.indexOf("instrument('memory_verify'");
     expect(verifyIdx).toBeGreaterThan(-1);
-    const block = src.slice(verifyIdx, verifyIdx + 600);
+    // Window widened from 600 → 1000: the §6 ceiling close added explanatory
+    // comments before the guard, pushing it past the old slice length.
+    const block = src.slice(verifyIdx, verifyIdx + 1000);
     expect(block).toContain('idInForcedNs(parsed.id)');
+    expect(block).toContain('idWithinCeiling(parsed.id)');
   });
 });

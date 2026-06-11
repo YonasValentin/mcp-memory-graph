@@ -177,16 +177,22 @@ export function merkleRootFromHashes(hashes: readonly string[]): string {
 export function buildIntegrityManifest(
   db: Database.Database,
   generatedAt: string,
-  filter?: { scope?: string; namespace?: string },
+  filter?: { scope?: string; namespace?: string; accessCeiling?: string[] },
 ): IntegrityManifest {
   // battle-v14 F1: on a namespace-forced deployment the manifest sidecar is
   // committed INTO the tenant's (git-shared) vault, so it must fingerprint ONLY
   // the tenant's corpus — an unscoped manifest leaks the global memory count and
   // a merkle root that moves whenever any other tenant writes. Unscoped (no
   // filter) is the single-user default and stays whole-corpus.
+  // RBAC §6 (battle F4 residual): when a capped principal exports, the .md files
+  // are ceiling-filtered — the manifest MUST fingerprint the same set, else (a)
+  // it leaks the count + a content-hash of above-ceiling rows into a git-shared
+  // file, and (b) it wouldn't match the files actually written. Apply the same
+  // access_level IN (...) predicate; undefined ceiling → whole corpus, unchanged.
   const scope = scopeConditions(filter ?? {});
-  const conditions = [...liveConditions({ topLevelOnly: true }), ...scope.conditions];
-  const params: unknown[] = [...scope.params];
+  const ceil = accessCeilingCondition(filter?.accessCeiling);
+  const conditions = [...liveConditions({ topLevelOnly: true }), ...scope.conditions, ...ceil.conditions];
+  const params: unknown[] = [...scope.params, ...ceil.params];
   const rows = db
     .prepare<unknown[], { id: string; scope: string; access_level: string; content: string }>(
       `SELECT id, scope, access_level, content FROM memories WHERE ${conditions.join(' AND ')}`,

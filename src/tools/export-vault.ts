@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import type { AccessLevel } from '../types.js';
 import { exportMemoriesToVault, type ExportVaultResult } from '../vault/writer.js';
 import { writeManifestSidecar } from '../vault/sidecar.js';
 
@@ -9,12 +10,20 @@ import { writeManifestSidecar } from '../vault/sidecar.js';
  */
 export function handleExportVault(
   db: Database.Database,
-  input: { vault_path: string; scope?: string; namespace?: string },
+  input: {
+    vault_path: string;
+    scope?: string;
+    namespace?: string;
+    // RBAC §6 (battle F4): caller principal's egress ceiling, threaded by
+    // server.ts scopedRead; intersected with the configured vault egress cap.
+    access_level_ceiling?: AccessLevel[];
+  },
 ): ExportVaultResult {
   const result = exportMemoriesToVault(db, {
     vaultPath: input.vault_path,
     scope: input.scope,
     namespace: input.namespace,
+    accessCeiling: input.access_level_ceiling,
   });
   // M2.6: a full export carries the integrity manifest so a later `rebuild`
   // detects drift/tampering. Fail-soft — a manifest write error must not fail
@@ -26,6 +35,9 @@ export function handleExportVault(
     writeManifestSidecar(db, input.vault_path, new Date().toISOString(), {
       scope: input.scope,
       namespace: input.namespace,
+      // F4 residual: the manifest must fingerprint exactly the ceiling-filtered
+      // set the .md export wrote — never the count/hash of above-ceiling rows.
+      accessCeiling: input.access_level_ceiling,
     });
   } catch {
     /* manifest is advisory hardening; never break the export on its IO */

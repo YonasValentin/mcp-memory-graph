@@ -105,39 +105,42 @@ export function timingSafeStrEqual(a: string, b: string): boolean {
 }
 
 /**
- * Cached non-revoked api_key count with a ≤30s TTL. The auth-activation rule
- * (auth configured ⇔ env token set OR ≥1 non-revoked key) and the auth
- * middleware both consult this — counting on every request would add a SELECT to
- * the unauthenticated hot path. A key created (or revoked) while the server runs
- * takes effect within {@link KEY_COUNT_TTL_MS}; this window is documented in
- * docs/MULTI-TENANCY.md.
+ * Live non-revoked api_key count, used by the auth-activation rule (auth
+ * configured ⇔ env token set OR ≥1 non-revoked key).
+ *
+ * Counted on EVERY consult — NOT cached. A prior 30s TTL cache (battle finding
+ * F2) hid the count's 1→0 transition: revoking the last key on a remote bind
+ * left the cached `1` for ≤30s, so the server kept serving the whole corpus
+ * UNAUTHENTICATED (fail-open) until the TTL lapsed — and a CLI `keys
+ * create`/`revoke` runs in a SEPARATE process from the server, so it could
+ * never bust an in-process cache anyway. The count is a single indexed query;
+ * the legacy-token path short-circuits before it (`envToken !== undefined ||
+ * …`), so a single-token deployment never pays for it, and api-key/anonymous
+ * requests are rate-limited. Correctness over a micro-optimisation on the auth
+ * boundary.
  */
-const KEY_COUNT_TTL_MS = 30_000;
-let keyCountCache: { value: number; expiresAt: number } | undefined;
-
 function liveKeyCount(getDb: () => Database.Database): number {
-  const now = Date.now();
-  if (keyCountCache && now < keyCountCache.expiresAt) return keyCountCache.value;
-  let count = 0;
   try {
-    count =
+    return (
       getDb()
         .prepare<[], { c: number }>('SELECT COUNT(*) AS c FROM api_keys WHERE revoked_at IS NULL')
-        .get()?.c ?? 0;
+        .get()?.c ?? 0
+    );
   /* c8 ignore start */
   } catch {
     // No api_keys table (pre-v16 DB) → no keys; auth-activation falls back to the
     // env-token rule. Never let a counting failure crash the request path.
-    count = 0;
+    return 0;
   }
   /* c8 ignore stop */
-  keyCountCache = { value: count, expiresAt: now + KEY_COUNT_TTL_MS };
-  return count;
 }
 
-/** Test-only: drop the cached key count so a per-test DB swap is observed at once. */
+/**
+ * Retained as a no-op for test-API stability (the key-count cache was removed in
+ * F2; counting is now always live, so there is nothing to clear).
+ */
 export function clearKeyCountCache(): void {
-  keyCountCache = undefined;
+  /* no-op: key count is no longer cached */
 }
 
 /**
@@ -163,10 +166,20 @@ function authConfigured(getDb: () => Database.Database, envToken: string | undef
  *   4. Else 401 — UNKNOWN-key and BAD-legacy-token share ONE envelope (no
  *      enumeration oracle).
  *
- * When auth is NOT configured (no env token AND no keys), every request passes
- * with no principal — the local loopback default, unchanged.
+ * When auth is NOT configured (no env token AND no keys), the request passes
+ * with no principal on a LOOPBACK bind (the local default) — but on a REMOTE
+ * bind it is REFUSED (503) unless MCP_AUTH_OPTIONAL=1. The remote "never serve
+ * unauthenticated" invariant is checked at startup AND per-request (battle
+ * finding F2): revoking the last key at runtime made `authConfigured` flip to
+ * false, and the old self-disabling pass-through then served the whole corpus
+ * unauthenticated on a network bind. Re-gating here keeps the startup guarantee
+ * continuously true, not just at boot.
  */
-function authMiddleware(getDb: () => Database.Database, envToken: string | undefined) {
+function authMiddleware(
+  getDb: () => Database.Database,
+  envToken: string | undefined,
+  isRemote: boolean,
+) {
   const legacyExpected = envToken !== undefined ? `Bearer ${envToken}` : undefined;
   function unauthorized(res: Response): void {
     res.status(401).json({
@@ -176,9 +189,20 @@ function authMiddleware(getDb: () => Database.Database, envToken: string | undef
     });
   }
   return function authMw(req: Request, res: Response, next: NextFunction): void {
-    // Unauthenticated mode: no token configured and no keys exist → pass through
-    // with no principal (loopback local default, byte-identical to MCP_AUTH_OPTIONAL).
     if (!authConfigured(getDb, envToken)) {
+      // F2: a remote bind must NEVER serve unauthenticated unless explicitly
+      // opted in — enforce the startup invariant on every request so a runtime
+      // de-configuration (last key revoked) fails CLOSED, not open.
+      if (isRemote && process.env.MCP_AUTH_OPTIONAL !== '1') {
+        res.status(503).json({
+          error: 'Service Unavailable: authentication not configured on a network bind',
+          code: 'AUTH_NOT_CONFIGURED',
+          requestId: res.locals.requestId,
+        });
+        return;
+      }
+      // Loopback local default (or MCP_AUTH_OPTIONAL=1): pass through with no
+      // principal, byte-identical to the pre-RBAC behaviour.
       next();
       return;
     }
@@ -432,7 +456,7 @@ export function buildApp(deps: BuildAppDeps): BuiltApp {
   // (`MCP_AUTH_OPTIONAL=1`) — by default a remote bind with no auth at all is a
   // startup error so accidental "no auth" deployments don't ship.
   const token = bearerToken();
-  const authMw = authMiddleware(deps.getDb, token);
+  const authMw = authMiddleware(deps.getDb, token, isRemote);
   app.use('/api', authMw);
   app.use('/mcp', authMw);
   if (!authConfigured(deps.getDb, token) && process.env.MCP_AUTH_OPTIONAL !== '1' && isRemote) {

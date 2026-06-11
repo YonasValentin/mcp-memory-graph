@@ -53,7 +53,7 @@ export function writeManifestSidecar(
   db: Database.Database,
   vaultRoot: string,
   generatedAt: string,
-  filter?: { scope?: string; namespace?: string },
+  filter?: { scope?: string; namespace?: string; accessCeiling?: string[] },
 ): string | null {
   fs.mkdirSync(vaultRoot, { recursive: true });
   const root = fs.realpathSync(vaultRoot);

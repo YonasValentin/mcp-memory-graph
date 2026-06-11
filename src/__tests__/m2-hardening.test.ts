@@ -279,6 +279,12 @@ describe('M2.5 egress filter — wired into the LIVE write paths (not dead code)
 
   it('exportMemoriesToVault routes writes through applyEgressFilter', () => {
     const src = read('../vault/writer.ts');
-    expect(src).toContain('applyEgressFilter(vaultRoot, relPath, memoryToMarkdown(memory), memory, getVaultEgress())');
+    // RBAC battle F4: the configured vault egress cap is now intersected with the
+    // caller principal's access ceiling (the more restrictive of the two wins)
+    // before applyEgressFilter sees it — so the live export path still consults
+    // the egress filter, with the per-request ceiling folded in.
+    expect(src).toContain(
+      'applyEgressFilter(vaultRoot, relPath, memoryToMarkdown(memory), memory, intersectEgressWithCeiling(getVaultEgress(), opts.accessCeiling))',
+    );
   });
 });

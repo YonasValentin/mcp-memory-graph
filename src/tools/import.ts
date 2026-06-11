@@ -79,6 +79,11 @@ export async function handleImport(
   // is relabeled to it before insert/overwrite. Undefined → no scoping (local
   // single-user default), preserving the per-item namespace (current behaviour).
   forcedNamespace?: string,
+  // RBAC §6 (re-battle-3): a sub-ceiling principal must not OVERWRITE an
+  // over-ceiling row by supplying its id with overwrite:true. The allow-list of
+  // levels the caller may touch (principalAccessCeiling()); undefined →
+  // legacy/local/full-clearance, no restriction.
+  accessCeiling?: string[],
 ): Promise<{ imported: number; skipped: number; errors: number; remapped: number }> {
   let imported = 0;
   let skipped = 0;
@@ -160,6 +165,16 @@ export async function handleImport(
         // to someone else). Unforced (single-user) imports are unaffected.
         let effectiveId = existingId;
         if (existing && forcedNamespace !== undefined && existing.namespace !== forcedNamespace) {
+          existing = null;
+          effectiveId = null;
+        }
+        // §6 (re-battle-3): an over-ceiling existing row is treated EXACTLY like a
+        // foreign-namespace one — drop it and fall through to a fresh insert, so a
+        // sub-ceiling principal can neither overwrite its content nor confirm its
+        // existence (the same non-confirming response as a new id). Mutating a row
+        // above the caller's clearance is the import-overwrite sibling of the
+        // version_restore/bulk-delete ceiling.
+        if (existing && accessCeiling && !accessCeiling.includes(existing.access_level)) {
           existing = null;
           effectiveId = null;
         }
