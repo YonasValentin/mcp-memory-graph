@@ -332,6 +332,22 @@ function installLaunchdPlist(scope: Scope): void {
   dim(`Logs: ${home}/.mcp-memory/consolidation.log`);
 }
 
+/**
+ * Project-scope footgun guard: `.mcp-memory/` holds the project-local SQLite
+ * DB and a config.json with a machine-specific absolute db_path — committing
+ * either is always a mistake (the committable artifact is `.mcp.json`).
+ * Creates or appends the project `.gitignore`; idempotent.
+ */
+export function ensureProjectGitignore(): void {
+  const gitignorePath = join(process.cwd(), '.gitignore');
+  const entry = '.mcp-memory/';
+  const existing = existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf8') : '';
+  if (existing.split('\n').some((line) => line.trim() === entry)) return;
+  const block = `${existing.length > 0 && !existing.endsWith('\n') ? '\n' : ''}# mcp-memory: local DB + machine-specific config (commit .mcp.json instead)\n${entry}\n`;
+  writeFileSync(gitignorePath, existing + block);
+  success(`Added ${entry} to .gitignore`);
+}
+
 export function createMcpJson(): void {
   const mcpJsonPath = join(process.cwd(), '.mcp.json');
 
@@ -528,6 +544,7 @@ export async function runInit(): Promise<void> {
     console.log('');
     info('Step 2b: Creating .mcp.json for project-scoped MCP server...');
     createMcpJson();
+    ensureProjectGitignore();
   }
 
   console.log('');

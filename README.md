@@ -168,6 +168,9 @@ The Docker image includes the built frontend. After `docker compose up`, the das
 
 **REST API (16 endpoints):**
 
+> The REST surface is read/manage-only — **creating** memories goes through MCP
+> (`memory_store` over `POST /mcp`); there is deliberately no `POST /api/memories`.
+
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/stats` | Memory counts and breakdowns |
@@ -299,9 +302,12 @@ npx mcp-memory-graph init --scope project
 Init performs these steps:
 1. Verify hook scripts exist in `dist/hooks/`
 2. Register hooks in settings.json (SessionStart, PostToolUse, PreCompact, Stop)
-3. Create `~/.mcp-memory/config.json` with sensible defaults
+3. Create the config file with sensible defaults — `~/.mcp-memory/config.json`
+   (user scope) or `<project>/.mcp-memory/config.json` (project scope; the
+   generated `.mcp.json` pins it via `MCP_MEMORY_CONFIG_PATH`, and the runtime
+   also resolves a project config from the working directory)
 4. Set up `.claude/CLAUDE.md` with memory server usage instructions (project scope) or print snippet (user scope)
-5. Set up nightly consolidation schedule (macOS: launchd, Linux: cron suggestion)
+5. Set up nightly consolidation schedule (macOS: launchd, Linux: cron suggestion; skipped for project scope)
 
 To reverse everything:
 
@@ -507,16 +513,24 @@ claude mcp add memory-server --env MCP_MEMORY_DB_PATH=/path/to/project/.memory.d
 ### Alternative Embedding Models
 
 ```bash
-# Use a larger model for higher accuracy (768 dimensions, slower)
+# Swap the embedding model (same 384 dimensions — drop-in for the existing index
+# AFTER a re-embed; see the warning below)
 claude mcp add memory-server \
   --env MCP_MEMORY_MODEL=Xenova/bge-small-en-v1.5 \
   --env MCP_MEMORY_DIMENSIONS=384 \
   node /path/to/dist/index.js
 ```
 
+> **Model identity is recorded and enforced.** The database remembers which
+> embedding model built it (`schema_meta.embedding_model`). Starting the server
+> with a different `MCP_MEMORY_MODEL` fails loudly instead of silently
+> degrading every search (same dimension ≠ same vector space). To switch
+> models: set the new model and run `memory rebuild` (re-embeds from the
+> vault), or export/import.
+
 ### Configuration File
 
-The config file at `~/.mcp-memory/config.json` controls self-improvement behavior, hook settings, and per-project overrides. Created automatically by `npx mcp-memory-graph init`, or create it manually:
+The config file controls self-improvement behavior, hook settings, and per-project overrides. Resolution precedence: `MCP_MEMORY_CONFIG_PATH` env → `<cwd>/.mcp-memory/config.json` (project-scope init writes this) → `~/.mcp-memory/config.json`. Created automatically by `npx mcp-memory-graph init`, or create it manually:
 
 ```json
 {
@@ -585,6 +599,12 @@ The config file at `~/.mcp-memory/config.json` controls self-improvement behavio
 | `npx mcp-memory-graph export-graph [--out <path>] [--scope <s>] [--namespace <n>]` | Write a committable, deterministic `memory-graph.json` for git sharing |
 | `npx mcp-memory-graph git-setup` | Install the `.gitattributes` entry + `memory-union` git merge driver for conflict-free graph sharing |
 | `npx mcp-memory-graph merge-graphs <ours> <theirs> <out>` | Git union merge driver for `memory-graph.json` (invoked by git, not by hand) |
+| `npx mcp-memory-graph vault-init [--vault <path>]` | Make the vault a git repo: union merge driver, `pull.rebase=false`, post-merge/post-checkout rebuild hooks |
+| `npx mcp-memory-graph sync` | Export all valid memories + graph sidecar to the vault (`.md` files) |
+| `npx mcp-memory-graph rebuild [--vault <path>]` | Rebuild the SQLite index from the vault's `.md` files (collaborators run this after `git pull`) |
+| `npx mcp-memory-graph migrate` | Upgrade the database to the current schema version |
+| `npx mcp-memory-graph backup [--out <path>]` | WAL-safe online snapshot (retention: `MCP_MEMORY_MAX_BACKUPS`, default 10) |
+| `npx mcp-memory-graph keys create\|list\|revoke` | Per-key RBAC: mint/inspect/revoke API keys (namespace set + access ceiling) |
 
 ---
 
@@ -600,8 +620,11 @@ Store a new memory with automatic vector embedding generation.
 |-----------|------|----------|---------|-------------|
 | `content` | string | Yes | — | The text content to store |
 | `title` | string | No | — | Short title for the memory |
-| `scope` | enum | No | `global` | global, project, user, team, department |
-| `namespace` | string | No | — | Sub-scope (e.g., project name) |
+| `scope` | enum | No | `global`¹ | global, project, user, team, department |
+| `namespace` | string | No | —¹ | Sub-scope (e.g., project name) |
+| `importance_score` | number | No | computed | 0–1 manual importance override |
+| `agent_id` | string | No | `MCP_AGENT_ID` env | Attribution for memory_attribution rollups |
+| `on_conflict` | enum | No | `add` | add, supersede, skip — write-gate behavior on near-duplicates |
 | `document_type` | string | No | — | contract, policy, code, incident, decision, etc. |
 | `source` | string | No | — | Where this content came from |
 | `author` | string | No | — | Who created it |
@@ -611,6 +634,10 @@ Store a new memory with automatic vector embedding generation.
 | `language` | string | No | `en` | ISO 639-1 language code |
 | `metadata` | object | No | — | Domain-specific key-value pairs |
 | `expires_at` | string | No | — | ISO 8601 expiration date |
+
+¹ When omitted, a loaded config file's `defaults.scope` / `defaults.namespace`
+(`"auto"` = project directory name) apply first; the hardcoded fallback is
+`global` / none.
 
 **Example prompt:**
 ```
