@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { CURRENT_SCHEMA_VERSION, MEMORY_LINKS_DDL, CORE_MEMORY_DDL, WEBHOOKS_DDL, SEARCH_LOG_DDL } from './schema.js';
+import { CURRENT_SCHEMA_VERSION, MEMORY_LINKS_DDL, CORE_MEMORY_DDL, WEBHOOKS_DDL, SEARCH_LOG_DDL, API_KEYS_DDL } from './schema.js';
 
 interface Migration {
   version: number;
@@ -556,6 +556,15 @@ const migrations: Migration[] = [
       // host's global history would re-pollute every fresh consolidation with
       // cross-project queries — the exact leak this migration closes.
       db.exec(SEARCH_LOG_DDL);
+    },
+  },
+  {
+    version: 16,
+    up: (db) => {
+      // RBAC v1 — per-key API principals (see src/db/api-keys.ts). Create-only
+      // and idempotent (CREATE TABLE IF NOT EXISTS); the table stays empty until
+      // an operator mints keys, so existing deployments are unaffected.
+      db.exec(API_KEYS_DDL);
     },
   },
 ];

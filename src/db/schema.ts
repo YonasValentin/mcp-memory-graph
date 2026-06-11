@@ -4,7 +4,7 @@ import type Database from 'better-sqlite3';
  * The current schema version baked into this codebase. Updated together with
  * a new entry in `runMigrations`.
  */
-export const CURRENT_SCHEMA_VERSION = 15;
+export const CURRENT_SCHEMA_VERSION = 16;
 
 /**
  * Persistent memory-to-memory edge store (Pillar 1). Edges carry a confidence
@@ -132,6 +132,32 @@ export const SEARCH_LOG_DDL = `
   );
   CREATE INDEX IF NOT EXISTS idx_search_log_gaps ON search_log(namespace, scope, results_count);
   CREATE INDEX IF NOT EXISTS idx_search_log_created ON search_log(created_at);
+`;
+
+/**
+ * RBAC v1 (schema v16): per-key API principals over one server process. Each
+ * key pins a JSON array of permitted namespaces + an access-level ceiling, so
+ * "sales can't see HR" no longer needs one-process-per-tenant. The raw token is
+ * shown ONCE at create and stored ONLY as sha256 hex (`token_hash`, UNIQUE).
+ * All timestamps are written by `src/db/api-keys.ts` as ISO-Z (`new
+ * Date().toISOString()`) — deliberately NO `datetime('now')` defaults, whose
+ * space separator mis-collates against ISO-Z in lexical range compares (the
+ * expiry check is a lexical `expires_at <= now`). Shared verbatim by
+ * {@link initializeSchema} (fresh DBs) and migration v16 (existing DBs) so the
+ * two paths never diverge.
+ */
+export const API_KEYS_DDL = `
+  CREATE TABLE IF NOT EXISTS api_keys (
+    id TEXT PRIMARY KEY NOT NULL,
+    principal TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    namespaces TEXT NOT NULL,
+    max_access_level TEXT NOT NULL DEFAULT 'internal',
+    expires_at TEXT,
+    created_at TEXT NOT NULL,
+    revoked_at TEXT,
+    last_used_at TEXT
+  );
 `;
 
 /**
@@ -483,6 +509,9 @@ export function initializeSchema(db: Database.Database): void {
 
   // Search telemetry (v15) — feeds tenancy-scoped knowledge-gap detection.
   db.exec(SEARCH_LOG_DDL);
+
+  // RBAC api_keys (v16) — empty until `memory keys create` / the keys module.
+  db.exec(API_KEYS_DDL);
 
   // Stamp the schema version + embedding dimension for future opens.
   const haveVersion = !!db
