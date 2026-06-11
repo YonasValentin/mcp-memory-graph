@@ -50,6 +50,7 @@ describe('maybePrintHelp', () => {
   const COMMANDS = [
     'init', 'uninstall', 'consolidate', 'migrate', 'serve', 'http', 'backup',
     'rebuild', 'vault-init', 'sync', 'export-graph', 'merge-graphs', 'git-setup',
+    'keys',
   ];
 
   it.each(COMMANDS)('prints usage for `%s --help` and returns true', (cmd) => {
@@ -85,6 +86,22 @@ describe('maybePrintHelp', () => {
     expect(text).toMatch(/wizard/i);
     expect(text).toContain('settings.json');
     expect(text).toContain('config.json');
+  });
+
+  it('keys usage documents create/list/revoke + every create flag', () => {
+    const text = helpTextFor('keys');
+    expect(text).toContain('keys create');
+    expect(text).toContain('keys list');
+    expect(text).toContain('keys revoke');
+    expect(text).toContain('--principal');
+    expect(text).toContain('--namespaces');
+    expect(text).toContain('--max-access-level');
+    expect(text).toContain('--expires');
+  });
+
+  it('the general usage lists the keys command', () => {
+    const text = helpTextFor(undefined);
+    expect(text).toContain('keys');
   });
 });
 

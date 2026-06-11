@@ -36,7 +36,8 @@ Commands:
   sync          export all valid memories + graph sidecar to the vault
   export-graph  print the shareable graph JSON artifact
   merge-graphs  union-merge two graph artifacts (git merge driver)
-  git-setup     configure the memory-union merge driver in this repo`;
+  git-setup     configure the memory-union merge driver in this repo
+  keys          manage per-key RBAC API keys (create | list | revoke)`;
 
 /**
  * Per-command usage. EVERY command dispatched in src/index.ts has an entry so
@@ -119,6 +120,28 @@ Union-merges two graph artifacts — used as the git memory-union merge driver.`
 
 Configures the memory-union merge driver for .mcp-memory/graph.json in the
 current git repository.`,
+
+  keys: `Usage: ${BIN} keys <create|list|revoke> [flags]
+
+Per-key RBAC (schema v16): one running server, N API keys, each pinned to a SET
+of namespaces and an access-level ceiling. Legacy single-token MCP_AUTH_TOKEN
+mode is unchanged. A newly created/revoked key takes effect within ~30s without
+a server restart. See docs/MULTI-TENANCY.md.
+
+Subcommands:
+  keys create   mint a key — prints the raw token ONCE (store it now)
+  keys list     table of all keys (no token/hash material)
+  keys revoke   revoke a key by id (stamps revoked_at; never restamps)
+
+create flags:
+  --principal <name>            display name for logs/audit (required)
+  --namespaces <a,b,c>          comma-separated namespace set (required, [0] is
+                                the per-request default; a foreign namespace is
+                                denied, never silently redirected)
+  --max-access-level <level>    egress ceiling, one of
+                                public|internal|confidential|restricted
+                                (default: internal)
+  --expires <ISO8601>           optional expiry; normalized to ISO-Z`,
 };
 COMMAND_USAGE.http = COMMAND_USAGE.serve;
 

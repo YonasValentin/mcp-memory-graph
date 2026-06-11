@@ -4,6 +4,37 @@ All notable changes to the MCP Memory Graph are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+
+- **Per-key RBAC v1 (schema v16).** One running server can now serve many
+  tenants: N API keys, each pinned to a *set* of namespaces and an
+  access-level ceiling (`public < internal < confidential < restricted`).
+  "Sales can't see HR" without one process per tenant. The
+  `src/lib/tenancy.ts` enforcement boundary is unchanged — the namespace it
+  forces is now per-request (minted from the calling key) instead of
+  per-process.
+  - New `api_keys` table (tokens stored as sha256; the raw `mcpm_…` token is
+    shown exactly once at create).
+  - **`memory keys` CLI** — `create` (prints the token once with a store-now
+    warning), `list` (aligned table, never any token/hash material), `revoke`
+    (by id; never restamps an existing revocation).
+  - Auth resolution: the **legacy single token `MCP_AUTH_TOKEN` still works and
+    is checked first**; a key-only deployment (no `MCP_AUTH_TOKEN`) is fully
+    authenticated. A newly created/revoked key takes effect within ~30 s
+    without a server restart.
+  - Namespace semantics: a multi-namespace key picks its effective namespace
+    per call (unset → the key's first namespace); a foreign namespace is denied
+    `403 NAMESPACE_NOT_PERMITTED`, never silently redirected. Over-ceiling /
+    foreign by-id reads return not-found (no existence oracle).
+  - **MCP session binding:** a session is owned by the authenticating key;
+    replaying another principal's `mcp-session-id` is `403`
+    `SESSION_PRINCIPAL_MISMATCH`.
+  - v2-deferred: graph/vault/insights access ceilings (bounded by namespace
+    isolation for now). Separate-DB-per-tenant remains the strongest boundary.
+  - See `docs/MULTI-TENANCY.md` → "Per-key RBAC (schema v16)".
+
 ## [2.2.0] - 2026-06-11
 
 Public benchmarks + a fresh adversarial E2E pass over the fix wave itself
