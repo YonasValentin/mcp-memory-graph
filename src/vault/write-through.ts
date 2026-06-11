@@ -32,10 +32,19 @@ function resolveVaultRoot(): string | null {
   // Fail-soft on a malformed/unreadable config: write-through is a best-effort
   // mirror (the whole function is fail-soft), so a broken project config must
   // disable mirroring, never throw out of a successful store (fix-breaker S18).
+  // But it must not be SILENT (fix-breaker WAVE 2): emit the same class of
+  // signal an IO mirror failure does, so a team relying on git-shared
+  // write-through can see WHY memories stopped reaching the vault.
   let cfg;
   try {
     cfg = getConfig();
-  } catch {
+  } catch (err) {
+    logger.warn({
+      event: 'vault_mirror_skipped',
+      reason: 'config_unreadable',
+      msg: 'write-through disabled: the config could not be read (run `memory rebuild` to resync the vault once the config is fixed)',
+      error: err instanceof Error ? err.message : String(err),
+    });
     return null;
   }
   if (!cfg.vault.path || cfg.vault.write_through === false) return null;

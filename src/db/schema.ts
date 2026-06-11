@@ -577,12 +577,23 @@ export function assertEmbedderIdentity(db: Database.Database, configured: string
     );
     return;
   }
-  if (row.value !== configured) {
+  // Legacy normalization (fix-breaker WAVE 2): the OLD code resolved an
+  // empty/whitespace MCP_MEMORY_MODEL to the literal '' and stamped that, even
+  // though transformers.js loaded the DEFAULT model for it — so the recorded
+  // stamp is '' while the vectors ARE the default's. configuredModelName() now
+  // resolves empty→DEFAULT, which would otherwise brick that exact DB on
+  // upgrade. Treat a stored empty/whitespace stamp as the default and re-stamp,
+  // matching how the vectors were actually produced.
+  const stored = row.value && row.value.trim() ? row.value : DEFAULT_EMBEDDING_MODEL;
+  if (stored !== row.value) {
+    db.prepare('UPDATE schema_meta SET value = ? WHERE key = ?').run(stored, 'embedding_model');
+  }
+  if (stored !== configured) {
     throw new Error(
-      `Embedding model mismatch: this database was built with "${row.value}" but the ` +
+      `Embedding model mismatch: this database was built with "${stored}" but the ` +
       `process is configured for "${configured}" (MCP_MEMORY_MODEL). Same dimension does ` +
       `not mean same vector space — search would silently degrade. Either set ` +
-      `MCP_MEMORY_MODEL=${row.value}, or re-embed the index with the new model via ` +
+      `MCP_MEMORY_MODEL=${stored}, or re-embed the index with the new model via ` +
       `'memory rebuild'.`,
     );
   }

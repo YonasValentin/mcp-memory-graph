@@ -102,4 +102,29 @@ describe('embedder identity guard (schema_meta.embedding_model)', () => {
     expect(() => initializeSchema(db)).not.toThrow();
     db.close();
   });
+
+  // Fix-breaker WAVE 2 HIGH: a DB built by the OLD code with an empty/whitespace
+  // MCP_MEMORY_MODEL was stamped literally '' (the vectors ARE the default
+  // model's). The empty→DEFAULT resolution fix would then brick it on upgrade
+  // (stored '' != configured DEFAULT). The guard must normalize a legacy
+  // empty/whitespace stamp to the default and re-stamp, not throw.
+  it('a legacy empty-string embedding_model stamp normalizes to the default, not a brick', () => {
+    delete process.env.MCP_MEMORY_MODEL;
+    const db = freshDb();
+    initializeSchema(db);
+    db.prepare('UPDATE schema_meta SET value = ? WHERE key = ?').run('', 'embedding_model');
+    expect(() => initializeSchema(db)).not.toThrow();
+    expect(storedModel(db)).toBe(DEFAULT_EMBEDDING_MODEL); // re-stamped
+    db.close();
+  });
+
+  it('a legacy whitespace-only embedding_model stamp normalizes to the default', () => {
+    delete process.env.MCP_MEMORY_MODEL;
+    const db = freshDb();
+    initializeSchema(db);
+    db.prepare('UPDATE schema_meta SET value = ? WHERE key = ?').run('   ', 'embedding_model');
+    expect(() => assertEmbedderIdentity(db, DEFAULT_EMBEDDING_MODEL)).not.toThrow();
+    expect(storedModel(db)).toBe(DEFAULT_EMBEDDING_MODEL);
+    db.close();
+  });
 });

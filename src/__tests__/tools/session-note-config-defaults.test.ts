@@ -61,9 +61,24 @@ describe('memory_session_note under a project config (fix-breaker S18 HIGH)', ()
     expect(second.memory_id).toBe(first.memory_id);
   });
 
-  it('keeps the session row at the legacy null namespace (config defaults do not bleed in)', async () => {
+  it('keeps the session row at the legacy null namespace (config namespace must not bleed in)', async () => {
     const r = await handleSessionNote(db, embedder, { session_id: 'sess-xyz', text: 'a note' });
     const row = db.prepare('SELECT namespace FROM memories WHERE id = ?').get(r.memory_id) as { namespace: string | null };
     expect(row.namespace).toBeNull();
+  });
+
+  // Fix-breaker WAVE 2 MED: only the config NAMESPACE default breaks the
+  // source-keyed append-lookup; the SCOPE default is safe (the lookup is by
+  // source+namespace, not scope) and SHOULD apply to every store-family tool so
+  // a memory_store memory and a session note share a dedup partition. Wave-1
+  // over-corrected by dropping both.
+  it('still honors the config defaults.scope (only namespace is withheld from siblings)', async () => {
+    const r = await handleSessionNote(db, embedder, { session_id: 'sess-scope', text: 'scoped note' });
+    const row = db.prepare('SELECT scope, namespace FROM memories WHERE id = ?').get(r.memory_id) as {
+      scope: string;
+      namespace: string | null;
+    };
+    expect(row.scope).toBe('project'); // from config defaults.scope
+    expect(row.namespace).toBeNull(); // namespace default withheld (source-keyed lookup)
   });
 });

@@ -65,28 +65,50 @@ function isOverCeiling(db: Database.Database, id: string, ceiling: readonly stri
   return row != null && reconcileBlocked(row, undefined, ceiling);
 }
 
+/** The written config store-defaults, or null — fail-soft on a malformed
+ * config (a broken project config must never fail a valid store, mirroring
+ * resolveDbPath's tolerance). */
+function readConfiguredStoreDefaults(): ConfiguredStoreDefaults | null {
+  try {
+    return getConfiguredStoreDefaults();
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Apply the config file's written `defaults.scope` / `defaults.namespace` to a
- * memory_store input, for OMITTED args ONLY: explicit arg > written config
+ * Fill the config `defaults.scope` for an OMITTED scope. This is SAFE for every
+ * store-family tool (the source-keyed siblings look rows up by source+namespace,
+ * NOT scope), so a memory_store memory and a session note / reflection share a
+ * dedup partition when the project config sets a default scope. Applied inside
+ * the shared handleStore (fix-breaker WAVE 2 MED: wave-1 dropped the scope
+ * default from siblings as collateral — only NAMESPACE was implicated in the
+ * session-note append-lookup bug).
+ */
+function applyConfiguredScopeDefault<T extends MemoryInput>(input: T): T {
+  if (input.scope !== undefined) return input;
+  const cfg = readConfiguredStoreDefaults();
+  if (cfg?.scope !== undefined) input.scope = cfg.scope;
+  return input;
+}
+
+/**
+ * Apply the config file's written `defaults.scope` AND `defaults.namespace` to
+ * a memory_store input, for OMITTED args ONLY: explicit arg > written config
  * default > the handler's legacy 'global'/null fallback. namespace 'auto'
  * resolves to basename(cwd).
  *
- * This is a `memory_store`-ONLY concern, applied at the tool registration —
- * NOT inside the shared handleStore. Sibling tools that reuse handleStore but
- * key rows by source (memory_session_note, memory_reflect, …) must keep the
- * legacy null namespace, or their write/lookup partitions diverge (fix-breaker
- * S18 HIGH: a config-filled CREATE namespace orphaned the null-namespace
- * append-lookup, wedging the unique-source retry loop). A malformed/unreadable
- * config returns the input unchanged — a broken project config must never fail
- * an otherwise valid store, mirroring resolveDbPath's tolerance.
+ * The NAMESPACE default is a `memory_store`-ONLY concern, applied at the tool
+ * registration — NOT inside the shared handleStore. Sibling tools that reuse
+ * handleStore but key rows by source (memory_session_note, memory_reflect, …)
+ * must keep the legacy null namespace, or their write/lookup partitions diverge
+ * (fix-breaker S18 HIGH: a config-filled CREATE namespace orphaned the
+ * null-namespace append-lookup, wedging the unique-source retry loop). The
+ * SCOPE default is applied to ALL callers via handleStore (see
+ * {@link applyConfiguredScopeDefault}).
  */
 export function applyConfiguredStoreDefaults<T extends MemoryInput>(input: T): T {
-  let cfgDefaults: ConfiguredStoreDefaults | null;
-  try {
-    cfgDefaults = getConfiguredStoreDefaults();
-  } catch {
-    return input;
-  }
+  const cfgDefaults = readConfiguredStoreDefaults();
   if (!cfgDefaults) return input;
   if (input.scope === undefined && cfgDefaults.scope !== undefined) {
     input.scope = cfgDefaults.scope;
@@ -106,6 +128,11 @@ export async function handleStore(
   accessCeiling?: string[],
 ): Promise<StoreResult> {
   const now = new Date().toISOString();
+
+  // Config defaults.scope for an omitted scope — safe for every store-family
+  // tool (source-keyed lookups use source+namespace, not scope). The namespace
+  // default is memory_store-only and applied upstream at the registration.
+  applyConfiguredScopeDefault(input);
 
   // M2.1 — inbound secret/poison redaction gate (opt-in via MCP_REDACT_MODE,
   // default 'off' = passthrough). Runs BEFORE embedding + persistence so a leaked
