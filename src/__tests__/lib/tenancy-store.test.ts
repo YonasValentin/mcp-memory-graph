@@ -85,9 +85,12 @@ describe('server.ts wires memory_store through withForcedNs (F1 wiring guard)', 
     expect(start).toBeGreaterThan(-1);
     const after = src.indexOf('── 2. memory_search', start);
     const block = src.slice(start, after === -1 ? undefined : after);
-    // The write path must mirror the reads: handleStore receives withForcedNs(...)
-    // wrapped input, never the bare parsed value (which leaks writes across
-    // namespaces on a namespace-forced deployment).
-    expect(block).toContain('handleStore(getDb(), await getEmbedder(), withForcedNs(parsed)');
+    // The write path must mirror the reads: the input passed to handleStore is
+    // withForcedNs(...)-wrapped, never the bare parsed value (which leaks writes
+    // across namespaces on a namespace-forced deployment). The config
+    // store-defaults wrap withForcedNs (applied AFTER it) so a forced/principal
+    // namespace always wins over the config default (fix-breaker S18).
+    expect(block).toContain('applyConfiguredStoreDefaults(withForcedNs(parsed))');
+    expect(block).toContain('handleStore(getDb(), await getEmbedder(), scoped');
   });
 });

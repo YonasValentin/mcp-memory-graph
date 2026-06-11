@@ -132,8 +132,11 @@ describe('server.ts wires every namespace-bearing tool through withForcedNs (F1b
   it.each([
     // store + ingest now also thread principalAccessCeiling() (RB-8); assert the
     // withForcedNs forcing MECHANISM, not the full arg list (the ceiling addition
-    // is pinned by write-path-coverage-tripwire).
-    'handleStore(getDb(), await getEmbedder(), withForcedNs(parsed)',
+    // is pinned by write-path-coverage-tripwire). memory_store wraps withForcedNs
+    // in applyConfiguredStoreDefaults (config defaults applied AFTER forcing, so
+    // a forced namespace still wins — fix-breaker S18); the forcing call is still
+    // present and asserted here.
+    'applyConfiguredStoreDefaults(withForcedNs(parsed))',
     'handleIngest(getDb(), await getEmbedder(), withForcedNs(parsed)',
     // session_note also threads principalAccessCeiling() (RB-8); assert the
     // withForcedNs forcing mechanism, not the full arg list.
