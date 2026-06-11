@@ -13,6 +13,8 @@ import { notify, rowToEventPayload } from '../events/hooks.js';
 import { chunkContent } from '../chunking/chunker.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
 import { redactRecord, redactModeFromEnv } from '../lib/redact-content.js';
+import { forcedNamespace } from '../lib/tenancy.js';
+import { reconcileBlocked } from '../lib/reconcile-guard.js';
 
 interface IngestInput {
   content: string;
@@ -35,6 +37,7 @@ export async function handleIngest(
   db: Database.Database,
   embedder: EmbeddingProvider,
   input: IngestInput,
+  accessCeiling?: string[],
 ): Promise<IngestResult> {
   const now = new Date().toISOString();
 
@@ -65,7 +68,22 @@ export async function handleIngest(
   // the same source so a repeated sync doesn't endlessly duplicate the document.
   // (The ingest_source_tracking table + repo fns existed but had no caller.)
   const sourceHash = createHash('sha256').update(input.content).digest('hex');
-  const tracked = input.source ? getIngestSourceByPath(db, input.source) : null;
+  const trackedRaw = input.source ? getIngestSourceByPath(db, input.source) : null;
+  // §6 + tenancy (RB-8, 13th instance): getIngestSourceByPath matches by
+  // source_path ALONE — namespace- AND ceiling-blind. A re-ingest of a colliding
+  // source-path must NOT reconcile onto a tracked parent in another namespace or
+  // above the caller's ceiling, or it becomes a cross-tenant content overwrite +
+  // chunk-deletion / declassify primitive (handleUpdate + deleteMemory below).
+  // Treat a protected match EXACTLY like a brand-new source — drop it and fall
+  // through to a fresh insert in the caller's namespace (mirrors import /
+  // vault_sync via the shared reconcileBlocked decision). forcedNamespace() is
+  // undefined and accessCeiling undefined in unforced single-user mode, so that
+  // path is unchanged.
+  const trackedParent = trackedRaw ? getMemoryById(db, trackedRaw.memory_id) : null;
+  const tracked =
+    trackedRaw && trackedParent && reconcileBlocked(trackedParent, forcedNamespace(), accessCeiling)
+      ? null
+      : trackedRaw;
   // getMemoryById returns tombstoned rows too, so check liveness explicitly: a
   // soft-forgotten / superseded parent should re-ingest fresh, not no-op.
   const parentIsLive =

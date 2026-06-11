@@ -327,7 +327,9 @@ export function createServer(): McpServer {
       // Mirror the read tools: on a namespace-forced deployment the caller's
       // namespace is OVERRIDDEN to the configured one, so writes can't land in
       // another namespace (read isolation alone would leave a write leak).
-      return handleStore(getDb(), await getEmbedder(), withForcedNs(parsed), getNli());
+      // §6 (RB-8): pass the principal ceiling so the conflict/dedup/contradiction
+      // scan can't surface, echo, or retire an over-ceiling same-namespace row.
+      return handleStore(getDb(), await getEmbedder(), withForcedNs(parsed), getNli(), principalAccessCeiling());
     }),
   );
 
@@ -439,7 +441,9 @@ export function createServer(): McpServer {
     MemoryIngestSchema.shape,
     instrument('memory_ingest', async (input) => {
       const parsed = MemoryIngestSchema.parse(input);
-      return handleIngest(getDb(), await getEmbedder(), withForcedNs(parsed));
+      // §6 (RB-8): pass the principal ceiling so a colliding source-path can't
+      // reconcile onto a cross-namespace / over-ceiling tracked parent.
+      return handleIngest(getDb(), await getEmbedder(), withForcedNs(parsed), principalAccessCeiling());
     }),
   );
 

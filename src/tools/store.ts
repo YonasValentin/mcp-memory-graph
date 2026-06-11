@@ -13,6 +13,7 @@ import { buildSimilarityEdges } from '../graph/similarity-edges.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
 import { redactRecord, redactModeFromEnv } from '../lib/redact-content.js';
 import { decideWriteOperation, type WriteOp } from '../graph/write-gate.js';
+import { reconcileBlocked } from '../lib/reconcile-guard.js';
 import { logger } from '../lib/logger.js';
 import { mirrorMemoryWrite } from '../vault/write-through.js';
 import { notify, rowToEventPayload, propagateSafe } from '../events/hooks.js';
@@ -46,11 +47,28 @@ interface StoreResult {
   conflicts?: ConflictResult[];
 }
 
+/**
+ * RB-8 §6: true when the row exists and sits ABOVE the principal's access-level
+ * ceiling — a conflict/dedup/contradiction target a sub-ceiling caller must not
+ * echo, merge, or retire. The conflict scan is already (scope, namespace)
+ * partitioned, so only the ceiling matters here (targetNamespace=undefined). Reuses
+ * the shared `reconcileBlocked` decision so the write-path tripwire pins it.
+ */
+function isOverCeiling(db: Database.Database, id: string, ceiling: readonly string[]): boolean {
+  const row = db
+    .prepare<[string], { namespace: string | null; access_level: string }>(
+      'SELECT namespace, access_level FROM memories WHERE id = ?',
+    )
+    .get(id);
+  return row != null && reconcileBlocked(row, undefined, ceiling);
+}
+
 export async function handleStore(
   db: Database.Database,
   embedder: EmbeddingProvider,
   input: MemoryInput,
   nli?: NliClassifier,
+  accessCeiling?: string[],
 ): Promise<StoreResult> {
   const now = new Date().toISOString();
 
@@ -105,6 +123,17 @@ export async function handleStore(
   }
   /* c8 ignore stop */
 
+  // RB-8 §6 write-path ceiling: detectConflicts (and the NLI shortlist below)
+  // partition on (scope, namespace) ONLY — never access_level — so an OVER-CEILING
+  // same-namespace row can surface as a dup/supersede/contradiction target. A
+  // sub-ceiling principal must neither NOOP-echo it, merge+echo it (UPDATE), nor
+  // retire it (DELETE = declassify-by-destruction). Drop every over-ceiling target
+  // BEFORE decideWriteOperation runs, so the op is computed as if the protected row
+  // were invisible. Unforced/single-user (accessCeiling undefined) is unchanged.
+  if (accessCeiling) {
+    conflicts = conflicts.filter((c) => !isOverCeiling(db, c.existing_memory_id, accessCeiling));
+  }
+
   // Classify the write. Default policy ('add') yields only NOOP or ADD, so the
   // path below is byte-identical to the pre-T9 store for default callers.
   const decision = decideWriteOperation(conflicts, input.on_conflict ?? 'add');
@@ -157,7 +186,15 @@ export async function handleStore(
           'SELECT content, valid_to, parent_id FROM memories WHERE id = ?',
         )
         .get(hit.id);
-      if (row && row.valid_to === null && row.parent_id === null) {
+      // RB-8 §6: skip an over-ceiling target — the NLI path retires (and would
+      // expose) a contradicted fact, so a sub-ceiling caller must never reach a
+      // confidential/restricted same-namespace row here either.
+      if (
+        row &&
+        row.valid_to === null &&
+        row.parent_id === null &&
+        !(accessCeiling && isOverCeiling(db, hit.id, accessCeiling))
+      ) {
         candidates.push({ id: hit.id, content: row.content });
       }
     }

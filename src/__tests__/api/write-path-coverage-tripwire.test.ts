@@ -45,7 +45,14 @@ const RECONCILE_SITES: Record<string, number> = {
   'tools/consolidate.ts': 1, // vec0 dedup-merge candidate
 };
 
-// ── (2) Frozen inventory of every "fetch by id, then mutate" source file. ──
+// ── (2a) Ceiling-scoped writes that reconcile by an id NOT supplied as a single
+// MCP `id` param (so idWithinCeiling at registration cannot cover them): store's
+// conflict-resolver supersede target and ingest's source-path parent. RB-8 (12th
+// + 13th instances) proved both ceiling-blind. Each must route its target through
+// reconcileBlocked AND its server.ts registration must thread the ceiling.
+const CEILING_SCOPED_WRITES = ['tools/store.ts', 'tools/ingest.ts'];
+
+// ── (2b) Frozen inventory of every "fetch by id, then mutate" source file. ──
 // classification documents WHY each is safe; the set itself is asserted below.
 const AUDITED_FETCH_THEN_MUTATE: Record<string, string> = {
   'tools/import.ts': 'reconcile — reconcileBlocked',
@@ -53,12 +60,12 @@ const AUDITED_FETCH_THEN_MUTATE: Record<string, string> = {
   'tools/consolidate.ts': 'reconcile — reconcileBlocked (dedup-merge target)',
   'tools/delete.ts': 'single-id MCP — idWithinCeiling at server.ts registration',
   'tools/forget.ts': 'single-id MCP — idWithinCeiling at server.ts registration',
-  // store + ingest are NOT caller-supplied-id reconciles: store supersedes a
-  // conflict-resolver target and ingest reconciles by source-path, both scanned
-  // within the writer's own (scope, namespace) partition. Their access-level
-  // ceiling coverage is tracked separately (see store/ingest ceiling tests).
-  'tools/store.ts': 'conflict-resolver supersede — partition-scoped target',
-  'tools/ingest.ts': 're-ingest by source-path — partition-scoped parent',
+  // store + ingest are NOT caller-supplied-id reconciles (store supersedes a
+  // conflict-resolver target; ingest reconciles by source-path) — but both are
+  // partition-scoped writes that reconcileBlocked now ceiling-gates (RB-8). See
+  // CEILING_SCOPED_WRITES + write-ceiling-store-ingest.test.ts.
+  'tools/store.ts': 'conflict-resolver supersede — reconcileBlocked ceiling-gated',
+  'tools/ingest.ts': 're-ingest by source-path — reconcileBlocked ceiling-gated',
 };
 
 /** Scan src/tools and src/vault for files that fetch a row by id then mutate. */
@@ -93,6 +100,35 @@ describe('write-path §6 — every by-id reconcile routes through reconcileBlock
       ).toBe(count);
     },
   );
+
+  it.each(CEILING_SCOPED_WRITES)(
+    '%s reconciles its non-MCP-id target through reconcileBlocked (RB-8 ceiling gate)',
+    (rel) => {
+      const text = read(rel);
+      expect(text, `${rel} must import the shared reconcile guard`).toContain(
+        "from '../lib/reconcile-guard.js'",
+      );
+      expect(
+        (text.match(/reconcileBlocked\(/g) ?? []).length,
+        `${rel} must gate its reconcile/supersede target on reconcileBlocked`,
+      ).toBeGreaterThanOrEqual(1);
+    },
+  );
+
+  it('server.ts threads principalAccessCeiling() into the store + ingest registrations', () => {
+    const server = read('server.ts');
+    for (const tool of ['memory_store', 'memory_ingest']) {
+      const start = server.indexOf(`reg(\n    '${tool}',`);
+      expect(start, `${tool} registration not found`).toBeGreaterThan(-1);
+      const next = server.indexOf('\n  reg(', start + 1);
+      const block = server.slice(start, next === -1 ? undefined : next);
+      expect(
+        block.includes('principalAccessCeiling()'),
+        `${tool} registration must pass principalAccessCeiling() so its write-path ` +
+          `conflict/reconcile scan is ceiling-aware (RB-8).`,
+      ).toBe(true);
+    }
+  });
 
   it('the fetch-then-mutate inventory is frozen (a new by-id write path must be classified)', () => {
     const current = currentFetchThenMutate();
