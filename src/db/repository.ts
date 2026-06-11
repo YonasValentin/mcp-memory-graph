@@ -631,6 +631,13 @@ export function listMemories(
     conditions.push('document_type = ?');
     params.push(options.document_type);
   }
+  // RBAC §6 egress ceiling — only rows at/below the principal's access level.
+  if (options.access_level_ceiling && options.access_level_ceiling.length > 0) {
+    conditions.push(
+      `access_level IN (${options.access_level_ceiling.map(() => '?').join(',')})`,
+    );
+    params.push(...options.access_level_ceiling);
+  }
 
   // Bi-temporal: currently-valid by default; point-in-time when `as_of` is set.
   if (options.as_of) {

@@ -14,8 +14,10 @@ import {
   scopeToNamespace,
   scopeFilterToNamespace,
   idIsInForcedNamespace,
+  idIsWithinAccessCeiling,
   forcedNamespace,
   vaultPathInForcedNamespace,
+  principalAccessCeiling,
 } from './lib/tenancy.js';
 import {
   MemoryStoreSchema,
@@ -248,6 +250,26 @@ export function createServer(): McpServer {
   const withForcedNs = scopeToNamespace;
   const idInForcedNs = (id: string): boolean => idIsInForcedNamespace(getDb(), id);
 
+  // RBAC v1 §6 — egress ceiling. A principal key caps the access level it may
+  // RECEIVE; the read tools below thread principalAccessCeiling() into their
+  // SQL/predicate layer via an `access_level_ceiling` option. `scopedRead`
+  // composes the namespace forcing (withForcedNs) with the ceiling in ONE place
+  // so every content-egress read tool gets both at the same chokepoint (no
+  // per-handler scatter — the battle-vN lesson). undefined ceiling (legacy/local)
+  // leaves the options byte-identical. By-id reads use idWithinCeiling for the
+  // 404 non-confirmation twin of idInForcedNs.
+  const withCeiling = <T extends object>(
+    opts: T,
+  ): T & { access_level_ceiling?: import('./types.js').AccessLevel[] } => {
+    const ceiling = principalAccessCeiling();
+    return ceiling ? { ...opts, access_level_ceiling: ceiling } : opts;
+  };
+  const scopedRead = <T extends { namespace?: string }>(
+    opts: T,
+  ): T & { access_level_ceiling?: import('./types.js').AccessLevel[] } =>
+    withCeiling(withForcedNs(opts));
+  const idWithinCeiling = (id: string): boolean => idIsWithinAccessCeiling(getDb(), id);
+
   // ── MCP tool annotations (SDK behavioral hints) ───────────────────────────
   // `reg` mirrors the deprecated 4-arg `server.tool(name, description, shape,
   // cb)` signature exactly, so every registration below is unchanged — but it
@@ -320,7 +342,7 @@ export function createServer(): McpServer {
       // is the biggest precision lever and raw bi-encoder top-1 is wrong on ~half
       // of keyword-heavy NL questions. Unit tests / REST that call handleSearch
       // without `rerank` stay off, so no 90MB model loads in the test suite.
-      return handleSearch(getDb(), await getEmbedder(), { ...withForcedNs(parsed), rerank: parsed.rerank ?? true });
+      return handleSearch(getDb(), await getEmbedder(), { ...scopedRead(parsed), rerank: parsed.rerank ?? true });
     }),
   );
 
@@ -331,7 +353,11 @@ export function createServer(): McpServer {
     MemoryGetSchema.shape,
     instrument('memory_get', async (input) => {
       const parsed = MemoryGetSchema.parse(input);
-      if (!idInForcedNs(parsed.id)) throw new Error('Memory not found');
+      // §6: an over-ceiling row is indistinguishable from not-found (the same
+      // non-confirmation as the namespace guard) — never confirm it exists.
+      if (!idInForcedNs(parsed.id) || !idWithinCeiling(parsed.id)) {
+        throw new Error('Memory not found');
+      }
       const result = handleGet(getDb(), parsed);
       if (!result) throw new Error('Memory not found');
       return result;
@@ -386,7 +412,7 @@ export function createServer(): McpServer {
     MemoryListSchema.shape,
     instrument('memory_list', async (input) => {
       const parsed = MemoryListSchema.parse(input);
-      return handleList(getDb(), withForcedNs(parsed));
+      return handleList(getDb(), scopedRead(parsed));
     }),
   );
 
@@ -408,8 +434,10 @@ export function createServer(): McpServer {
     MemoryRelatedSchema.shape,
     instrument('memory_related', async (input) => {
       const parsed = MemoryRelatedSchema.parse(input);
-      if (!idInForcedNs(parsed.id)) return { related: [], count: 0 };
-      const result = await handleRelated(getDb(), await getEmbedder(), parsed);
+      // §6: an over-ceiling SEED is treated like a foreign-ns seed (empty result,
+      // non-confirmation); permitted neighbours are filtered by the ceiling too.
+      if (!idInForcedNs(parsed.id) || !idWithinCeiling(parsed.id)) return { related: [], count: 0 };
+      const result = await handleRelated(getDb(), await getEmbedder(), withCeiling(parsed));
       return { related: result, count: result.length };
     }),
   );
@@ -475,7 +503,7 @@ export function createServer(): McpServer {
       const parsed = MemoryExportSchema.parse(input);
       // battle-v9 CLASS 2: export carries a top-level namespace; on a forced
       // deployment, omitting it must NOT dump the whole cross-tenant corpus.
-      return handleExport(getDb(), withForcedNs(parsed));
+      return handleExport(getDb(), scopedRead(parsed));
     }),
   );
 
@@ -616,7 +644,7 @@ export function createServer(): McpServer {
     MemoryManifestSchema.shape,
     instrument('memory_manifest', async (input) => {
       const parsed = MemoryManifestSchema.parse(input);
-      return handleManifest(getDb(), withForcedNs(parsed));
+      return handleManifest(getDb(), scopedRead(parsed));
     }),
   );
 
@@ -680,7 +708,7 @@ export function createServer(): McpServer {
     MemoryQuerySchema.shape,
     instrument('memory_query', async (input) => {
       const parsed = MemoryQuerySchema.parse(input);
-      return handleQuery(getDb(), await getEmbedder(), withForcedNs(parsed));
+      return handleQuery(getDb(), await getEmbedder(), scopedRead(parsed));
     }),
   );
 
@@ -834,7 +862,9 @@ export function createServer(): McpServer {
     instrument('memory_query_structured', async (input) => {
       const parsed = MemoryQueryStructuredSchema.parse(input);
       // T1: query_structured carries namespace under `filter`, not top-level.
-      const scoped = scopeFilterToNamespace(parsed);
+      // §6: the egress ceiling rides the top-level `access_level_ceiling` (a
+      // chokepoint value, NOT a user filter) so over-ceiling rows are invisible.
+      const scoped = withCeiling(scopeFilterToNamespace(parsed));
       return runStructuredQuery(getDb(), scoped);
     }),
   );
@@ -958,7 +988,7 @@ export function createServer(): McpServer {
     MemoryExportDatasetSchema.shape,
     instrument('memory_export_dataset', async (input) => {
       const parsed = MemoryExportDatasetSchema.parse(input);
-      return handleExportDataset(getDb(), withForcedNs(parsed));
+      return handleExportDataset(getDb(), scopedRead(parsed));
     }),
   );
 

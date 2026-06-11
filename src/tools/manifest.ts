@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import type { ManifestEntry, MemoryScope, MemoryRow } from '../types.js';
-import { liveConditions, scopeConditions } from '../db/predicates.js';
+import { liveConditions, scopeConditions, accessCeilingCondition } from '../db/predicates.js';
 import { CURRENT_SCHEMA_VERSION } from '../db/schema.js';
 
 interface ManifestInput {
@@ -11,6 +11,12 @@ interface ManifestInput {
   document_type?: string;
   limit?: number;
   offset?: number;
+  /**
+   * RBAC §6 egress ceiling. The manifest emits row TITLES — a confidential
+   * title is itself sensitive egress, so a capped principal's manifest (and its
+   * content-hash) reflects only rows at/below the ceiling.
+   */
+  access_level_ceiling?: string[];
 }
 
 export function handleManifest(
@@ -29,6 +35,9 @@ export function handleManifest(
     conditions.push('document_type = ?');
     params.push(input.document_type);
   }
+  const ceiling = accessCeilingCondition(input.access_level_ceiling);
+  conditions.push(...ceiling.conditions);
+  params.push(...ceiling.params);
 
   const whereClause = `WHERE ${conditions.join(' AND ')}`;
   const limit = input.limit ?? 500;

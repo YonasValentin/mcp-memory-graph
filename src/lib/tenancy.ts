@@ -1,6 +1,8 @@
 import type Database from 'better-sqlite3';
 import path from 'node:path';
 import { currentPrincipal } from './request-context.js';
+import { ACCESS_LEVELS } from '../constants/enums.js';
+import type { AccessLevel } from '../types.js';
 
 /**
  * T1 — single source of truth for namespace tenancy.
@@ -163,4 +165,57 @@ export function vaultPathInForcedNamespace(vaultPath: string): boolean {
   const ns = forcedNamespace();
   if (!ns) return true;
   return path.basename(vaultPath) === ns;
+}
+
+/**
+ * RBAC v1 §6 — the access-level EGRESS ceiling for the current principal, or
+ * undefined when there is no ceiling (legacy env-pin mode AND local single-user
+ * mode — neither carries a per-request max_access_level). A principal whose key
+ * caps at `ctx.maxAccessLevel` may only RECEIVE rows at or below that
+ * sensitivity, so the allowed set is every {@link ACCESS_LEVELS} entry whose
+ * index is ≤ the cap's index (ACCESS_LEVELS is sensitivity-ascending:
+ * public < internal < confidential < restricted). This mirrors the
+ * export-dataset cap-index → allow-list construction.
+ *
+ * This is a SEPARATE predicate from the existing single-level `access_level`
+ * filter (a positive `= ?` match a caller may also pass): the ceiling is a MAX
+ * applied as `access_level IN (allowed...)`, so the two compose as an
+ * intersection. The read paths thread this array via an `access_level_ceiling`
+ * option at the SAME chokepoints namespace forcing flows through — never
+ * per-handler scatter. The ceiling bounds memory CONTENT egress only; graph /
+ * vault / insights ceilings are a documented v2 item (namespace isolation
+ * already bounds those per-tenant — see docs/MULTI-TENANCY.md).
+ */
+export function principalAccessCeiling(): AccessLevel[] | undefined {
+  const ctx = currentPrincipal();
+  if (!ctx) return undefined;
+  const capIdx = (ACCESS_LEVELS as readonly string[]).indexOf(ctx.maxAccessLevel);
+  // A malformed level would be index -1; clamp to the lowest sensitivity
+  // (public only) — fail CLOSED, never open the whole corpus.
+  const effective = capIdx >= 0 ? capIdx : 0;
+  return ACCESS_LEVELS.filter((_, i) => i <= effective);
+}
+
+/**
+ * RBAC v1 §6 — by-id egress-ceiling check, the access-level twin of
+ * {@link idIsInForcedNamespace}. Returns true when the row at `id` is at/below
+ * the current principal's ceiling (and so may be served). True (no restriction)
+ * when there is no ceiling (legacy/local). A MISSING row stays true here so the
+ * caller's own not-found path (or the namespace guard) decides — existence
+ * non-confirmation is the namespace guard's job; this only blocks an
+ * over-ceiling row, which it does by returning false → the caller maps that to
+ * the SAME 404 (non-confirmation: a principal can't tell "wrong level" from
+ * "doesn't exist"). An unrecognized stored level fails CLOSED (not in the
+ * allow-list → false).
+ */
+export function idIsWithinAccessCeiling(db: Database.Database, id: string): boolean {
+  const ceiling = principalAccessCeiling();
+  if (!ceiling) return true;
+  const row = db
+    .prepare<[string], { access_level: string | null }>(
+      'SELECT access_level FROM memories WHERE id = ?',
+    )
+    .get(id);
+  if (!row) return true; // not-found is the namespace/handler path's call, not ours
+  return row.access_level !== null && ceiling.includes(row.access_level as AccessLevel);
 }

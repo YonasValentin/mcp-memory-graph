@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { Memory, ExportData, MemoryRow } from '../types.js';
 import { rowToMemory } from '../db/repository.js';
-import { liveConditions, scopeConditions } from '../db/predicates.js';
+import { liveConditions, scopeConditions, accessCeilingCondition } from '../db/predicates.js';
 
 const DEFAULT_LIMIT = 1000;
 
@@ -13,6 +13,8 @@ export function handleExport(
     department?: string;
     limit?: number;
     offset?: number;
+    /** RBAC §6 egress ceiling (allow-list of permitted access levels). */
+    access_level_ceiling?: string[];
   },
 ): ExportData {
   // Export only currently-live, top-level memories so a backup never resurrects
@@ -21,22 +23,28 @@ export function handleExport(
   // so the DB stays a rebuildable cache (the prior `include_embeddings` flag was
   // a no-op and has been removed).
   const scope = scopeConditions(input);
-  const conditions = [...liveConditions({ topLevelOnly: true }), ...scope.conditions];
+  const ceiling = accessCeilingCondition(input.access_level_ceiling);
+  const conditions = [
+    ...liveConditions({ topLevelOnly: true }),
+    ...scope.conditions,
+    ...ceiling.conditions,
+  ];
   const whereClause = `WHERE ${conditions.join(' AND ')}`;
+  const filterParams = [...scope.params, ...ceiling.params];
 
   const limit = input.limit ?? DEFAULT_LIMIT;
   const offset = input.offset ?? 0;
 
   const countRow = db
     .prepare<unknown[], { cnt: number }>(`SELECT COUNT(*) as cnt FROM memories ${whereClause}`)
-    .get(...scope.params);
+    .get(...filterParams);
   const total = countRow?.cnt ?? 0;
 
   const rows = db
     .prepare<unknown[], MemoryRow>(
       `SELECT * FROM memories ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
     )
-    .all(...scope.params, limit, offset);
+    .all(...filterParams, limit, offset);
 
   // F-EXPORT-VAULTPATH: `_vault` bookkeeping (absolute per-dev local path) is
   // stripped at the rowToMemory chokepoint (db/repository); it is DERIVED state

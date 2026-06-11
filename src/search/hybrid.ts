@@ -68,6 +68,13 @@ function pushSecondaryFilters(
   if (o.department) { conds.push(`${col('department')} = ?`); params.push(o.department); }
   if (o.document_type) { conds.push(`${col('document_type')} = ?`); params.push(o.document_type); }
   if (o.access_level) { conds.push(`${col('access_level')} = ?`); params.push(o.access_level); }
+  // RBAC §6 egress ceiling — a MAX, separate from the single-level filter above;
+  // both apply (intersection). Identical across all three arms (vector keep-count,
+  // keyword JOIN, final fetch) since it rides pushSecondaryFilters' `col` prefix.
+  if (o.access_level_ceiling && o.access_level_ceiling.length > 0) {
+    conds.push(`${col('access_level')} IN (${o.access_level_ceiling.map(() => '?').join(',')})`);
+    params.push(...o.access_level_ceiling);
+  }
   if (o.language) { conds.push(`${col('language')} = ?`); params.push(o.language); }
   if (o.tags && o.tags.length > 0) {
     for (const tag of o.tags) { conds.push(`${col('tags')} LIKE ?`); params.push(`%"${tag}"%`); }

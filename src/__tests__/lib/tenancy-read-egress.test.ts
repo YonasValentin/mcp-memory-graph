@@ -38,7 +38,6 @@ function regBlock(tool: string): string {
 
 describe('server.ts forces tenancy on every read/egress registration (battle-v9 CLASS 2 wiring guard)', () => {
   it.each([
-    ['memory_export', 'return handleExport(getDb(), withForcedNs(parsed));'],
     ['memory_export_vault', 'return handleExportVault(getDb(), withForcedNs(parsed));'],
     ['memory_canvas', 'return handleCanvas(getDb(), withForcedNs(parsed));'],
     ['memory_attribution', 'return handleAttribution(getDb(), withForcedNs(parsed));'],
@@ -48,6 +47,16 @@ describe('server.ts forces tenancy on every read/egress registration (battle-v9 
     ],
   ])('%s registration wraps input in withForcedNs', (tool, call) => {
     expect(regBlock(tool)).toContain(call);
+  });
+
+  // RBAC v1 §6: memory_export is now a content-egress CEILING surface, so its
+  // registration uses scopedRead(parsed) = withCeiling ∘ withForcedNs (NOT bare
+  // withForcedNs). The namespace-forcing guarantee this test guards is preserved
+  // because scopedRead delegates to withForcedNs — asserted on the helper itself.
+  it('memory_export registration uses scopedRead (namespace forcing + §6 ceiling)', () => {
+    expect(regBlock('memory_export')).toContain('return handleExport(getDb(), scopedRead(parsed));');
+    // scopedRead must compose withForcedNs, so the CLASS-2 forcing is intact.
+    expect(src).toMatch(/scopedRead\s*=[\s\S]*?withCeiling\(withForcedNs\(opts\)\)/);
   });
 
   it('memory_unlinked_mentions seed id is ownership-guarded (no cross-tenant seed)', () => {

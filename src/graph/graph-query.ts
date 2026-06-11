@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { EmbeddingProvider, MemoryRow, MemoryScope } from '../types.js';
+import type { EmbeddingProvider, MemoryRow, MemoryScope, AccessLevel } from '../types.js';
 import { hybridSearch } from '../search/hybrid.js';
 import { getOutgoingLinks, getBacklinks } from './memory-links.js';
 import { getMemoryById } from '../db/repository.js';
@@ -33,6 +33,13 @@ export interface GraphQueryOptions {
   seed_limit?: number;
   scope?: MemoryScope;
   namespace?: string;
+  /**
+   * RBAC §6 egress ceiling (allow-list of permitted access levels). Applied to
+   * BOTH the hybrid-search seeds and every rendered node so a graph traversal
+   * never egresses memory content above the principal's access level. A foreign
+   * node may still be traversed for hop structure but is never emitted.
+   */
+  access_level_ceiling?: AccessLevel[];
 }
 
 export interface GraphQueryNode {
@@ -98,6 +105,7 @@ export async function queryGraph(
     query: opts.query,
     scope: opts.scope,
     namespace: opts.namespace,
+    access_level_ceiling: opts.access_level_ceiling,
     limit: seedLimit,
     offset: 0,
     search_mode: 'hybrid',
@@ -228,6 +236,10 @@ export async function queryGraph(
   // not — so gate every rendered node to the SAME partition the query is pinned
   // to, mirroring hybrid's scope/namespace + scope!='user' privacy logic. A
   // foreign node may still be TRAVERSED (for hop structure) but is never emitted.
+  const ceilingSet =
+    opts.access_level_ceiling && opts.access_level_ceiling.length > 0
+      ? new Set<string>(opts.access_level_ceiling)
+      : undefined;
   const inQueryPartition = (row: MemoryRow): boolean => {
     if (opts.scope) {
       if (row.scope !== opts.scope) return false;
@@ -235,6 +247,9 @@ export async function queryGraph(
       return false; // unscoped query never surfaces private user-scoped rows
     }
     if (opts.namespace !== undefined && row.namespace !== opts.namespace) return false;
+    // RBAC §6: a traversed neighbour above the ceiling is never rendered (it may
+    // still be walked for hop structure — only emission is blocked).
+    if (ceilingSet && !ceilingSet.has(row.access_level)) return false;
     return true;
   };
   const nodeRows: Array<{ row: MemoryRow; state: VisitState }> = [];

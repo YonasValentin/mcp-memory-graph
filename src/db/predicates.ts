@@ -84,3 +84,26 @@ export function scopeConditions(
   }
   return { conditions, params };
 }
+
+/**
+ * RBAC v1 §6 — the access-level egress-ceiling predicate. Given a non-empty
+ * allow-list of permitted access levels (from
+ * {@link import('../lib/tenancy.js').principalAccessCeiling}), emits a single
+ * `access_level IN (?, ?, …)` condition + its bound params so a principal never
+ * receives a row above its key's ceiling. A SEPARATE predicate from the
+ * positive single-level `access_level = ?` filter — both compose as an
+ * intersection. No-op (empty result) when the ceiling is undefined OR empty, so
+ * legacy/local callers are byte-identical. An optional `alias` prefixes the
+ * column for JOIN sites (`<alias>.access_level`), mirroring the helpers above.
+ */
+export function accessCeilingCondition(
+  ceiling: readonly string[] | undefined,
+  alias?: string,
+): { conditions: string[]; params: unknown[] } {
+  if (!ceiling || ceiling.length === 0) return { conditions: [], params: [] };
+  const col = alias ? `${alias}.access_level` : 'access_level';
+  return {
+    conditions: [`${col} IN (${ceiling.map(() => '?').join(',')})`],
+    params: [...ceiling],
+  };
+}

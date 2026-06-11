@@ -40,7 +40,9 @@ import { logger } from '../lib/logger.js';
 import {
   forcedNamespace,
   idIsInForcedNamespace,
+  idIsWithinAccessCeiling,
   scopeToNamespace,
+  principalAccessCeiling,
   NAMESPACE_NOT_PERMITTED,
 } from '../lib/tenancy.js';
 import { ReloadGate, maybeBustGraphCache } from '../lib/hot-reload.js';
@@ -190,8 +192,12 @@ export function registerApiRoutes(
    */
   function assertNamespaceAllowed(id: string): void {
     // T1: shared ownership check; this surface throws 404 (does not even
-    // confirm the id exists) instead of returning a boolean.
-    if (!idIsInForcedNamespace(getDb(), id)) {
+    // confirm the id exists) instead of returning a boolean. RBAC §6: an
+    // over-ceiling row is the SAME non-confirmation (a capped principal can't
+    // tell "wrong level" from "absent"). assertNamespaceAllowed also fronts the
+    // by-id WRITE routes (PATCH/DELETE) — a capped principal must not mutate a
+    // row it isn't even allowed to read.
+    if (!idIsInForcedNamespace(getDb(), id) || !idIsWithinAccessCeiling(getDb(), id)) {
       throw new HttpError(404, 'NOT_FOUND', 'Memory not found');
     }
   }
@@ -212,6 +218,9 @@ export function registerApiRoutes(
       // — env-forced/unforced byte-identical; a principal gets member-keep /
       // unset-default / foreign-throw (mapped to 403 in sendError).
       namespace: scopeToNamespace({ namespace: q.namespace }).namespace,
+      // RBAC §6: a principal's egress ceiling (undefined in legacy/local modes →
+      // no change). Distinct from any caller `access_level` filter; both apply.
+      access_level_ceiling: principalAccessCeiling(),
       department: q.department,
       document_type: q.document_type,
       tags: q.tags,
@@ -230,7 +239,11 @@ export function registerApiRoutes(
   // ── GET /api/memories ───────────────────────────────────────────────────
   router.get('/api/memories', asyncHandler('GET /api/memories', (req, res) => {
     const q = parseOrThrow(ApiListQuerySchema, req.query);
-    const result = handleList(getDb(), { ...q, namespace: scopeToNamespace({ namespace: q.namespace }).namespace });
+    const result = handleList(getDb(), {
+      ...q,
+      namespace: scopeToNamespace({ namespace: q.namespace }).namespace,
+      access_level_ceiling: principalAccessCeiling(),
+    });
     res.json(result);
   }));
 
@@ -267,6 +280,9 @@ export function registerApiRoutes(
       id: param(req, 'id'),
       limit: q.limit,
       min_similarity: q.min_similarity,
+      // §6: assertNamespaceAllowed already 404'd an over-ceiling SEED above; this
+      // bounds the returned NEIGHBOURS to the principal's ceiling too.
+      access_level_ceiling: principalAccessCeiling(),
     });
     res.json({ related: result, count: result.length });
   }));
@@ -308,7 +324,13 @@ export function registerApiRoutes(
   router.get('/api/graph', asyncHandler('GET /api/graph', async (req, res) => {
     const q = parseOrThrow(ApiGraphQuerySchema, req.query);
     const refresh = req.query.refresh === '1' || req.query.refresh === 'true';
-    const cacheKey = `${q.limit}|${q.min_importance ?? 0}`;
+    // RBAC §6/§5: the cache is process-wide but the namespace AND access ceiling
+    // are now PER-REQUEST (principal mode), so the key MUST include both — else
+    // principal B could be served principal A's cached nodes (cross-tenant /
+    // over-ceiling leak via the cache). Legacy/local modes resolve these to
+    // stable process values, so the key is unchanged there.
+    const ceiling = principalAccessCeiling();
+    const cacheKey = `${q.limit}|${q.min_importance ?? 0}|${forcedApiNamespace() ?? ''}|${ceiling ? ceiling.join(',') : ''}`;
     const now = Date.now();
 
     // If the DB file changed on disk since the last request, every cached graph
@@ -331,6 +353,10 @@ export function registerApiRoutes(
       sort_by: 'importance_score',
       sort_order: 'desc',
       namespace: forcedApiNamespace(),
+      // RBAC §6: /api/graph emits node CONTENT (it renders list items), so cap it
+      // to the principal's ceiling. Edges are derived only among the kept nodes,
+      // so an over-ceiling node never appears as a graph endpoint either.
+      access_level_ceiling: principalAccessCeiling(),
     });
 
     const nodes = listResult.items.filter(
@@ -359,7 +385,11 @@ export function registerApiRoutes(
   // ── GET /api/manifest ─────────────────────────────────────────────────
   router.get('/api/manifest', asyncHandler('GET /api/manifest', (req, res) => {
     const q = parseOrThrow(ApiManifestQuerySchema, req.query);
-    const result = handleManifest(getDb(), { ...q, namespace: scopeToNamespace({ namespace: q.namespace }).namespace });
+    const result = handleManifest(getDb(), {
+      ...q,
+      namespace: scopeToNamespace({ namespace: q.namespace }).namespace,
+      access_level_ceiling: principalAccessCeiling(),
+    });
     res.json(result);
   }));
 }
