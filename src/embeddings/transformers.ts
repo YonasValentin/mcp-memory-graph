@@ -1,5 +1,6 @@
 import type { EmbeddingProvider } from './provider.js';
 import { configuredDimensions } from '../db/schema.js';
+import { DEFAULT_EMBEDDING_MODEL } from '../constants/enums.js';
 
 const BATCH_SIZE = 32;
 
@@ -15,7 +16,7 @@ export class TransformersEmbeddingProvider implements EmbeddingProvider {
     modelName?: string,
     dims?: number,
   ) {
-    this.modelName = modelName ?? process.env.MCP_MEMORY_MODEL ?? 'Xenova/all-MiniLM-L6-v2';
+    this.modelName = modelName ?? process.env.MCP_MEMORY_MODEL ?? DEFAULT_EMBEDDING_MODEL;
     // Reuse the single validated parser (guards NaN / out-of-range and throws a
     // clear error) instead of a second unguarded parseInt that could yield NaN.
     this.dimensions = dims ?? configuredDimensions();

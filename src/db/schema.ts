@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { DEFAULT_EMBEDDING_MODEL } from '../constants/enums.js';
 
 /**
  * The current schema version baked into this codebase. Updated together with
@@ -246,6 +247,7 @@ export function initializeSchema(db: Database.Database): void {
     // Existing DB — validate, do not rewrite.
     ensureV4MemoryColumns(db);
     assertDimensionConsistency(db, dim);
+    assertEmbedderIdentity(db, configuredModelName());
 
     const versionRow = db
       .prepare<[string], { value: string }>('SELECT value FROM schema_meta WHERE key = ?')
@@ -538,6 +540,44 @@ export function initializeSchema(db: Database.Database): void {
     db.prepare('INSERT INTO schema_meta (key, value) VALUES (?, ?)').run(
       'embedding_dim',
       String(dim),
+    );
+  }
+  // Embedder identity (mempalace-class guard): same-dimension models are NOT
+  // interchangeable vector spaces — record which model built this index.
+  assertEmbedderIdentity(db, configuredModelName());
+}
+
+/** The embedding model the process is configured to load (mirrors the
+ * TransformersEmbeddingProvider default chain exactly). */
+export function configuredModelName(): string {
+  return process.env.MCP_MEMORY_MODEL ?? DEFAULT_EMBEDDING_MODEL;
+}
+
+/**
+ * Three-state embedder-identity guard on the recorded `embedding_model`:
+ * match → no-op; absent (legacy DB) → stamp the configured model; mismatch →
+ * throw. A model swap at the SAME dimension silently degrades every vector
+ * search (different space, plausible-looking neighbors) — fail loudly on open
+ * with the recovery options instead.
+ */
+export function assertEmbedderIdentity(db: Database.Database, configured: string): void {
+  const row = db
+    .prepare<[string], { value: string }>('SELECT value FROM schema_meta WHERE key = ?')
+    .get('embedding_model');
+  if (!row) {
+    db.prepare('INSERT INTO schema_meta (key, value) VALUES (?, ?)').run(
+      'embedding_model',
+      configured,
+    );
+    return;
+  }
+  if (row.value !== configured) {
+    throw new Error(
+      `Embedding model mismatch: this database was built with "${row.value}" but the ` +
+      `process is configured for "${configured}" (MCP_MEMORY_MODEL). Same dimension does ` +
+      `not mean same vector space — search would silently degrade. Either set ` +
+      `MCP_MEMORY_MODEL=${row.value}, or re-embed the index with the new model via ` +
+      `'memory rebuild'.`,
     );
   }
 }

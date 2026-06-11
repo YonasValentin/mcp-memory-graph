@@ -11,6 +11,14 @@
 /** Memory scope for isolation. */
 export const SCOPES = ['global', 'project', 'user', 'team', 'department'] as const;
 
+/**
+ * Default local embedding model. Shared between the embedder construction
+ * (src/embeddings/transformers.ts) and the open-time embedder-identity guard
+ * (src/db/schema.ts) so the recorded identity can never drift from the default
+ * the provider would actually load.
+ */
+export const DEFAULT_EMBEDDING_MODEL = 'Xenova/all-MiniLM-L6-v2';
+
 /** Access classification level. */
 export const ACCESS_LEVELS = ['public', 'internal', 'confidential', 'restricted'] as const;
 
