@@ -23,9 +23,22 @@ export function chunkContent(content: string, options: ChunkingOptions): ChunkRe
         const first = overlapText.charCodeAt(0);
         if (first >= 0xdc00 && first <= 0xdfff) overlapText = overlapText.slice(1);
       }
+      // Heading-glue fix (E2E MED): when adjacent chunks were flushed apart,
+      // the source text BETWEEN them (e.g. the \n\n separating a markdown
+      // heading paragraph from its body) belongs to NEITHER chunk, so a bare
+      // `overlapText + chunk.content` join fabricates adjacency that never
+      // existed in the document ('## 4. Duplicate detection' + 'Every invoice'
+      // -> 'detectionEvery') — corrupting quotes and merging FTS tokens.
+      // Re-insert the inter-chunk source separator when it is pure whitespace.
+      // Truly abutting chunks (code sections, hard-split pieces) have an empty
+      // gap -> join unchanged; a NON-whitespace gap only occurs when the gap
+      // text was re-synthesized into this chunk's markdown heading-context
+      // prefix -> keep the bare join there so the heading is not duplicated.
+      const gap = content.slice(prevChunk.end_offset, chunk.start_offset);
+      const separator = /^\s+$/.test(gap) ? gap : '';
       return {
         ...chunk,
-        content: overlapText + chunk.content,
+        content: overlapText + separator + chunk.content,
       };
     });
   }
