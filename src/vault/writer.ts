@@ -92,6 +92,19 @@ export function confineToVault(vaultRoot: string, relPath: string): string | nul
 }
 
 /**
+ * B3: clamp IEEE-754 artifacts out of frontmatter scores. Importance is mutated
+ * multiplicatively (decay/boost), so noise like `0.8 * 1.05 = 0.8400000000000001`
+ * otherwise lands VERBATIM in the YAML and churns git diffs with non-edits.
+ * 4 decimals is far below any scoring threshold (maturity tiers move in 0.05+
+ * steps), and the rounded value round-trips exactly through parseMemoryFile.
+ * importance_score is the only float score the frontmatter carries
+ * (confidence_score is derived state and never serialized).
+ */
+function roundScore(n: number): number {
+  return Math.round(n * 10_000) / 10_000;
+}
+
+/**
  * Serialize a memory to Obsidian markdown: `---` fenced YAML frontmatter
  * followed by the raw memory content as the body. Frontmatter keys are emitted
  * in a deterministic order; optional fields are omitted when absent/empty so the
@@ -117,7 +130,7 @@ export function memoryToMarkdown(memory: Memory & { valid_to?: string | null }):
   if (memory.tags.length > 0) front.tags = memory.tags.map((t) => t.toLowerCase());
   front.access_level = memory.access_level;
   front.language = memory.language;
-  front.importance_score = memory.importance_score;
+  front.importance_score = roundScore(memory.importance_score);
   if (memory.expires_at) front.expires_at = memory.expires_at;
   if (memory.agent_id) front.agent_id = memory.agent_id;
   // Emit only USER metadata: the sync bookkeeping keys are per-machine derived

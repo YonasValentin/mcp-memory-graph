@@ -26,6 +26,8 @@ import {
   exportMemoriesToVault,
   confineToVault,
 } from '../../vault/writer.js';
+import { parseMemoryFile } from '../../vault/memory-file.js';
+import { rebuildFromVault } from '../../vault/rebuild.js';
 import { handleExportVault } from '../../tools/export-vault.js';
 
 let db: Database.Database;
@@ -362,5 +364,58 @@ describe('handleExportVault tool', () => {
 
     const result = handleExportVault(db, { vault_path: vaultDir });
     expect(result.files_written).toBe(2);
+  });
+});
+
+describe('frontmatter float-score rounding (B3)', () => {
+  /** Seed one memory whose stored importance carries an IEEE-754 artifact. */
+  async function seedArtifactMemory(): Promise<string> {
+    const stored = await handleStore(db, embedder, {
+      content: 'Importance decay produced a float artifact on this memory.',
+      title: 'Artifact',
+      scope: 'global',
+    });
+    // Multiplicative decay/boost noise: 0.8 * 1.05 → 0.8400000000000001 — the
+    // exact class of value that leaked verbatim into frontmatter.
+    const artifact = 0.8 * 1.05;
+    expect(String(artifact)).toBe('0.8400000000000001'); // premise sanity
+    db.prepare('UPDATE memories SET importance_score = ? WHERE id = ?').run(
+      artifact,
+      stored.memory.id,
+    );
+    return stored.memory.id;
+  }
+
+  it('export writes importance_score with ≤4 decimals (no 0.8400000000000001 artifact)', async () => {
+    await seedArtifactMemory();
+
+    const res = exportMemoriesToVault(db, { vaultPath: vaultDir });
+    expect(res.files_written).toBe(1);
+    const md = fs.readFileSync(path.join(res.vault_path, res.files[0]), 'utf-8');
+
+    const line = md.split('\n').find((l) => l.startsWith('importance_score:'));
+    expect(line).toBeDefined();
+    expect(line).not.toContain('0.8400000000000001');
+    expect(line).toMatch(/^importance_score: -?\d+(\.\d{1,4})?$/);
+
+    // Round-trip at the parse layer: the rebuild importer reads the rounded
+    // value with no semantic change (4dp is far below any scoring threshold).
+    expect(parseMemoryFile(md).importance_score).toBe(0.84);
+  });
+
+  it('rebuild indexes the rounded score back without semantic change', async () => {
+    const id = await seedArtifactMemory();
+
+    const res = exportMemoriesToVault(db, { vaultPath: vaultDir });
+    expect(res.files_written).toBe(1);
+
+    const fresh = createTestDb();
+    const result = await rebuildFromVault(fresh, embedder, res.vault_path);
+    expect(result.memories).toBe(1);
+    const row = fresh
+      .prepare('SELECT importance_score AS s FROM memories WHERE id = ?')
+      .get(id) as { s: number };
+    expect(row.s).toBe(0.84);
+    fresh.close();
   });
 });

@@ -71,7 +71,11 @@ export class VaultIntegrityError extends Error {
       `Vault integrity check failed: manifest merkle root ${expectedRoot} ` +
         `does not match the on-disk vault (${actualRoot}). ` +
         `added=${diff.added} changed=${diff.changed} removed=${diff.removed} corrupt=${diff.corrupt}. ` +
-        `Refusing to rebuild from a tampered vault.`,
+        `Refusing to rebuild from a tampered vault. ` +
+        // U3: the README-documented recovery was missing from the refusal, so a
+        // legitimate hand-resolved merge looked like an unrecoverable dead end.
+        `If this change was expected (e.g. you resolved a merge by hand), delete ` +
+        `.memory/manifest.json and re-run rebuild — the manifest is derived state.`,
     );
     this.name = 'VaultIntegrityError';
     this.expectedRoot = expectedRoot;
@@ -148,6 +152,21 @@ function assertVaultIntegrity(vaultRoot: string, files: string[]): void {
     changed,
     corrupt,
   });
+}
+
+/**
+ * B2: cheap STANDALONE integrity verification — the same manifest guard
+ * rebuildFromVault applies internally, runnable before any expensive setup.
+ * The rebuild CLI calls this BEFORE `getEmbedder()` loads the ONNX runtime: a
+ * VaultIntegrityError escaping past a loaded model exits through onnxruntime's
+ * static destructors (`libc++abi: mutex lock failed` → SIGABRT 134 — see
+ * exitBySignal in db/connection.ts), burying the legitimate refusal under a
+ * fake native crash. No sidecar → no-op, exactly like the in-rebuild guard
+ * (which stays in place for direct rebuildFromVault callers and as the second
+ * line of defence across the check→rebuild TOCTOU window).
+ */
+export function verifyVaultIntegrity(vaultRoot: string): void {
+  assertVaultIntegrity(vaultRoot, scanLiveMarkdown(vaultRoot));
 }
 
 /**
