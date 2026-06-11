@@ -153,6 +153,22 @@ function authConfigured(getDb: () => Database.Database, envToken: string | undef
 }
 
 /**
+ * Operator-facing auth mode for startup logging — EXACT parity with
+ * {@link authConfigured} (same `||` order, same liveKeyCount): env token set →
+ * 'bearer'; else ≥1 non-revoked api_key → 'api-keys'; else 'none'. A key-only
+ * deployment (no MCP_AUTH_TOKEN) IS authenticated, so the listen log must not
+ * claim otherwise. NOTE: logged under the field name `auth_mode` — `auth` is on
+ * the logger's secret-key redaction list and would emit '[REDACTED]'.
+ */
+export function resolveAuthMode(
+  getDb: () => Database.Database,
+  token: string | undefined,
+): 'bearer' | 'api-keys' | 'none' {
+  if (token !== undefined) return 'bearer';
+  return liveKeyCount(getDb) > 0 ? 'api-keys' : 'none';
+}
+
+/**
  * RBAC v1 §4 — auth middleware for /api and /mcp. Resolution order (legacy FIRST
  * so existing single-token deployments are byte-identical):
  *   1. No / malformed Authorization → 401 (when auth is configured).
@@ -722,16 +738,20 @@ export async function runServe(): Promise<void> {
   process.on('SIGTERM', shutdown);
 
   const server = app.listen(port, host, () => {
+    // Key-only RBAC deployments (no env token, ≥1 live api_key) ARE
+    // authenticated — resolveAuthMode mirrors authConfigured so this log can
+    // never claim 'none' while authMiddleware is enforcing.
+    const authMode = resolveAuthMode(getReadWriteDb, bearerToken());
     logger.info({
       event: 'server_listening',
       host,
       port,
-      auth: bearerToken() ? 'bearer' : 'none',
+      auth_mode: authMode,
     });
-    if (!bearerToken()) {
+    if (authMode === 'none') {
       logger.warn({
         event: 'auth_disabled',
-        msg: 'MCP_AUTH_TOKEN is not set — server is unauthenticated.',
+        msg: 'MCP_AUTH_TOKEN is not set and no API keys exist — server is unauthenticated.',
       });
     }
   });
