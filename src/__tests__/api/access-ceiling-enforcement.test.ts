@@ -57,7 +57,7 @@ import { handleVaultSearch } from '../../tools/vault-search.js';
 import { handleExportVault } from '../../tools/export-vault.js';
 import { handleCanvas } from '../../tools/canvas.js';
 import { runStructuredQuery } from '../../search/structured-query.js';
-import { registerApiRoutes } from '../../api/routes.js';
+import { registerApiRoutes, registerPublishRoutes } from '../../api/routes.js';
 import { intersectEgressWithCeiling, ACCESS_LEVEL_RANK } from '../../vault/writer.js';
 import { runWithPrincipal, type PrincipalContext } from '../../lib/request-context.js';
 import { principalAccessCeiling } from '../../lib/tenancy.js';
@@ -116,6 +116,9 @@ beforeEach(async () => {
   app.use(express.json());
   app.use((_req, _res, next) => runWithPrincipal(INTERNAL_KEY, () => next()));
   registerApiRoutes(app as Application, () => db, async () => embedder);
+  // /api/insights + /api/health live here (M3.2); both sit under the same
+  // /api bearer + runWithPrincipal middleware in serve.ts (RB-11).
+  registerPublishRoutes(app as Application, () => db, async () => embedder);
   await new Promise<void>((r) => {
     server = app.listen(0, '127.0.0.1', () => r());
   });
@@ -194,6 +197,31 @@ describe('§6 REST — an internal key never receives confidential/restricted ro
     const levels = new Set(nodes.map((n) => n.access_level));
     expect(levels.has('confidential')).toBe(false);
     expect(levels.has('restricted')).toBe(false);
+  });
+
+  // RB-11: the REST surface is the SECOND ceiling chokepoint — stats/insights/
+  // health threaded the ceiling on the MCP path but omitted it over /api.
+  it('/api/stats counts only at/below the ceiling (2 of 4 rows)', async () => {
+    const res = await request(port(), 'GET', '/api/stats');
+    expect(res.status).toBe(200);
+    const stats = JSON.parse(res.body) as { total_memories: number };
+    expect(stats.total_memories, 'public + internal only').toBe(2);
+  });
+
+  it('/api/health volume counts only at/below the ceiling', async () => {
+    const res = await request(port(), 'GET', '/api/health');
+    expect(res.status).toBe(200);
+    const health = JSON.parse(res.body) as { memories: { live: number } };
+    expect(health.memories.live, 'public + internal only').toBe(2);
+  });
+
+  it('/api/insights never echoes an over-ceiling title or snippet', async () => {
+    const res = await request(port(), 'GET', '/api/insights?limit=20');
+    expect(res.status).toBe(200);
+    expect(res.body).not.toContain('apollo-confidential');
+    expect(res.body).not.toContain('apollo-restricted');
+    expect(res.body).not.toContain('confidential band');
+    expect(res.body).not.toContain('restricted band');
   });
 });
 

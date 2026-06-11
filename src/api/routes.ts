@@ -204,7 +204,13 @@ export function registerApiRoutes(
   // ── GET /api/stats ──────────────────────────────────────────────────────
   router.get('/api/stats', asyncHandler('GET /api/stats', (req, res) => {
     const q = parseOrThrow(ApiStatsQuerySchema, req.query);
-    const result = handleStats(getDb(), { ...q, namespace: scopeToNamespace({ namespace: q.namespace }).namespace });
+    // RBAC §6 (RB-11): the REST surface is the SECOND chokepoint — its
+    // count rollups must thread the ceiling exactly like the MCP twin.
+    const result = handleStats(getDb(), {
+      ...q,
+      namespace: scopeToNamespace({ namespace: q.namespace }).namespace,
+      access_level_ceiling: principalAccessCeiling(),
+    });
     res.json(result);
   }));
 
@@ -495,6 +501,10 @@ export function registerPublishRoutes(
           namespace: typeof req.query.namespace === 'string' ? req.query.namespace : undefined,
         }).namespace,
         limit: Number.isFinite(limit) ? limit : undefined,
+        // RBAC §6 (RB-11): insights embeds verbatim titles/snippets — the REST
+        // surface must thread the ceiling like the MCP twin, or it leaks
+        // over-ceiling content to a sub-ceiling key.
+        access_level_ceiling: principalAccessCeiling(),
       }),
     );
   }));
@@ -507,6 +517,9 @@ export function registerPublishRoutes(
         namespace: scopeToNamespace({
           namespace: typeof req.query.namespace === 'string' ? req.query.namespace : undefined,
         }).namespace,
+        // RBAC §6 (RB-11): the REST surface must thread the ceiling like the MCP
+        // twin so the volume counts exclude over-ceiling rows.
+        access_level_ceiling: principalAccessCeiling(),
       }),
     );
   }));
