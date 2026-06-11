@@ -29,7 +29,15 @@ function resolveVaultRoot(): string | null {
   if (process.env.MCP_VAULT_WRITE_THROUGH === '0') return null;
   const envPath = process.env.MCP_VAULT_PATH;
   if (envPath) return envPath;
-  const cfg = getConfig();
+  // Fail-soft on a malformed/unreadable config: write-through is a best-effort
+  // mirror (the whole function is fail-soft), so a broken project config must
+  // disable mirroring, never throw out of a successful store (fix-breaker S18).
+  let cfg;
+  try {
+    cfg = getConfig();
+  } catch {
+    return null;
+  }
   if (!cfg.vault.path || cfg.vault.write_through === false) return null;
   return cfg.vault.path;
 }

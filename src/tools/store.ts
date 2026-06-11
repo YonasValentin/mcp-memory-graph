@@ -9,7 +9,7 @@ import { storeExtractedEntities, weaveGraphEdges } from '../graph/entity-store.j
 import { detectConflicts, recordConflicts, type ConflictResult } from '../graph/conflict-resolver.js';
 import { forcedNamespace } from '../lib/tenancy.js';
 import { currentPrincipal } from '../lib/request-context.js';
-import { getConfiguredStoreDefaults } from '../config/loader.js';
+import { getConfiguredStoreDefaults, type ConfiguredStoreDefaults } from '../config/loader.js';
 import { detectContradictions, type NliClassifier } from '../graph/contradiction.js';
 import { buildSimilarityEdges } from '../graph/similarity-edges.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
@@ -65,6 +65,39 @@ function isOverCeiling(db: Database.Database, id: string, ceiling: readonly stri
   return row != null && reconcileBlocked(row, undefined, ceiling);
 }
 
+/**
+ * Apply the config file's written `defaults.scope` / `defaults.namespace` to a
+ * memory_store input, for OMITTED args ONLY: explicit arg > written config
+ * default > the handler's legacy 'global'/null fallback. namespace 'auto'
+ * resolves to basename(cwd).
+ *
+ * This is a `memory_store`-ONLY concern, applied at the tool registration —
+ * NOT inside the shared handleStore. Sibling tools that reuse handleStore but
+ * key rows by source (memory_session_note, memory_reflect, …) must keep the
+ * legacy null namespace, or their write/lookup partitions diverge (fix-breaker
+ * S18 HIGH: a config-filled CREATE namespace orphaned the null-namespace
+ * append-lookup, wedging the unique-source retry loop). A malformed/unreadable
+ * config returns the input unchanged — a broken project config must never fail
+ * an otherwise valid store, mirroring resolveDbPath's tolerance.
+ */
+export function applyConfiguredStoreDefaults<T extends MemoryInput>(input: T): T {
+  let cfgDefaults: ConfiguredStoreDefaults | null;
+  try {
+    cfgDefaults = getConfiguredStoreDefaults();
+  } catch {
+    return input;
+  }
+  if (!cfgDefaults) return input;
+  if (input.scope === undefined && cfgDefaults.scope !== undefined) {
+    input.scope = cfgDefaults.scope;
+  }
+  if (input.namespace === undefined && cfgDefaults.namespace !== undefined) {
+    input.namespace =
+      cfgDefaults.namespace === 'auto' ? path.basename(process.cwd()) : cfgDefaults.namespace;
+  }
+  return input;
+}
+
 export async function handleStore(
   db: Database.Database,
   embedder: EmbeddingProvider,
@@ -73,25 +106,6 @@ export async function handleStore(
   accessCeiling?: string[],
 ): Promise<StoreResult> {
   const now = new Date().toISOString();
-
-  // BUG B — config defaults for OMITTED args only: explicit arg > the defaults
-  // the user actually WROTE in a loaded config file > legacy fallback (the
-  // `?? 'global'` / `?? null` below — byte-identical when no config file or no
-  // written defaults exist). Resolved up front so the dedup/NLI partition and
-  // the inserted row see the same (scope, namespace). Tenancy is never
-  // weakened: under MCP_API_NAMESPACE or a principal, server.ts's withForcedNs
-  // has already pinned input.namespace (≠ undefined) before this runs, so the
-  // namespace default can only fill the local single-user case.
-  const cfgDefaults = getConfiguredStoreDefaults();
-  if (cfgDefaults) {
-    if (input.scope === undefined && cfgDefaults.scope !== undefined) {
-      input.scope = cfgDefaults.scope;
-    }
-    if (input.namespace === undefined && cfgDefaults.namespace !== undefined) {
-      input.namespace =
-        cfgDefaults.namespace === 'auto' ? path.basename(process.cwd()) : cfgDefaults.namespace;
-    }
-  }
 
   // M2.1 — inbound secret/poison redaction gate (opt-in via MCP_REDACT_MODE,
   // default 'off' = passthrough). Runs BEFORE embedding + persistence so a leaked

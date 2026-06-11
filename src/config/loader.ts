@@ -188,7 +188,15 @@ function resolveConfigPath(): string {
 function anchorProjectRelativePaths(config: ServerConfig, configPath: string): void {
   const absConfigPath = path.resolve(configPath);
   if (absConfigPath === homeConfigPath()) return;
-  const projectRoot = path.dirname(path.dirname(absConfigPath));
+  // Canonical layout is `<project>/.mcp-memory/config.json` → anchor relatives
+  // at `<project>` (the config dir's parent). A config NOT inside a
+  // `.mcp-memory/` directory (a hand-set MCP_MEMORY_CONFIG_PATH at a flat or
+  // shallow path) anchors at its OWN directory instead — fix-breaker S18:
+  // blindly using the grandparent there resolved one/two levels too high and
+  // could push the DB/vault ABOVE the config's own directory.
+  const configDir = path.dirname(absConfigPath);
+  const projectRoot =
+    path.basename(configDir) === '.mcp-memory' ? path.dirname(configDir) : configDir;
   if (config.storage.db_path && !path.isAbsolute(config.storage.db_path)) {
     config.storage.db_path = path.resolve(projectRoot, config.storage.db_path);
   }

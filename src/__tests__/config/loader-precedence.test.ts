@@ -123,4 +123,15 @@ describe('project-config relative path anchoring (BUG A)', () => {
     expect(cfg.storage.db_path).toBe('/abs/elsewhere.db');
     expect(cfg.vault.path).toBe('/abs/vault');
   });
+
+  it('a FLAT (non-.mcp-memory) env-pinned config anchors at its own dir, never above it (fix-breaker S18)', () => {
+    const flatDir = path.join(tmpRoot, 'flatdir');
+    fs.mkdirSync(flatDir, { recursive: true });
+    const flatCfg = path.join(flatDir, 'myconfig.json');
+    fs.writeFileSync(flatCfg, JSON.stringify({ storage: { db_path: 'memory.db' } }));
+    process.env.MCP_MEMORY_CONFIG_PATH = flatCfg;
+    clearConfigCache();
+    // own dir, NOT the grandparent <tmpRoot>
+    expect(getConfig().storage.db_path).toBe(path.join(flatDir, 'memory.db'));
+  });
 });

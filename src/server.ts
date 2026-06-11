@@ -70,7 +70,7 @@ import {
   MemoryExpertiseSchema,
   MemoryExportDatasetSchema,
 } from './schemas/index.js';
-import { handleStore } from './tools/store.js';
+import { handleStore, applyConfiguredStoreDefaults } from './tools/store.js';
 import { CrossEncoderNli, type NliClassifier } from './graph/contradiction.js';
 import { handleSearch } from './tools/search.js';
 import { handleGet } from './tools/get.js';
@@ -329,7 +329,11 @@ export function createServer(): McpServer {
       // another namespace (read isolation alone would leave a write leak).
       // §6 (RB-8): pass the principal ceiling so the conflict/dedup/contradiction
       // scan can't surface, echo, or retire an over-ceiling same-namespace row.
-      return handleStore(getDb(), await getEmbedder(), withForcedNs(parsed), getNli(), principalAccessCeiling());
+      // Config store-defaults are a memory_store-ONLY concern, applied AFTER
+      // withForcedNs (so a forced/principal namespace always wins) and NOT in
+      // shared handleStore — sibling source-keyed tools must keep legacy null.
+      const scoped = applyConfiguredStoreDefaults(withForcedNs(parsed));
+      return handleStore(getDb(), await getEmbedder(), scoped, getNli(), principalAccessCeiling());
     }),
   );
 
