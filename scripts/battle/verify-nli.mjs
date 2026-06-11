@@ -22,6 +22,13 @@
 // is non-empty (the case where classify() actually runs).
 //
 // Run after `npm run build`:  node scripts/battle/verify-nli.mjs
+//
+// HERMETIC: pin the config loader to a can-never-exist path (same trick as
+// vitest.config.ts) BEFORE any dist import. A host ~/.mcp-memory/config.json
+// with defaults.namespace now feeds the embedding context prefix, which moves
+// stored vectors — this gate's raw-embedding L2 diagnostics are geometric and
+// must not depend on the machine's personal config.
+process.env.MCP_MEMORY_CONFIG_PATH ??= '/dev/null/mcp-memory-no-config/config.json';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';

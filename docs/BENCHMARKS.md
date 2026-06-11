@@ -334,3 +334,27 @@ numbers committed here:
   see "Latency at scale" above (`scripts/battle/verify-scale.mjs`). 100K is
   bounded by the documented O(n) write-path cost, not the sub-second retrieval
   goal.
+
+## Benchmark integrity
+
+Aggregate claims are only as good as their auditability:
+
+- **Committed per-question artifacts.** Every public-benchmark runner accepts
+  `--out <path>` and writes the full report PLUS per-question rows.
+  Committed artifacts live in [`benchmarks/results/`](../benchmarks/results/)
+  (currently the full LOCOMO run — session R@10 = 0.822 rerank-on / 0.742
+  rerank-off, R@50 = 1.0 — reproducing the published headline; the other three
+  suites regenerate with `npm run bench:<name> -- --out …`).
+- **Zero benchmark-specific tuning.** All numbers come from the production
+  `handleStore`/`handleSearch` handlers with the stock MiniLM embedder —
+  the same code path every user runs. There is no bench-only flag anywhere in
+  the pipeline: the query sanitizer's verbatim gate (512 code points) sits
+  ABOVE the longest genuine benchmark question (466 cp, MemBench), so the
+  published numbers hold by construction, not by special-casing.
+- **Hermetic gates.** The bench/battle harnesses pin the config loader to a
+  no-config baseline so a developer machine's personal `~/.mcp-memory/config.json`
+  (whose `defaults` now affect store scope/namespace and the embedding
+  context prefix) cannot move the numbers.
+- **Honest deltas.** Where a competitor's tuned number beats ours untuned, the
+  tables above say so (MemBench 78.7 untuned vs 80.3 tuned; LongMemEval-S
+  97.8 vs their held-out tuned 98.4).
