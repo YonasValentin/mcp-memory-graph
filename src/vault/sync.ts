@@ -101,6 +101,17 @@ export async function syncVault(
   for (const filePath of deletedPaths) {
     try {
       const meta = syncMeta.get(filePath)!;
+      // RB-8: never invalidate a foreign-namespace / over-ceiling anchored memory
+      // by removing its vault file — that would be a cross-tenant declassify /
+      // destroy primitive on a shared vault. Skip the tombstone; the row stays.
+      if (anchorReconcileBlocked(db, meta.memory_id)) {
+        errors.push(
+          `Removed file ${filePath} anchors a foreign-namespace or over-ceiling ` +
+            `memory — not invalidated (skipped)`,
+        );
+        conflicted++;
+        continue;
+      }
       // SOFT-tombstone, not hard-delete (battle-v5 round-2, user decision): a
       // removed vault file invalidates its memory (stamps valid_to) so it leaves
       // default recall but stays recoverable via memory_restore with its version
@@ -180,6 +191,18 @@ export async function syncVault(
       if (!isNew) {
         const meta = syncMeta.get(entry.relativePath);
         if (meta) {
+          // RB-8: a CHANGED tracked file hard-deletes + re-inserts its anchored
+          // memory. If that anchor points at a foreign-namespace / over-ceiling
+          // row (shared vault), a sub-ceiling editor must not overwrite/destroy
+          // it — skip the whole file (leave the protected row intact).
+          if (anchorReconcileBlocked(db, meta.memory_id)) {
+            errors.push(
+              `Changed file ${entry.relativePath} anchors a foreign-namespace or ` +
+                `over-ceiling memory — not reconciled (skipped)`,
+            );
+            conflicted++;
+            continue;
+          }
           try {
             deleteOldMemory(db, meta.memory_id, options.vaultPath, entry.relativePath);
           } catch (err) {
@@ -376,6 +399,21 @@ function touchSyncMtime(
   db.prepare(
     'UPDATE vault_sync_meta SET mtime_ms = ?, content_hash = ? WHERE vault_path = ? AND file_path = ?',
   ).run(mtimeMs, contentHash, vaultPath, filePath);
+}
+
+/**
+ * RB-8 (14th instance): the file-changed and file-removed paths reconcile a
+ * memory by the vault_sync_meta anchor (file→id), NOT a frontmatter id, so the
+ * RB-7 reconcile guard (reconcileBlocked at the insert sites) never sees them. On
+ * a shared/team vault the anchor can point at a higher-clearance or foreign-
+ * namespace row; a sub-ceiling sync must not hard-delete (changed) or invalidate
+ * (removed) it. Returns true when the anchored memory is protected and must be
+ * left untouched. Unforced single-user (forcedNamespace + ceiling undefined) is
+ * never blocked — same shape as import / the insert-side reconcile guard.
+ */
+function anchorReconcileBlocked(db: Database.Database, memoryId: string): boolean {
+  const row = getMemoryById(db, memoryId);
+  return row != null && reconcileBlocked(row, forcedNamespace(), principalAccessCeiling());
 }
 
 function deleteOldMemory(

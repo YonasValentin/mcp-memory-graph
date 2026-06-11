@@ -36,12 +36,15 @@ function read(rel: string): string {
   return readFileSync(path.join(srcDir, rel), 'utf8');
 }
 
-// ── (1) Known reconcile-by-caller-id sites → reconcileBlocked call count. ──
-// Each value is the number of distinct delete/overwrite-by-external-id paths in
-// that file; every one must route its allow/deny through reconcileBlocked.
+// ── (1) Known reconcile-by-caller-id sites → minimum reconcileBlocked routings. ──
+// Each value is the FLOOR of distinct delete/overwrite-by-external-id paths in
+// that file that must route their allow/deny through reconcileBlocked (directly
+// or via a thin wrapper like sync.ts's anchorReconcileBlocked). A floor (not an
+// exact count) so adding a guarded path can't trip the tripwire — only dropping
+// one below the floor does.
 const RECONCILE_SITES: Record<string, number> = {
   'tools/import.ts': 1, // item.id overwrite/insert
-  'vault/sync.ts': 2, // frontmatter id — smallFiles + large-file reconcile
+  'vault/sync.ts': 2, // frontmatter id — smallFiles + large-file reconcile (anchor paths pinned below)
   'tools/consolidate.ts': 1, // vec0 dedup-merge candidate
 };
 
@@ -87,19 +90,37 @@ function currentFetchThenMutate(): string[] {
 
 describe('write-path §6 — every by-id reconcile routes through reconcileBlocked', () => {
   it.each(Object.entries(RECONCILE_SITES))(
-    '%s calls reconcileBlocked for each of its %i reconcile path(s)',
+    '%s routes at least its %i by-id reconcile path(s) through reconcileBlocked',
     (rel, count) => {
       const text = read(rel);
       expect(text).toContain("from '../lib/reconcile-guard.js'");
       const calls = (text.match(/reconcileBlocked\(/g) ?? []).length;
       expect(
         calls,
-        `${rel} must route all ${count} by-id reconcile path(s) through ` +
-          `reconcileBlocked — found ${calls}. An inlined ns/ceiling check is the ` +
+        `${rel} must route its by-id reconcile path(s) through reconcileBlocked — ` +
+          `found ${calls}, floor ${count}. An inlined ns/ceiling check is the ` +
           `divergence that re-battles 3 and 7 punished.`,
-      ).toBe(count);
+      ).toBeGreaterThanOrEqual(count);
     },
   );
+
+  it('vault_sync gates BOTH sync_meta-anchored mutation paths (RB-8 14th instance)', () => {
+    // The file-changed (deleteOldMemory) and file-removed (softDeleteOldMemory)
+    // paths reconcile by the vault_sync_meta anchor, not a frontmatter id — so the
+    // frontmatter reconcileBlocked guards above miss them. Both caller sites must
+    // route through anchorReconcileBlocked, which itself uses reconcileBlocked.
+    const sync = read('vault/sync.ts');
+    const anchorCalls = (sync.match(/anchorReconcileBlocked\(db,/g) ?? []).length;
+    expect(
+      anchorCalls,
+      'both the file-changed and file-removed anchor paths must call ' +
+        'anchorReconcileBlocked before delete/invalidate',
+    ).toBeGreaterThanOrEqual(2);
+    expect(
+      /function anchorReconcileBlocked[\s\S]*?reconcileBlocked\(/.test(sync),
+      'anchorReconcileBlocked must route through the shared reconcileBlocked decision',
+    ).toBe(true);
+  });
 
   it.each(CEILING_SCOPED_WRITES)(
     '%s reconciles its non-MCP-id target through reconcileBlocked (RB-8 ceiling gate)',
