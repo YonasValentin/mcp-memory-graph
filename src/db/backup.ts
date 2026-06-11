@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import type Database from 'better-sqlite3';
 
 export interface BackupResult {
@@ -24,4 +25,33 @@ export async function backupDatabase(
   await db.backup(destPath);
   const bytes = fs.statSync(destPath).size;
   return { dest: destPath, bytes };
+}
+
+/**
+ * Retention cap for timestamped `<db>.backup-<ISO>` siblings: keep the newest
+ * `max`, delete the rest (ISO stamps sort lexically, so name order = age
+ * order). `max <= 0` keeps everything — the documented opt-out. Only files
+ * matching THIS db's exact `<basename>.backup-` prefix are candidates; the
+ * live DB and its WAL/SHM are never touched. Returns the deleted paths.
+ */
+export function pruneBackups(dbPath: string, max: number): string[] {
+  if (max <= 0) return [];
+  const dir = path.dirname(dbPath);
+  const prefix = `${path.basename(dbPath)}.backup-`;
+  const candidates = fs
+    .readdirSync(dir)
+    .filter((f) => f.startsWith(prefix))
+    .sort();
+  const excess = candidates.slice(0, Math.max(0, candidates.length - max));
+  const deleted: string[] = [];
+  for (const f of excess) {
+    const p = path.join(dir, f);
+    try {
+      fs.unlinkSync(p);
+      deleted.push(p);
+    } catch {
+      /* already gone / unreadable — retention is best-effort */
+    }
+  }
+  return deleted;
 }
