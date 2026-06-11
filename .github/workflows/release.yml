@@ -36,7 +36,14 @@ jobs:
             echo "Tag $GITHUB_REF_NAME != package.json $PKG_V" >&2
             exit 1
           fi
-      - run: npm publish --provenance --access public
+      - name: Publish to npm (skipped if this version is already published)
+        run: |
+          V="$(node -p "require('./package.json').version")"
+          if npm view "mcp-memory-graph@${V}" version >/dev/null 2>&1; then
+            echo "mcp-memory-graph@${V} already on npm; skipping publish"
+          else
+            npm publish --provenance --access public
+          fi
 
   # Publish to the official MCP Registry (registry.modelcontextprotocol.io)
   # after the npm package is live. Ownership is proven by the mcpName field in
