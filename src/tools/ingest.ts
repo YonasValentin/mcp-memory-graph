@@ -68,7 +68,13 @@ export async function handleIngest(
   // the same source so a repeated sync doesn't endlessly duplicate the document.
   // (The ingest_source_tracking table + repo fns existed but had no caller.)
   const sourceHash = createHash('sha256').update(input.content).digest('hex');
-  const trackedRaw = input.source ? getIngestSourceByPath(db, input.source) : null;
+  // RBAC (RB-8): scope the tracking lookup to the caller's namespace so a
+  // colliding source-path in another namespace is never read (and the upsert's
+  // (source_path, namespace) unique key can't clobber a foreign anchor). The
+  // reconcileBlocked guard below stays as the ceiling check / defence-in-depth.
+  const trackedRaw = input.source
+    ? getIngestSourceByPath(db, input.source, input.namespace ?? null)
+    : null;
   // §6 + tenancy (RB-8, 13th instance): getIngestSourceByPath matches by
   // source_path ALONE — namespace- AND ceiling-blind. A re-ingest of a colliding
   // source-path must NOT reconcile onto a tracked parent in another namespace or
@@ -185,6 +191,7 @@ export async function handleIngest(
         ingested_at: tracked.ingested_at,
         last_checked_at: now,
         status: 'current',
+        namespace: input.namespace ?? null,
       });
     });
     replace();
@@ -241,6 +248,7 @@ export async function handleIngest(
         ingested_at: now,
         last_checked_at: now,
         status: 'current',
+        namespace: input.namespace ?? null,
       });
     }
   });

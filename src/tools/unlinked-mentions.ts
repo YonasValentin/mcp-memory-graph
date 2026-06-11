@@ -18,11 +18,13 @@ interface MentionSummary {
 export async function handleUnlinkedMentions(
   db: Database.Database,
   embedder: EmbeddingProvider,
-  input: { id: string; limit: number; min_similarity: number },
+  input: { id: string; limit: number; min_similarity: number; access_level_ceiling?: string[] },
 ): Promise<{ mentions: MentionSummary[]; count: number }> {
   const found = await findUnlinkedMentions(db, embedder, input.id, {
     limit: input.limit,
     minSimilarity: input.min_similarity,
+    // RBAC §6 (RB-8): drop neighbours above the principal's ceiling, like memory_related.
+    accessCeiling: input.access_level_ceiling,
   });
 
   const mentions = found.map((m) => ({

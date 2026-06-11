@@ -152,13 +152,22 @@ async function storeInsight(
     return { error: 'store mode requires a non-empty "source_ids" array' };
   }
 
-  const stored = await handleStore(db, embedder, {
-    content: input.insight,
-    scope: input.scope,
-    namespace: input.namespace,
-    document_type: 'insight',
-    title: input.title,
-  });
+  const stored = await handleStore(
+    db,
+    embedder,
+    {
+      content: input.insight,
+      scope: input.scope,
+      namespace: input.namespace,
+      document_type: 'insight',
+      title: input.title,
+    },
+    undefined,
+    // §6 (RB-8): thread the principal ceiling so the insight's conflict scan can't
+    // NOOP-echo (or retire) an over-ceiling same-namespace near-duplicate — the
+    // memory_store registration passes this, storeInsight must too.
+    input.access_level_ceiling,
+  );
 
   // On the default on_conflict='add' path handleStore returns NOOP (stored:false)
   // when the insight near-duplicates an EXISTING memory, handing back that

@@ -135,7 +135,9 @@ describe('server.ts wires every namespace-bearing tool through withForcedNs (F1b
     // is pinned by write-path-coverage-tripwire).
     'handleStore(getDb(), await getEmbedder(), withForcedNs(parsed)',
     'handleIngest(getDb(), await getEmbedder(), withForcedNs(parsed)',
-    'handleSessionNote(getDb(), await getEmbedder(), withForcedNs(parsed))',
+    // session_note also threads principalAccessCeiling() (RB-8); assert the
+    // withForcedNs forcing mechanism, not the full arg list.
+    'handleSessionNote(getDb(), await getEmbedder(), withForcedNs(parsed)',
     'handleCoreMemoryGet(getDb(), withForcedNs(parsed))',
     'handleCoreMemoryAppend(getDb(), withForcedNs(parsed))',
     'handleCoreMemoryReplace(getDb(), withForcedNs(parsed))',

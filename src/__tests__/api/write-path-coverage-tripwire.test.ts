@@ -48,12 +48,13 @@ const RECONCILE_SITES: Record<string, number> = {
   'tools/consolidate.ts': 1, // vec0 dedup-merge candidate
 };
 
-// ── (2a) Ceiling-scoped writes that reconcile by an id NOT supplied as a single
-// MCP `id` param (so idWithinCeiling at registration cannot cover them): store's
-// conflict-resolver supersede target and ingest's source-path parent. RB-8 (12th
-// + 13th instances) proved both ceiling-blind. Each must route its target through
-// reconcileBlocked AND its server.ts registration must thread the ceiling.
-const CEILING_SCOPED_WRITES = ['tools/store.ts', 'tools/ingest.ts'];
+// ── (2a) Ceiling-scoped writes that reconcile/locate a row by something OTHER
+// than a single MCP `id` param (so idWithinCeiling at registration cannot cover
+// them): store's conflict-resolver supersede target, ingest's source-path parent,
+// and session_note's source-key lookup. RB-8 (12th/13th/15th instances) proved
+// each ceiling-blind. Each must route its target through reconcileBlocked AND its
+// server.ts registration must thread the ceiling.
+const CEILING_SCOPED_WRITES = ['tools/store.ts', 'tools/ingest.ts', 'tools/session-note.ts'];
 
 // ── (2b) Frozen inventory of every "fetch by id, then mutate" source file. ──
 // classification documents WHY each is safe; the set itself is asserted below.
@@ -136,9 +137,18 @@ describe('write-path §6 — every by-id reconcile routes through reconcileBlock
     },
   );
 
-  it('server.ts threads principalAccessCeiling() into the store + ingest registrations', () => {
+  it('session_note namespace-scopes its source-key lookup (RB-8 15th instance)', () => {
+    const text = read('tools/session-note.ts');
+    // the lookup must constrain the namespace, not match by `source` alone.
+    expect(
+      /IFNULL\(namespace, ?''\) ?= ?IFNULL\(\?, ?''\)/.test(text),
+      'session_note lookup must be namespace-scoped (source-alone is the 15th-instance breach)',
+    ).toBe(true);
+  });
+
+  it('server.ts threads principalAccessCeiling() into the store + ingest + session_note registrations', () => {
     const server = read('server.ts');
-    for (const tool of ['memory_store', 'memory_ingest']) {
+    for (const tool of ['memory_store', 'memory_ingest', 'memory_session_note']) {
       const start = server.indexOf(`reg(\n    '${tool}',`);
       expect(start, `${tool} registration not found`).toBeGreaterThan(-1);
       const next = server.indexOf('\n  reg(', start + 1);

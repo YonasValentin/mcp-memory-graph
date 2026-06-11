@@ -992,8 +992,8 @@ export function upsertIngestSource(
 ): void {
   db.prepare(`
     INSERT OR REPLACE INTO ingest_source_tracking
-      (id, source_path, source_hash, memory_id, chunk_ids, content_length, ingested_at, last_checked_at, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, source_path, source_hash, memory_id, chunk_ids, content_length, ingested_at, last_checked_at, status, namespace)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     record.id,
     record.source_path,
@@ -1004,16 +1004,24 @@ export function upsertIngestSource(
     record.ingested_at,
     record.last_checked_at,
     record.status,
+    record.namespace ?? null,
   );
 }
 
+/**
+ * RBAC (RB-8): the tracking row is looked up by (source_path, namespace) — the
+ * source_path alone was globally unique, so a cross-namespace re-ingest could read
+ * (and INSERT-OR-REPLACE clobber) another tenant's anchor. NULL namespace folds to
+ * '' to match the unique index and the single-user path.
+ */
 export function getIngestSourceByPath(
   db: Database.Database,
   sourcePath: string,
+  namespace: string | null = null,
 ): IngestSourceRecord | null {
   return (
-    db.prepare<[string], IngestSourceRecord>(
-      'SELECT * FROM ingest_source_tracking WHERE source_path = ?',
-    ).get(sourcePath) ?? null
+    db.prepare<[string, string | null], IngestSourceRecord>(
+      "SELECT * FROM ingest_source_tracking WHERE source_path = ? AND IFNULL(namespace, '') = IFNULL(?, '')",
+    ).get(sourcePath, namespace) ?? null
   );
 }

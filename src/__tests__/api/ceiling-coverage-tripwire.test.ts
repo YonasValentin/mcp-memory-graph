@@ -55,6 +55,9 @@ const CONTENT_OR_TITLE_READS = [
   'memory_revalidate',
   'memory_insights',
   'memory_questions',
+  // RB-8: echoes neighbour title + content snippet — it is BOTH a by-id seed read
+  // (idWithinCeiling, below) AND a content/title egress (must thread the ceiling).
+  'memory_unlinked_mentions',
 ];
 
 // By-id read/mutation of a single memory — must gate on the ceiling non-confirm.

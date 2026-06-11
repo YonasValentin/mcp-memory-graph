@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import { chunkIds } from './communities.js';
-import { forcedNamespace } from '../lib/tenancy.js';
+import { forcedNamespace, principalAccessCeiling } from '../lib/tenancy.js';
 import { currentPrincipal } from '../lib/request-context.js';
 
 /** Provenance of an inferred edge — graphify's honest audit model. */
@@ -138,20 +138,34 @@ function foreignEndpointGuard(col: 'source_memory_id' | 'target_memory_id'): {
   sql: string;
   params: string[];
 } {
+  let sql = '';
+  const params: string[] = [];
   const ctx = currentPrincipal();
   if (ctx) {
     const marks = ctx.namespaces.map(() => '?').join(', ');
-    return {
-      sql: ` AND (SELECT COALESCE(namespace, '') FROM memories WHERE id = memory_links.${col}) IN (${marks})`,
-      params: [...ctx.namespaces],
-    };
+    sql += ` AND (SELECT COALESCE(namespace, '') FROM memories WHERE id = memory_links.${col}) IN (${marks})`;
+    params.push(...ctx.namespaces);
+  } else {
+    const ns = forcedNamespace();
+    if (ns) {
+      sql += ` AND (SELECT COALESCE(namespace, '') FROM memories WHERE id = memory_links.${col}) = ?`;
+      params.push(ns);
+    }
   }
-  const ns = forcedNamespace();
-  if (!ns) return { sql: '', params: [] };
-  return {
-    sql: ` AND (SELECT COALESCE(namespace, '') FROM memories WHERE id = memory_links.${col}) = ?`,
-    params: [ns],
-  };
+  // RBAC §6 (RB-8): also exclude an edge whose OTHER endpoint is ABOVE the
+  // principal's access ceiling. The namespace guard alone let a SAME-namespace
+  // over-ceiling endpoint through, so memory_get.links/backlinks echoed the id +
+  // relation + similarity of a row the principal cannot read (e.g. an auto
+  // `similar_to` edge buildSimilarityEdges created on the principal's own store).
+  // The ceiling is intra-namespace, so this composes with (not replaces) the ns
+  // guard. Undefined ceiling (legacy/local) → no extra clause.
+  const ceiling = principalAccessCeiling();
+  if (ceiling && ceiling.length > 0) {
+    const marks = ceiling.map(() => '?').join(', ');
+    sql += ` AND (SELECT access_level FROM memories WHERE id = memory_links.${col}) IN (${marks})`;
+    params.push(...ceiling);
+  }
+  return { sql, params };
 }
 
 /** Edges where `memoryId` is the source (what this memory points to). */

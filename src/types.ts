@@ -471,6 +471,13 @@ export interface IngestSourceRecord {
   ingested_at: string;
   last_checked_at: string;
   status: 'current' | 'stale' | 'deleted';
+  /**
+   * RBAC (RB-8): the namespace that owns this ingest tracking row. The
+   * (source_path, namespace) pair is unique, so a re-ingest of the same
+   * source-path in another namespace can't clobber a foreign tenant's anchor.
+   * NULL = single-user / legacy.
+   */
+  namespace: string | null;
 }
 
 export interface ConsolidationReport {

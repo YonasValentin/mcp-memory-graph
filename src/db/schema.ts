@@ -4,7 +4,7 @@ import type Database from 'better-sqlite3';
  * The current schema version baked into this codebase. Updated together with
  * a new entry in `runMigrations`.
  */
-export const CURRENT_SCHEMA_VERSION = 16;
+export const CURRENT_SCHEMA_VERSION = 18;
 
 /**
  * Persistent memory-to-memory edge store (Pillar 1). Edges carry a confidence
@@ -325,7 +325,11 @@ export function initializeSchema(db: Database.Database): void {
     -- partial UNIQUE index is the cross-process backstop that stops two
     -- concurrent memory_session_note CREATEs from inserting duplicate session
     -- memories (the app then catches the UNIQUE error and appends instead).
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_session_source_live ON memories(source)
+    -- (source, namespace)-scoped so each namespace owns its session note
+    -- independently (RBAC RB-8 15th instance: a global-on-source index let one
+    -- principal's session_id collide with another namespace's session row).
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_session_source_live
+      ON memories(source, IFNULL(namespace, ''))
       WHERE document_type = 'session' AND parent_id IS NULL
         AND valid_to IS NULL AND tx_expired IS NULL;
 
@@ -397,9 +401,13 @@ export function initializeSchema(db: Database.Database): void {
       ingested_at TEXT NOT NULL DEFAULT (datetime('now')),
       last_checked_at TEXT NOT NULL DEFAULT (datetime('now')),
       status TEXT NOT NULL DEFAULT 'current',
+      namespace TEXT,
       FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
     );
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_source_path ON ingest_source_tracking(source_path);
+    -- (source_path, namespace)-scoped so a re-ingest of a colliding source-path in
+    -- another namespace can't clobber a foreign tenant's anchor (RBAC RB-8).
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_source_path
+      ON ingest_source_tracking(source_path, IFNULL(namespace, ''));
     CREATE INDEX IF NOT EXISTS idx_ingest_source_memory ON ingest_source_tracking(memory_id);
 
     CREATE TABLE IF NOT EXISTS entities (

@@ -70,14 +70,16 @@ describe('migrate v16 — api_keys table', () => {
     ).toThrow(/UNIQUE/);
   });
 
-  it('brings the DB to CURRENT (16) and is idempotent', () => {
+  it('brings the DB to CURRENT and is idempotent', () => {
     const db = v15Db();
     migrateDatabase(db);
     const v = db.prepare("SELECT value FROM schema_meta WHERE key='schema_version'").get() as {
       value: string;
     };
     expect(v.value).toBe(String(CURRENT_SCHEMA_VERSION));
-    expect(CURRENT_SCHEMA_VERSION).toBe(16);
+    // RB-8 added v17 (session-source namespace index) + v18 (ingest_source_tracking
+    // namespace) past v16; the v16 api_keys table (asserted above) still lands.
+    expect(CURRENT_SCHEMA_VERSION).toBe(18);
     expect(() => migrateDatabase(db)).not.toThrow();
   });
 

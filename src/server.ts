@@ -846,7 +846,9 @@ export function createServer(): McpServer {
     MemorySessionNoteSchema.shape,
     instrument('memory_session_note', async (input) => {
       const parsed = MemorySessionNoteSchema.parse(input);
-      return handleSessionNote(getDb(), await getEmbedder(), withForcedNs(parsed));
+      // §6 (RB-8): namespace-scoped lookup (input.namespace is forced here) plus
+      // the principal ceiling so a reused session_id can't reach another tenant.
+      return handleSessionNote(getDb(), await getEmbedder(), withForcedNs(parsed), principalAccessCeiling());
     }),
   );
 
@@ -918,7 +920,9 @@ export function createServer(): McpServer {
       // §6 (re-battle): an over-ceiling seed must be non-confirmed like the other
       // by-id reads (it can surface the seed's neighbourhood/content).
       if (!idInForcedNs(parsed.id) || !idWithinCeiling(parsed.id)) throw new Error('Memory not found');
-      return handleUnlinkedMentions(getDb(), await getEmbedder(), parsed);
+      // §6 (RB-8): mirror memory_related — thread the ceiling so neighbour
+      // titles/snippets above the principal's clearance are never echoed.
+      return handleUnlinkedMentions(getDb(), await getEmbedder(), withCeiling(parsed));
     }),
   );
 
