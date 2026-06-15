@@ -14,7 +14,8 @@ description: >-
 A local-first, bi-temporal knowledge-graph memory for your AI assistant. Everything (embeddings,
 vector + keyword index, graph) runs on this machine against one SQLite file. No cloud, no API key,
 no per-token cost. You operate it by calling its tools well. **Full tool reference →
-`references/tools.md`; CLI → `references/cli.md`; config/env/scopes → `references/config.md`.**
+`references/tools.md`; CLI → `references/cli.md`; config/env/scopes → `references/config.md`;
+advanced (RBAC, webhooks, multi-tenancy, reranker/consolidate tuning) → `references/advanced.md`.**
 
 ## Tool-selection decision tree
 
