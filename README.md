@@ -43,7 +43,7 @@ npm install
 npm run build
 ```
 
-**2. Register the server with Claude Code:**
+**2. Register the server with Claude Code** *(optional — `init` in step 3 does this for you at user scope):*
 
 ```bash
 # npm install:
@@ -59,7 +59,7 @@ claude mcp add memory-server node /path/to/mcp-memory-graph/dist/index.js
 npx mcp-memory-graph init
 ```
 
-This wires up automatic capture and recall: a status line when a session starts, search tracking, and an end-of-session review that stores what you learned. It also schedules a nightly cleanup. Answer the prompts, or pass `--yes` to accept the defaults.
+This is the one command that wires everything up: it registers the MCP server (user scope), installs the auto-capture/recall hooks and the usage skill, writes config, and schedules a nightly cleanup. Answer the prompts, or pass `--yes` to accept the defaults. (Skip the auto-registration with `--no-register` if you manage `claude mcp` yourself.)
 
 **4. Try it.** Open a Claude Code session and say:
 
@@ -352,18 +352,19 @@ npx mcp-memory-graph init --scope project  # this project only
 
 User scope writes hooks to `~/.claude/settings.json`, so they fire in every Claude Code session. Project scope writes hooks to `.claude/settings.json` in the current directory and creates `.mcp.json` for automatic server discovery; collaborators who clone the project get the memory server registered automatically.
 
-Init does six things:
+Init does seven things:
 
 1. Verifies the hook scripts exist in `dist/hooks/`.
 2. Registers the four hooks in settings.json.
 3. Creates the config file with sensible defaults: `~/.mcp-memory/config.json` (user scope) or `<project>/.mcp-memory/config.json` (project scope; the generated `.mcp.json` pins it via `MCP_MEMORY_CONFIG_PATH`).
 4. Writes memory usage instructions to `.claude/CLAUDE.md` (project scope) or prints a snippet (user scope).
-5. Sets up the nightly consolidation schedule (macOS: launchd; Linux: prints a cron suggestion; skipped for project scope).
+5. **Registers the MCP server with Claude Code** — user scope runs `claude mcp add -s user memory-server -- npx -y mcp-memory-graph` for you (idempotent; best-effort — warns with the manual command if the `claude` CLI isn't on `PATH`; skip with `--no-register`). Project scope is registered via the committable `.mcp.json` instead. This makes step 2 of the Quick Start optional.
 6. Installs the `mcp-memory-graph` usage skill into `~/.claude/skills/` so Claude Code has inline guidance for all 49 tools, gotchas, and workflows. Skip with `--no-skill`.
+7. Sets up the nightly consolidation schedule (macOS: launchd, loaded immediately so it runs without a relogin; Linux: prints a cron suggestion; skipped for project scope).
 
 Under a non-interactive shell (agent/CI) the wizard is bypassed: defaults are applied and a report is printed showing what was set and how to change each value. Passing `--yes` applies the defaults silently (no report).
 
-Key flags: `--scope user|project`, `--schedule HH:MM[,HH:MM]` (nightly consolidation time, default `03:00`), `--vault <path>` (enable Obsidian vault round-trip), `--no-review-on-stop` (disable the end-of-session learning review), `--no-skill` (skip skill install), `--remote <url>` (team server mode).
+Key flags: `--scope user|project`, `--schedule HH:MM[,HH:MM]` (nightly consolidation time, default `03:00`), `--vault <path>` (enable Obsidian vault round-trip), `--no-review-on-stop` (disable the end-of-session learning review), `--no-skill` (skip skill install), `--no-register` (skip the user-scope `claude mcp add`), `--remote <url>` (team server mode).
 
 `npx mcp-memory-graph uninstall` reverses everything init did: removes hooks, the nightly schedule, the CLAUDE.md block, and the installed skill.
 

@@ -603,6 +603,53 @@ function installSkill(scope: Scope, enabled: boolean): void {
   if (existsSync(join(base, 'SKILL.md'))) success(`Installed usage skill at ${base}`);
 }
 
+const MCP_SERVER_NAME = 'memory-server';
+
+/**
+ * Pure: the `claude` CLI argv that registers this server at USER scope over stdio
+ * (`npx -y mcp-memory-graph`). Unit-tested so the registration command can't silently
+ * drift. Project scope is NOT registered this way — it uses the committable `.mcp.json`.
+ */
+export function claudeMcpAddArgs(): string[] {
+  return ['mcp', 'add', '-s', 'user', MCP_SERVER_NAME, '--', 'npx', '-y', 'mcp-memory-graph'];
+}
+
+/* c8 ignore start -- best-effort `claude` CLI side effects; argv built by claudeMcpAddArgs (unit-tested) */
+function registerMcpServer(scope: Scope, enabled: boolean): void {
+  if (!enabled) {
+    dim('Skipping MCP server registration (--no-register)');
+    return;
+  }
+  if (scope === 'project') {
+    dim('Project scope — server registered via .mcp.json (no global claude mcp add)');
+    return;
+  }
+  const manual = '  claude mcp add -s user memory-server -- npx -y mcp-memory-graph';
+  try {
+    execFileSync('claude', ['--version'], { stdio: 'ignore' });
+  } catch {
+    warn('`claude` CLI not on PATH — register the server manually:');
+    dim(manual);
+    return;
+  }
+  try {
+    // Exit 0 = already registered → idempotent skip.
+    execFileSync('claude', ['mcp', 'get', MCP_SERVER_NAME], { stdio: 'ignore' });
+    dim(`MCP server "${MCP_SERVER_NAME}" already registered — skipping`);
+    return;
+  } catch {
+    /* not registered yet */
+  }
+  try {
+    execFileSync('claude', claudeMcpAddArgs(), { stdio: 'ignore' });
+    success(`Registered MCP server "${MCP_SERVER_NAME}" (user scope) — restart Claude Code to load its tools`);
+  } catch {
+    warn('Could not auto-register the MCP server — register it manually:');
+    dim(manual);
+  }
+}
+/* c8 ignore stop */
+
 export async function runInit(): Promise<void> {
   // `--remote <url>` switches to the team/self-hosted HTTP path (no local hooks/DB).
   const remote = parseRemote();
@@ -621,11 +668,11 @@ export async function runInit(): Promise<void> {
 
   console.log(`\n${CYAN}MCP Memory Graph — Init (${scope} scope)${RESET}\n`);
 
-  info('Step 1/6: Verifying hook scripts...');
+  info('Step 1/7: Verifying hook scripts...');
   verifyHookScripts();
 
   console.log('');
-  info('Step 2/6: Merging hooks into settings.json...');
+  info('Step 2/7: Merging hooks into settings.json...');
   mergeSettingsHooks(scope);
 
   if (scope === 'project') {
@@ -636,11 +683,11 @@ export async function runInit(): Promise<void> {
   }
 
   console.log('');
-  info(`Step 3/6: Configuring memory (${mode === 'interactive' ? 'interactive wizard' : mode === 'defaults' ? 'defaults' : 'non-interactive'})...`);
+  info(`Step 3/7: Configuring memory (${mode === 'interactive' ? 'interactive wizard' : mode === 'defaults' ? 'defaults' : 'non-interactive'})...`);
   const config = await createConfig({ projectScoped, interactive: usePrompter, flags });
 
   console.log('');
-  info('Step 4/6: Setting up CLAUDE.md instructions...');
+  info('Step 4/7: Setting up CLAUDE.md instructions...');
   createClaudeMd(scope);
 
   if (mode === 'nonInteractive') {
@@ -649,11 +696,15 @@ export async function runInit(): Promise<void> {
   }
 
   console.log('');
-  info('Step 5/6: Installing usage skill...');
+  info('Step 5/7: Registering MCP server with Claude Code...');
+  registerMcpServer(scope, flags.registerServer);
+
+  console.log('');
+  info('Step 6/7: Installing usage skill...');
   installSkill(scope, flags.installSkill);
 
   console.log('');
-  info('Step 6/6: Installing scheduled consolidation...');
+  info('Step 7/7: Installing scheduled consolidation...');
   installLaunchdPlist(scope);
 
   console.log(`\n${GREEN}Init complete! (${scope} scope)${RESET}\n`);

@@ -35,11 +35,14 @@ describe('parseSchedule', () => {
 });
 
 describe('parseInitFlags', () => {
-  it('defaults: skill on, no overrides', () => {
-    expect(parseInitFlags(['init'])).toEqual({ installSkill: true });
+  it('defaults: skill on, register on, no overrides', () => {
+    expect(parseInitFlags(['init'])).toEqual({ installSkill: true, registerServer: true });
   });
   it('--no-skill disables skill', () => {
     expect(parseInitFlags(['init', '--no-skill']).installSkill).toBe(false);
+  });
+  it('--no-register disables MCP server registration', () => {
+    expect(parseInitFlags(['init', '--no-register']).registerServer).toBe(false);
   });
   it('--no-review-on-stop → reviewOnStop false', () => {
     expect(parseInitFlags(['init', '--no-review-on-stop']).reviewOnStop).toBe(false);

@@ -63,6 +63,7 @@ Flags:
   --vault <path>        enable Obsidian vault round-trip at the given path
   --no-review-on-stop   disable the end-of-session claude -p learning review
   --no-skill            skip installing the mcp-memory-graph usage skill
+  --no-register         skip the user-scope \`claude mcp add\` (register manually)
 
 Files written:
   user scope     ~/.claude/settings.json (hooks), ~/.mcp-memory/config.json,

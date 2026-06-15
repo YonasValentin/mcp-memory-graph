@@ -90,7 +90,7 @@ describe('maybePrintHelp', () => {
 
   it('init usage documents the new flags', () => {
     const t = helpTextFor('init');
-    for (const f of ['--schedule', '--vault', '--no-review-on-stop', '--no-skill']) {
+    for (const f of ['--schedule', '--vault', '--no-review-on-stop', '--no-skill', '--no-register']) {
       expect(t).toContain(f);
     }
   });
