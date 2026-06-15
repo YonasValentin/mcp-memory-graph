@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +17,7 @@ import { resolveInputMode, parseInitFlags, formatInitReport, type InitFlags } fr
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const hooksSourceDir = join(__dirname, '..', 'hooks');
+const skillSourceDir = join(__dirname, '..', 'skill'); // dist/skill (present after build)
 
 // Hook scripts run from dist/hooks/ so they can resolve node_modules dependencies.
 // Settings.json references them via absolute path — no copying needed.
@@ -541,6 +542,25 @@ function createClaudeMd(scope: Scope): void {
 
 export { CLAUDE_MD_MARKER };
 
+/** Recursively copy a skill source dir into a destination (overwrite = idempotent). */
+export function copySkill(sourceDir: string, destDir: string): void {
+  if (!existsSync(sourceDir)) {
+    warn(`Skill source not found at ${sourceDir} (run build) — skipping`);
+    return;
+  }
+  mkdirSync(destDir, { recursive: true });
+  cpSync(sourceDir, destDir, { recursive: true });
+}
+
+function installSkill(scope: Scope, enabled: boolean): void {
+  if (!enabled) { dim('Skipping usage-skill install (--no-skill)'); return; }
+  const base = scope === 'project'
+    ? join(process.cwd(), '.claude', 'skills', 'mcp-memory-graph')
+    : join(homedir(), '.claude', 'skills', 'mcp-memory-graph');
+  copySkill(skillSourceDir, base);
+  if (existsSync(join(base, 'SKILL.md'))) success(`Installed usage skill at ${base}`);
+}
+
 export async function runInit(): Promise<void> {
   // `--remote <url>` switches to the team/self-hosted HTTP path (no local hooks/DB).
   const remote = parseRemote();
@@ -559,11 +579,11 @@ export async function runInit(): Promise<void> {
 
   console.log(`\n${CYAN}MCP Memory Graph — Init (${scope} scope)${RESET}\n`);
 
-  info('Step 1/5: Verifying hook scripts...');
+  info('Step 1/6: Verifying hook scripts...');
   verifyHookScripts();
 
   console.log('');
-  info('Step 2/5: Merging hooks into settings.json...');
+  info('Step 2/6: Merging hooks into settings.json...');
   mergeSettingsHooks(scope);
 
   if (scope === 'project') {
@@ -574,11 +594,11 @@ export async function runInit(): Promise<void> {
   }
 
   console.log('');
-  info(`Step 3/5: Configuring memory (${mode === 'interactive' ? 'interactive wizard' : mode === 'defaults' ? 'defaults' : 'non-interactive'})...`);
+  info(`Step 3/6: Configuring memory (${mode === 'interactive' ? 'interactive wizard' : mode === 'defaults' ? 'defaults' : 'non-interactive'})...`);
   const config = await createConfig({ projectScoped, interactive: usePrompter, flags });
 
   console.log('');
-  info('Step 4/5: Setting up CLAUDE.md instructions...');
+  info('Step 4/6: Setting up CLAUDE.md instructions...');
   createClaudeMd(scope);
 
   if (mode === 'nonInteractive') {
@@ -587,7 +607,11 @@ export async function runInit(): Promise<void> {
   }
 
   console.log('');
-  info('Step 5/5: Installing scheduled consolidation...');
+  info('Step 5/6: Installing usage skill...');
+  installSkill(scope, flags.installSkill);
+
+  console.log('');
+  info('Step 6/6: Installing scheduled consolidation...');
   installLaunchdPlist(scope);
 
   console.log(`\n${GREEN}Init complete! (${scope} scope)${RESET}\n`);
