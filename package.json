@@ -25,9 +25,9 @@
     "https://www.buymeacoffee.com/YonasValentin"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-skill.mjs",
     "build:web": "cd web && npm run build",
-    "build:all": "tsc && cd web && npm run build",
+    "build:all": "npm run build && cd web && npm run build",
     "dev": "tsc --watch",
     "dev:web": "cd web && npm run dev",
     "start": "node dist/index.js",
