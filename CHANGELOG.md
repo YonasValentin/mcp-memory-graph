@@ -6,6 +6,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.5.3] - 2026-06-15
+
+### Added
+
+- **One-command setup.** `init` (user scope) now registers the MCP server with
+  Claude Code for you — best-effort `claude mcp add -s user memory-server -- npx -y
+  mcp-memory-graph` — so the separate Quick-Start `claude mcp add` step is optional.
+  Idempotent (skips if already registered); best-effort (warns with the manual command
+  if the `claude` CLI isn't on `PATH`, never fails the install); opt out with
+  `--no-register`. Project scope is unchanged — it registers via the committable
+  `.mcp.json`. A fresh user-scope setup is now just `npx mcp-memory-graph init`.
+
 ## [2.5.2] - 2026-06-15
 
 ### Fixed
