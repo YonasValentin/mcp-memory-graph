@@ -6,6 +6,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.3.2] - 2026-06-15
+
+### Fixed
+
+- `init` no longer bakes the nvm-versioned absolute path into hook commands.
+  Previously the hook command embedded the path at init time, e.g.
+  `.nvm/versions/node/v22.16.0/lib/node_modules/...`, which silently broke
+  whenever the user ran `nvm use <other-version>`. Hooks now use
+  `bash -c 'node "$(npm root -g)/mcp-memory-graph/dist/hooks/<hook>.js"'`,
+  resolving the global node_modules path at execution time.
+
 ## [2.3.1] - 2026-06-11
 
 ### Fixed
