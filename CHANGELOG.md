@@ -6,6 +6,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-06-15
+
+### Added
+
+- `consolidation.schedule` config field: set one or more daily run times for
+  the dream cycle instead of editing the launchd plist by hand.
+  Example: `"schedule": [{ "hour": 11, "minute": 30 }, { "hour": 16, "minute": 0 }]`.
+  Re-run `npx mcp-memory-graph init` after changing the schedule to regenerate
+  the plist. Default remains `[{ hour: 3, minute: 0 }]` — fully backwards compatible.
+
 ## [2.3.2] - 2026-06-15
 
 ### Fixed
