@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, unlinkSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { CLAUDE_MD_MARKER } from './init.js';
@@ -184,6 +184,15 @@ function removeLaunchdPlist(): void {
   }
 }
 
+export function removeSkillDir(dir: string): void {
+  if (existsSync(dir)) {
+    rmSync(dir, { recursive: true, force: true });
+    success(`Removed ${dir}`);
+  } else {
+    dim(`No skill at ${dir}, skipping`);
+  }
+}
+
 export async function runUninstall(): Promise<void> {
   console.log(`\n${CYAN}MCP Memory Graph — Uninstall${RESET}\n`);
 
@@ -203,6 +212,11 @@ export async function runUninstall(): Promise<void> {
   console.log('');
   info('Step 4/5: Removing scheduled consolidation...');
   removeLaunchdPlist();
+
+  console.log('');
+  info('Step 5/5: Removing installed usage skill...');
+  removeSkillDir(join(homedir(), '.claude', 'skills', 'mcp-memory-graph'));
+  removeSkillDir(join(process.cwd(), '.claude', 'skills', 'mcp-memory-graph'));
 
   console.log('');
   warn('Config and database were NOT deleted:');
