@@ -1,4 +1,5 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -286,6 +287,44 @@ export function schedulesGlobalConsolidation(scope: Scope): boolean {
   return scope !== 'project';
 }
 
+/**
+ * launchctl argv to (re)load a user LaunchAgent. `bootout` first clears any prior
+ * registration so re-running `init` with a changed schedule actually takes effect;
+ * `bootstrap` then loads the current plist. Pure (argv only) so it is unit-tested —
+ * launchd only scans ~/Library/LaunchAgents at LOGIN, so without this the freshly
+ * written plist would sit dormant (nightly cleanup silently never running) until the
+ * next relogin.
+ */
+export function launchdBootCommands(
+  uid: number,
+  plistPath: string,
+): { domain: string; bootout: string[]; bootstrap: string[] } {
+  const domain = `gui/${uid}`;
+  return {
+    domain,
+    bootout: ['bootout', domain, plistPath],
+    bootstrap: ['bootstrap', domain, plistPath],
+  };
+}
+
+/* c8 ignore start -- launchctl side effects; the argv is built by launchdBootCommands (unit-tested) */
+function loadLaunchdPlist(plistPath: string): void {
+  const { bootout, bootstrap } = launchdBootCommands(process.getuid?.() ?? 0, plistPath);
+  // bootout may fail when nothing is loaded yet — that is the common first-install path.
+  try {
+    execFileSync('launchctl', bootout, { stdio: 'ignore' });
+  } catch {
+    /* not previously loaded — fine */
+  }
+  try {
+    execFileSync('launchctl', bootstrap, { stdio: 'ignore' });
+    success('Loaded into launchd — the schedule is active now');
+  } catch {
+    warn('Could not load into launchd now; it will activate at next login');
+  }
+}
+/* c8 ignore stop */
+
 function buildCalendarIntervalXml(schedule: Array<{ hour: number; minute: number }>): string {
   const entry = ({ hour, minute }: { hour: number; minute: number }) =>
     `  <dict>\n    <key>Hour</key>\n    <integer>${hour}</integer>\n    <key>Minute</key>\n    <integer>${minute}</integer>\n  </dict>`;
@@ -356,6 +395,7 @@ ${calendarIntervalXml}
   success(`Created launchd plist at ${plistPath}`);
   dim(`Consolidation will run daily at ${times}`);
   dim(`Logs: ${home}/.mcp-memory/consolidation.log`);
+  loadLaunchdPlist(plistPath);
 }
 
 /**

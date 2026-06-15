@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, writeFileSync, unlinkSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { homedir, platform } from 'node:os';
-import { CLAUDE_MD_MARKER } from './init.js';
+import { CLAUDE_MD_MARKER, launchdBootCommands } from './init.js';
 import { GREEN, CYAN, RESET, success, warn, info, dim } from './cli-output.js';
 
 // Match hook commands by substring — they contain the hook file name
@@ -177,6 +178,17 @@ function removeLaunchdPlist(): void {
   const plistPath = join(home, 'Library', 'LaunchAgents', 'com.mcp-memory.consolidate.plist');
 
   if (existsSync(plistPath)) {
+    // Unregister from launchd before deleting the file, else the job stays loaded
+    // in the current login session until the next logout.
+    /* c8 ignore start -- launchctl side effect */
+    try {
+      execFileSync('launchctl', launchdBootCommands(process.getuid?.() ?? 0, plistPath).bootout, {
+        stdio: 'ignore',
+      });
+    } catch {
+      /* not loaded — fine */
+    }
+    /* c8 ignore stop */
     unlinkSync(plistPath);
     success(`Removed ${plistPath}`);
   } else {
