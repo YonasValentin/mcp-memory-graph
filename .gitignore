@@ -38,3 +38,6 @@ scripts/battle/web-shots/
 .planning/
 .battle/
 .claude/commands/
+
+# local memory db created by running the server in-repo
+.mcp-memory/

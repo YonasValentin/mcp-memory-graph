@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or idea
+    url: https://github.com/YonasValentin/mcp-memory-graph/discussions
+    about: Ask how something works, share what you built, or float an idea before filing an issue.
+  - name: Commercial license
+    url: https://github.com/YonasValentin/mcp-memory-graph/blob/main/COMMERCIAL.md
+    about: Using it at work? Here's how commercial licensing works.

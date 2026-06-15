@@ -4,6 +4,7 @@
 [![npm downloads](https://img.shields.io/npm/dm/mcp-memory-graph?color=cb3837)](https://www.npmjs.com/package/mcp-memory-graph)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial-1f6feb.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)](./package.json)
+[![CI](https://github.com/YonasValentin/mcp-memory-graph/actions/workflows/ci.yml/badge.svg)](https://github.com/YonasValentin/mcp-memory-graph/actions/workflows/ci.yml)
 [![MCP server](https://img.shields.io/badge/MCP-server-111111)](https://modelcontextprotocol.io/)
 [![Built for Claude Code](https://img.shields.io/badge/built%20for-Claude%20Code-d97757)](https://docs.anthropic.com/en/docs/claude-code)
 [![Local-first · $0/token](https://img.shields.io/badge/local--first-%240%2Ftoken-2ea043)](#why-this-exists)
@@ -13,6 +14,35 @@ A memory server for [Claude Code](https://docs.anthropic.com/en/docs/claude-code
 > **License:** source-available and free for noncommercial use ([PolyForm Noncommercial 1.0.0](./LICENSE)): personal projects, hobby, study, research, charity, education, and government. Commercial use requires a paid license ([COMMERCIAL.md](./COMMERCIAL.md)).
 
 **Who it's for:** developers who want Claude (or Cursor, Codex, any MCP client) to remember decisions across sessions. Solo builders and hobbyists use it free. Teams share a knowledge base over git. And anyone who wants to replace a cloud memory service (mem0, Zep, Letta, Supermemory) with something that runs entirely on their own machine.
+
+## What it looks like
+
+Run `npx mcp-memory-graph serve` and you get a local web dashboard for browsing and searching your memory outside Claude.
+
+![The dashboard: memory counts, breakdowns by scope, department, and type, and the most recent memories](docs/assets/dashboard.png)
+
+Search works by meaning, not keywords. The query below ("how do we handle payments") finds the Stripe, GDPR, and Postgres notes even though none of them contains that phrase — each result carries a confidence score and a match-type badge:
+
+![Semantic search results with confidence and match-type badges](docs/assets/search.png)
+
+Browse and sort the whole store in one table — scope, type, tags, quality score, and how often each memory has been read:
+
+![Sortable table of all stored memories](docs/assets/browse.png)
+
+## How it compares
+
+mem0, Zep, Letta, and Supermemory are the usual names for AI memory, and several of them have open-source cores. This one is built around a different default: nothing leaves your machine and there's no infrastructure to run.
+
+| | MCP Memory Graph | Typical hosted memory service |
+|---|---|---|
+| Where it runs | One SQLite file on your machine | A managed cloud service (some also self-host) |
+| Embeddings | Local model in Node (MiniLM), no API key | Usually a cloud embedding API |
+| Cost per token | $0 — nothing is metered | Usage-based, or a server you operate |
+| Extra infrastructure | None | Often Postgres/pgvector, Redis, or a Python service |
+| Claude Code integration | First-class: hooks auto-capture and recall | Manual wiring |
+| Benchmarks | Committed corpus + runner, reproducible locally | Mostly self-reported |
+
+The trade-off is honest: a single-process SQLite server tops out in the low hundreds of thousands of vectors (see [Limitations](#limitations)), and a hosted service will scale past that without you thinking about it. If you're a solo developer or a small team who wants memory that's private, free, and zero-ops, that ceiling is rarely the thing you hit first.
 
 ## Why this exists
 

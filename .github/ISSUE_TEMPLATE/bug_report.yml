@@ -1,0 +1,49 @@
+name: Bug report
+description: Something works differently than you expected
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+      placeholder: I ran `memory_search ...` and got no results, but the memory exists.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Store a memory with scope "user"
+        2. Search without a scope
+        3. It's missing (note: unscoped search hides scope:user — but tell us if that's not it)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `npx mcp-memory-graph --version` (or the npm version).
+    validations:
+      required: true
+  - type: dropdown
+    id: client
+    attributes:
+      label: MCP client
+      options: [Claude Code, Cursor, Codex, Windsurf, Other, Not via a client (CLI/REST)]
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS + Node version
+      placeholder: macOS 15 / Node 22.x
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant output. Scrub anything private first.
+      render: shell

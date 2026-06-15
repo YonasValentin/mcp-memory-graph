@@ -1,0 +1,29 @@
+# Smithery configuration — https://smithery.ai/docs/build/project-config
+# Launches the published npm package over stdio. No secrets required: the server
+# is local-first and runs entirely on the host (local embeddings, one SQLite file).
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      dbPath:
+        type: string
+        title: Database path
+        description: Where the SQLite memory database lives. Defaults to ~/.mcp-memory/memory.db.
+      model:
+        type: string
+        title: Embedding model
+        description: HuggingFace ONNX embedding model (Transformers.js). Defaults to Xenova/all-MiniLM-L6-v2.
+        default: Xenova/all-MiniLM-L6-v2
+  commandFunction: |-
+    (config) => ({
+      command: 'npx',
+      args: ['-y', 'mcp-memory-graph'],
+      env: {
+        ...(config.dbPath ? { MCP_MEMORY_DB_PATH: config.dbPath } : {}),
+        ...(config.model ? { MCP_MEMORY_MODEL: config.model } : {})
+      }
+    })
+  exampleConfig:
+    dbPath: ~/.mcp-memory/memory.db
+    model: Xenova/all-MiniLM-L6-v2
