@@ -352,13 +352,20 @@ npx mcp-memory-graph init --scope project  # this project only
 
 User scope writes hooks to `~/.claude/settings.json`, so they fire in every Claude Code session. Project scope writes hooks to `.claude/settings.json` in the current directory and creates `.mcp.json` for automatic server discovery; collaborators who clone the project get the memory server registered automatically.
 
-Init does five things:
+Init does six things:
 
 1. Verifies the hook scripts exist in `dist/hooks/`.
 2. Registers the four hooks in settings.json.
 3. Creates the config file with sensible defaults: `~/.mcp-memory/config.json` (user scope) or `<project>/.mcp-memory/config.json` (project scope; the generated `.mcp.json` pins it via `MCP_MEMORY_CONFIG_PATH`).
 4. Writes memory usage instructions to `.claude/CLAUDE.md` (project scope) or prints a snippet (user scope).
 5. Sets up the nightly consolidation schedule (macOS: launchd; Linux: prints a cron suggestion; skipped for project scope).
+6. Installs the `mcp-memory-graph` usage skill into `~/.claude/skills/` so Claude Code has inline guidance for all 49 tools, gotchas, and workflows. Skip with `--no-skill`.
+
+Under a non-interactive shell (agent/CI, or when `--yes` is given) the wizard is bypassed: defaults are applied and a report is printed showing what was set and how to change each value.
+
+Key flags: `--scope user|project`, `--schedule HH:MM[,HH:MM]` (nightly consolidation time, default `03:00`), `--vault <path>` (enable Obsidian vault round-trip), `--no-review-on-stop` (disable the end-of-session learning review), `--no-skill` (skip skill install), `--remote <url>` (team server mode).
+
+`npx mcp-memory-graph uninstall` reverses everything init did: removes hooks, the nightly schedule, the CLAUDE.md block, and the installed skill.
 
 ### Unattended setup (CI, provisioning, agents)
 

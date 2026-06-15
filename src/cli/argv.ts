@@ -59,6 +59,10 @@ Flags:
   --remote <url>        team mode: register a remote HTTP server instead of a
                         local install. With [--token-env NAME | --token VALUE |
                         --no-auth] for the bearer token.
+  --schedule HH:MM[,HH:MM]  nightly consolidation time(s) (default: 03:00)
+  --vault <path>        enable Obsidian vault round-trip at the given path
+  --no-review-on-stop   disable the end-of-session claude -p learning review
+  --no-skill            skip installing the mcp-memory-graph usage skill
 
 Files written:
   user scope     ~/.claude/settings.json (hooks), ~/.mcp-memory/config.json,

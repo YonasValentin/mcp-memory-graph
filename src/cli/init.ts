@@ -511,6 +511,8 @@ When answering questions about architecture, patterns, conventions, incidents, o
 - At session end, if significant learnings were made, offer to store them via \`memory_store\`
 
 **When in doubt** about any pattern, convention, or past decision — search the MCP memory server before proposing a solution. Past incidents and rules are stored there to prevent repeating mistakes.
+
+> Full memory-tool guidance is in the installed \`mcp-memory-graph\` skill (49 tools, gotchas, workflows).
 `;
 
 function createClaudeMd(scope: Scope): void {

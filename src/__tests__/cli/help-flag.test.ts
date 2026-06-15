@@ -88,6 +88,13 @@ describe('maybePrintHelp', () => {
     expect(text).toContain('config.json');
   });
 
+  it('init usage documents the new flags', () => {
+    const t = helpTextFor('init');
+    for (const f of ['--schedule', '--vault', '--no-review-on-stop', '--no-skill']) {
+      expect(t).toContain(f);
+    }
+  });
+
   it('keys usage documents create/list/revoke + every create flag', () => {
     const text = helpTextFor('keys');
     expect(text).toContain('keys create');
