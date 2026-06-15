@@ -55,8 +55,10 @@ interface ClaudeSettings {
 }
 
 function buildHooksToAdd(): Record<string, HookGroup[]> {
-  const hooksDir = hooksSourceDir; // dist/hooks/
-  const q = (name: string) => `node "${join(hooksDir, name)}"`;
+  // Use npm root -g at hook run-time so the path survives nvm Node version switches.
+  // Absolute paths bake in the current version dir (e.g. .nvm/versions/node/v22.x/...)
+  // and silently break the next time the user runs `nvm use <other>`.
+  const q = (name: string) => `bash -c 'node "$(npm root -g)/mcp-memory-graph/dist/hooks/${name}"'`;
   return {
     SessionStart: [
       { hooks: [{ type: 'command', command: q('memory-session-start.js') }] },
