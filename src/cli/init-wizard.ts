@@ -14,6 +14,9 @@ export interface WizardAnswers {
   commitGraph: boolean;
   remoteEndpoint?: string;
   autoCapture: boolean;
+  /** Flag overrides (not asked by the wizard). */
+  reviewOnStop?: boolean;
+  schedule?: Array<{ hour: number; minute: number }>;
 }
 
 /**
@@ -147,23 +150,34 @@ export function buildConfig(
   answers: WizardAnswers,
   existing?: Partial<ServerConfig>,
 ): ServerConfig {
+  const defaultConsolidation = {
+    similarity_threshold: 0.85,
+    prune_after_days: 30,
+    min_importance_to_keep: 0.1,
+    max_operations: 100,
+    schedule: [{ hour: 3, minute: 0 }],
+  };
+  const defaultHooks = {
+    extract_on_compact: false,
+    extract_on_session_end: false,
+    track_searches: true,
+    review_on_stop: true,
+  };
   return {
     defaults: {
       scope: answers.scope as MemoryScope,
       namespace: answers.namespace ?? 'auto',
     },
     projects: existing?.projects ?? [],
-    consolidation: existing?.consolidation ?? {
-      similarity_threshold: 0.85,
-      prune_after_days: 30,
-      min_importance_to_keep: 0.1,
-      max_operations: 100,
-      schedule: [{ hour: 3, minute: 0 }],
+    consolidation: {
+      ...defaultConsolidation,
+      ...(existing?.consolidation ?? {}),
+      ...(answers.schedule ? { schedule: answers.schedule } : {}),
     },
-    hooks: existing?.hooks ?? {
-      extract_on_compact: false,
-      extract_on_session_end: false,
-      track_searches: true,
+    hooks: {
+      ...defaultHooks,
+      ...(existing?.hooks ?? {}),
+      ...(answers.reviewOnStop !== undefined ? { review_on_stop: answers.reviewOnStop } : {}),
     },
     extraction: existing?.extraction ?? {
       categories: ['decision', 'pattern', 'error_fix', 'convention'],

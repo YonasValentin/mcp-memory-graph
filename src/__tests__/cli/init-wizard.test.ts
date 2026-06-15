@@ -129,6 +129,29 @@ describe('buildConfig', () => {
     expect(config.defaults.namespace).toBe('auto');
   });
 
+  it('buildConfig defaults review_on_stop true and keeps default schedule', () => {
+    const c = buildConfig(defaultAnswers(false));
+    expect(c.hooks.review_on_stop).toBe(true);
+    expect(c.consolidation.schedule).toEqual([{ hour: 3, minute: 0 }]);
+  });
+
+  it('buildConfig applies reviewOnStop=false override', () => {
+    const c = buildConfig({ ...defaultAnswers(false), reviewOnStop: false });
+    expect(c.hooks.review_on_stop).toBe(false);
+  });
+
+  it('buildConfig applies a schedule override', () => {
+    const c = buildConfig({ ...defaultAnswers(false), schedule: [{ hour: 11, minute: 30 }] });
+    expect(c.consolidation.schedule).toEqual([{ hour: 11, minute: 30 }]);
+  });
+
+  it('buildConfig preserves existing consolidation but overrides only schedule', () => {
+    const existing = { consolidation: { similarity_threshold: 0.9, prune_after_days: 7, min_importance_to_keep: 0.2, max_operations: 50, schedule: [{ hour: 1, minute: 0 }] } } as any;
+    const c = buildConfig({ ...defaultAnswers(false), schedule: [{ hour: 16, minute: 0 }] }, existing);
+    expect(c.consolidation.similarity_threshold).toBe(0.9);
+    expect(c.consolidation.schedule).toEqual([{ hour: 16, minute: 0 }]);
+  });
+
   it('is deterministic — same answers produce the same config', () => {
     const answers: WizardAnswers = {
       mode: 'team',
