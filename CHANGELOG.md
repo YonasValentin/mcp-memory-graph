@@ -6,6 +6,31 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-06-15
+
+### Added
+
+- **`mcp-memory-graph` usage skill**, auto-installed by `init` into
+  `~/.claude/skills/mcp-memory-graph/` (project scope: `<project>/.claude/skills/`).
+  Gives Claude Code inline guidance for picking among all 49 tools, the
+  load-bearing gotchas (unscoped search hides `scope:"user"`, rerank-on default,
+  `forget` vs `delete`, `dry_run` consolidate first, model-identity lock), core
+  workflows, and the setup walkthrough. Opt out with `--no-skill`; `uninstall`
+  removes it.
+- `init` flags: `--schedule HH:MM[,HH:MM]` (consolidation times), `--vault <path>`
+  (Obsidian round-trip), `--no-review-on-stop` (disable the end-of-session
+  `claude -p` learning review), `--no-skill` (skip the usage-skill install).
+- `hooks.review_on_stop` config key (default `true`), now first-class in the
+  config type and schema.
+
+### Changed
+
+- **`init` is agent-aware.** Under a non-interactive shell (no TTY) without
+  `--yes`, it applies defaults and prints a report of exactly what it configured
+  and the flags to change each value — instead of silently running a hidden
+  walkthrough with auto-blank answers. `--yes` still applies defaults silently;
+  a real TTY still runs the interactive wizard; piped/scripted stdin still works.
+
 ## [2.4.0] - 2026-06-15
 
 ### Added
