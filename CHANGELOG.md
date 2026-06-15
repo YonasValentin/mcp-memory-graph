@@ -6,6 +6,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.5.4] - 2026-06-15
+
+### Changed
+
+- Docs only: README now shows the web dashboard (dashboard, semantic search, and
+  browse views), adds a "How it compares" section against hosted memory services,
+  and links a CI badge. No code or behavior changes. (Republished so the npm page
+  carries the screenshots.)
+
 ## [2.5.3] - 2026-06-15
 
 ### Added
