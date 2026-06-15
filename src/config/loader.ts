@@ -52,6 +52,15 @@ const ServerConfigSchema = z.object({
       prune_after_days: z.number().int().min(0).default(30),
       min_importance_to_keep: z.number().min(0).max(1).default(0.1),
       max_operations: z.number().int().min(1).default(100),
+      schedule: z
+        .array(
+          z.object({
+            hour: z.number().int().min(0).max(23),
+            minute: z.number().int().min(0).max(59),
+          }),
+        )
+        .min(1)
+        .default([{ hour: 3, minute: 0 }]),
     })
     .default({}),
   hooks: z

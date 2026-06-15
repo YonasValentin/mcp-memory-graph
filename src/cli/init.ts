@@ -11,6 +11,7 @@ import {
   type WizardAnswers,
 } from './init-wizard.js';
 import type { ServerConfig } from '../types.js';
+import { getConfig } from '../config/loader.js';
 import { GREEN, CYAN, RESET, success, warn, info, dim } from './cli-output.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -278,6 +279,16 @@ export function schedulesGlobalConsolidation(scope: Scope): boolean {
   return scope !== 'project';
 }
 
+function buildCalendarIntervalXml(schedule: Array<{ hour: number; minute: number }>): string {
+  const entry = ({ hour, minute }: { hour: number; minute: number }) =>
+    `  <dict>\n    <key>Hour</key>\n    <integer>${hour}</integer>\n    <key>Minute</key>\n    <integer>${minute}</integer>\n  </dict>`;
+
+  if (schedule.length === 1) {
+    return entry(schedule[0]!);
+  }
+  return `  <array>\n${schedule.map((s) => `  ${entry(s)}`).join('\n')}\n  </array>`;
+}
+
 function installLaunchdPlist(scope: Scope): void {
   if (!schedulesGlobalConsolidation(scope)) {
     info('Project scope — skipping the machine-global consolidation schedule');
@@ -303,6 +314,17 @@ function installLaunchdPlist(scope: Scope): void {
     mkdirSync(launchAgentsDir, { recursive: true });
   }
 
+  // Read schedule from config; fall back to 03:00 if config isn't loaded yet.
+  let schedule: Array<{ hour: number; minute: number }>;
+  try {
+    schedule = getConfig().consolidation.schedule;
+  } catch {
+    schedule = [{ hour: 3, minute: 0 }];
+  }
+
+  const calendarIntervalXml = buildCalendarIntervalXml(schedule);
+  const times = schedule.map(({ hour, minute }) => `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`).join(', ');
+
   const plistContent = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -316,12 +338,7 @@ function installLaunchdPlist(scope: Scope): void {
     <string>consolidate</string>
   </array>
   <key>StartCalendarInterval</key>
-  <dict>
-    <key>Hour</key>
-    <integer>3</integer>
-    <key>Minute</key>
-    <integer>0</integer>
-  </dict>
+${calendarIntervalXml}
   <key>StandardErrorPath</key>
   <string>${home}/.mcp-memory/consolidation.log</string>
 </dict>
@@ -330,7 +347,7 @@ function installLaunchdPlist(scope: Scope): void {
 
   writeFileSync(plistPath, plistContent, 'utf-8');
   success(`Created launchd plist at ${plistPath}`);
-  dim('Consolidation will run daily at 03:00');
+  dim(`Consolidation will run daily at ${times}`);
   dim(`Logs: ${home}/.mcp-memory/consolidation.log`);
 }
 

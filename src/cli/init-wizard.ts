@@ -158,6 +158,7 @@ export function buildConfig(
       prune_after_days: 30,
       min_importance_to_keep: 0.1,
       max_operations: 100,
+      schedule: [{ hour: 3, minute: 0 }],
     },
     hooks: existing?.hooks ?? {
       extract_on_compact: false,

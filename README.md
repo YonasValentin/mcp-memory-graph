@@ -524,7 +524,11 @@ The config file controls self-improvement behavior, hook settings, and per-proje
     "similarity_threshold": 0.85,
     "prune_after_days": 30,
     "min_importance_to_keep": 0.1,
-    "max_operations": 100
+    "max_operations": 100,
+    "schedule": [
+      { "hour": 11, "minute": 30 },
+      { "hour": 16, "minute": 0 }
+    ]
   },
   "hooks": {
     "extract_on_compact": false,
@@ -549,6 +553,7 @@ The config file controls self-improvement behavior, hook settings, and per-proje
 | `consolidation` | `prune_after_days` | `30` | Days before pruning low-quality memories |
 | `consolidation` | `min_importance_to_keep` | `0.1` | Minimum importance score to survive pruning |
 | `consolidation` | `max_operations` | `100` | Max operations per consolidation run |
+| `consolidation` | `schedule` | `[{ "hour": 3, "minute": 0 }]` | One or more `{ hour, minute }` entries (24-hour). Re-run `init` after changing to regenerate the launchd plist. |
 | `hooks` | `extract_on_compact` | `false` | Mine transcript before context compression (regex-based, off by default) |
 | `hooks` | `extract_on_session_end` | `false` | Extract learnings when session ends (regex-based, off by default) |
 | `hooks` | `track_searches` | `true` | Log search hits and misses to `search-log.jsonl` |
