@@ -524,6 +524,7 @@ export interface ServerConfig {
     prune_after_days: number;
     min_importance_to_keep: number;
     max_operations: number;
+    schedule: Array<{ hour: number; minute: number }>;
   };
   hooks: {
     extract_on_compact: boolean;
