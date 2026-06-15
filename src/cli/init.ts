@@ -13,6 +13,7 @@ import {
 import type { ServerConfig } from '../types.js';
 import { getConfig } from '../config/loader.js';
 import { GREEN, CYAN, RESET, success, warn, info, dim } from './cli-output.js';
+import { resolveInputMode, parseInitFlags, formatInitReport, type InitFlags } from './init-flags.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const hooksSourceDir = join(__dirname, '..', 'hooks');
@@ -225,7 +226,7 @@ function resolveWizardConfigPath(projectScoped: boolean): { configDir: string; c
  * overwritten by the wizard, and prints a `git add` hint when committing the
  * graph for team sharing.
  */
-async function createConfig(opts: { projectScoped: boolean; interactive: boolean }): Promise<void> {
+async function createConfig(opts: { projectScoped: boolean; interactive: boolean; flags: InitFlags }): Promise<ServerConfig> {
   const { configDir, configPath } = resolveWizardConfigPath(opts.projectScoped);
 
   let existing: Partial<ServerConfig> | undefined;
@@ -248,8 +249,12 @@ async function createConfig(opts: { projectScoped: boolean; interactive: boolean
     }
   } else {
     answers = defaultAnswers(opts.projectScoped);
-    dim('Non-interactive (--yes): using default answers');
+    dim('Using default answers');
   }
+
+  if (opts.flags.vault) answers.vaultPath = opts.flags.vault;
+  if (opts.flags.reviewOnStop !== undefined) answers.reviewOnStop = opts.flags.reviewOnStop;
+  if (opts.flags.schedule) answers.schedule = opts.flags.schedule;
 
   const config = buildConfig(answers, existing);
 
@@ -266,6 +271,7 @@ async function createConfig(opts: { projectScoped: boolean; interactive: boolean
     info('Team sharing: commit the graph artifact so teammates share recall:');
     dim('  git add .mcp-memory/ && git commit -m "chore: share memory graph"');
   }
+  return config;
 }
 
 /**
@@ -547,8 +553,9 @@ export async function runInit(): Promise<void> {
   // `--project` (now an alias for `--scope project`) writes a repo-local config;
   // otherwise it lands in ~/.mcp-memory.
   const projectScoped = scope === 'project';
-  // `--yes`/`-y` skips prompts and writes an all-default (still valid) config.
-  const interactive = !process.argv.includes('--yes') && !process.argv.includes('-y');
+  const flags = parseInitFlags(process.argv);
+  const mode = resolveInputMode(process.argv, !!process.stdin.isTTY);
+  const usePrompter = mode !== 'defaults';
 
   console.log(`\n${CYAN}MCP Memory Graph — Init (${scope} scope)${RESET}\n`);
 
@@ -567,12 +574,17 @@ export async function runInit(): Promise<void> {
   }
 
   console.log('');
-  info(`Step 3/5: Configuring memory (${interactive ? 'interactive wizard' : 'defaults'})...`);
-  await createConfig({ projectScoped, interactive });
+  info(`Step 3/5: Configuring memory (${mode === 'interactive' ? 'interactive wizard' : mode === 'defaults' ? 'defaults' : 'non-interactive'})...`);
+  const config = await createConfig({ projectScoped, interactive: usePrompter, flags });
 
   console.log('');
   info('Step 4/5: Setting up CLAUDE.md instructions...');
   createClaudeMd(scope);
+
+  if (mode === 'nonInteractive') {
+    console.log('');
+    info(formatInitReport(config, scope));
+  }
 
   console.log('');
   info('Step 5/5: Installing scheduled consolidation...');
