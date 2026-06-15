@@ -361,7 +361,7 @@ Init does six things:
 5. Sets up the nightly consolidation schedule (macOS: launchd; Linux: prints a cron suggestion; skipped for project scope).
 6. Installs the `mcp-memory-graph` usage skill into `~/.claude/skills/` so Claude Code has inline guidance for all 49 tools, gotchas, and workflows. Skip with `--no-skill`.
 
-Under a non-interactive shell (agent/CI, or when `--yes` is given) the wizard is bypassed: defaults are applied and a report is printed showing what was set and how to change each value.
+Under a non-interactive shell (agent/CI) the wizard is bypassed: defaults are applied and a report is printed showing what was set and how to change each value. Passing `--yes` applies the defaults silently (no report).
 
 Key flags: `--scope user|project`, `--schedule HH:MM[,HH:MM]` (nightly consolidation time, default `03:00`), `--vault <path>` (enable Obsidian vault round-trip), `--no-review-on-stop` (disable the end-of-session learning review), `--no-skill` (skip skill install), `--remote <url>` (team server mode).
 
