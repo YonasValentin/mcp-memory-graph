@@ -38,37 +38,41 @@
 - Modify: `src/types.ts:529-533`, `src/config/loader.ts:66-72`
 - Test: `src/__tests__/config/review-on-stop-roundtrip.test.ts`
 
+**IMPORTANT (review finding):** `src/config/loader.ts` does NOT export `loadConfig(path)`. It exports a **cached singleton** `getConfig(): ServerConfig` (loader.ts:225) that resolves the path from `MCP_MEMORY_CONFIG_PATH`/cwd/home and caches it, plus `clearConfigCache()` (loader.ts:254). The test must set the env, clear the cache, then call `getConfig()`.
+
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadConfig } from '../../config/loader.js'; // verify exported name; else use getConfig with MCP_MEMORY_CONFIG_PATH
+import { getConfig, clearConfigCache } from '../../config/loader.js';
+
+afterEach(() => { delete process.env.MCP_MEMORY_CONFIG_PATH; clearConfigCache(); });
+
+function loadFrom(obj: unknown): import('../../types.js').ServerConfig {
+  const dir = mkdtempSync(join(tmpdir(), 'cfg-'));
+  const p = join(dir, 'config.json');
+  writeFileSync(p, JSON.stringify(obj));
+  process.env.MCP_MEMORY_CONFIG_PATH = p;
+  clearConfigCache();
+  const cfg = getConfig();
+  rmSync(dir, { recursive: true, force: true });
+  return cfg;
+}
 
 describe('review_on_stop config key', () => {
   it('defaults to true when absent (not stripped by the loader)', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'cfg-'));
-    const p = join(dir, 'config.json');
-    writeFileSync(p, JSON.stringify({ hooks: { track_searches: true } }));
-    const cfg = loadConfig(p);
-    expect(cfg.hooks.review_on_stop).toBe(true);
-    rmSync(dir, { recursive: true, force: true });
+    expect(loadFrom({ hooks: { track_searches: true } }).hooks.review_on_stop).toBe(true);
   });
-
   it('preserves an explicit false', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'cfg-'));
-    const p = join(dir, 'config.json');
-    writeFileSync(p, JSON.stringify({ hooks: { review_on_stop: false } }));
-    const cfg = loadConfig(p);
-    expect(cfg.hooks.review_on_stop).toBe(false);
-    rmSync(dir, { recursive: true, force: true });
+    expect(loadFrom({ hooks: { review_on_stop: false } }).hooks.review_on_stop).toBe(false);
   });
 });
 ```
 
-- [ ] **Step 2: Run it to confirm it fails** — `npx vitest run src/__tests__/config/review-on-stop-roundtrip.test.ts`. Expected: FAIL (key missing / stripped). If `loadConfig` isn't the exported name, first `grep -nE "export function (loadConfig|getConfig)" src/config/loader.ts` and adapt.
+- [ ] **Step 2: Run it to confirm it fails** — `npx vitest run src/__tests__/config/review-on-stop-roundtrip.test.ts`. Expected: FAIL (key missing / stripped). First confirm the export names: `grep -nE "export (function|const) (getConfig|clearConfigCache)" src/config/loader.ts` (lines ~225, ~254) and adapt if the cache-clear helper has a different name.
 
 - [ ] **Step 3: Implement** — `src/types.ts`, in the `hooks` block after `track_searches: boolean;`:
 
@@ -301,7 +305,7 @@ export function formatInitReport(config: ServerConfig, scope: string): string {
     .join(', ');
   return [
     'Applied configuration (non-interactive):',
-    `  scope=${scope}  namespace=${config.defaults.scope}/${config.defaults.namespace}`,
+    `  install_scope=${scope}  default_scope=${config.defaults.scope}  namespace=${config.defaults.namespace}`,
     `  auto_capture=${config.capture.auto_capture}  review_on_stop=${config.hooks.review_on_stop}`,
     `  schedule=${times}  vault=${config.vault.path ?? 'none'}`,
     'To change, re-run with any of:',
@@ -327,17 +331,25 @@ export function formatInitReport(config: ServerConfig, scope: string): string {
 import { formatInitReport } from '../../cli/init-flags.js';
 import { buildConfig, defaultAnswers } from '../../cli/init-wizard.js';
 
-it('formatInitReport lists chosen values and the change-flags', () => {
+it('formatInitReport lists chosen values and the change-flags (vault absent)', () => {
   const cfg = buildConfig({ ...defaultAnswers(false), reviewOnStop: false, schedule: [{ hour: 16, minute: 0 }] });
   const out = formatInitReport(cfg, 'user');
   expect(out).toContain('review_on_stop=false');
   expect(out).toContain('16:00');
+  expect(out).toContain('vault=none');
   expect(out).toContain('--schedule');
   expect(out).toContain('--no-skill');
 });
+
+it('formatInitReport shows the vault path when set (covers the ?? branch)', () => {
+  const cfg = buildConfig({ ...defaultAnswers(false), vaultPath: '/tmp/v' });
+  expect(formatInitReport(cfg, 'user')).toContain('vault=/tmp/v');
+});
 ```
 
-- [ ] **Step 2: Run** — likely PASS already (Task 3 implemented it); if so this is a lock test. Expected: PASS.
+(Both branches of `vault=${... ?? 'none'}` are exercised — needed because `init-flags.ts` is NOT coverage-excluded and the suite enforces a branch floor.)
+
+- [ ] **Step 2: Run** — likely PASS already (Task 3 implemented it); if so these are lock + coverage tests. Expected: PASS.
 - [ ] **Step 3: Commit** — `git add -A && git commit -m "test(init): lock the non-interactive report contents"`
 
 ---
@@ -348,14 +360,22 @@ it('formatInitReport lists chosen values and the change-flags', () => {
 - Modify: `src/cli/init.ts:228-269` (createConfig), `:538-582` (runInit)
 - Test: `src/__tests__/cli/init-agent-report.test.ts` (spawn, mirrors `init-scope-side-effects.test.ts`)
 
-- [ ] **Step 1: Write failing integration test** — spawn `dist/index.js init --scope user` with NO stdin and a temp `HOME`; assert (a) exit 0, (b) stdout contains "Applied configuration (non-interactive)", (c) the written `~/.mcp-memory/config.json` exists. Mirror the spawn/temp-HOME pattern from `src/__tests__/cli/init-scope-side-effects.test.ts` (read it first for the exact env-isolation approach: set `HOME`, `cwd` to a tmpdir, `stdio: ['ignore','pipe','pipe']`).
+- [ ] **Step 1: Write failing integration test** — spawn `dist/index.js init --scope user` with closed stdin and a temp `HOME`; assert (a) exit 0, (b) stdout contains "Applied configuration (non-interactive)", (c) `<tmpHOME>/.mcp-memory/config.json` exists. **Mirror `src/__tests__/cli/help-flag.test.ts:111-150`** (NOT init-scope-side-effects, which uses `process.chdir` + direct imports, no spawn). The real pattern: `CLI = join(ROOT,'dist','index.js')`, `ROOT = join(__dirname,'..','..','..')`; spawn with a temp `HOME`, `stdio:['ignore','pipe','ignore']` (closed stdin → immediate EOF → no hang), and a SIGKILL timeout guard. Gate with `.skipIf(!existsSync(CLI))` so it no-ops before a build.
 
 ```ts
-// sketch — adapt env isolation from init-scope-side-effects.test.ts
-const res = spawnSync('node', [CLI, 'init', '--scope', 'user'], { env: { ...process.env, HOME: tmp }, stdio: ['ignore','pipe','pipe'] });
+// adapt env isolation from help-flag.test.ts:111-150
+const home = mkdtempSync(join(tmpdir(), 'init-home-'));
+const res = spawnSync('node', [CLI, 'init', '--scope', 'user'], {
+  env: { ...process.env, HOME: home },
+  stdio: ['ignore', 'pipe', 'ignore'],
+  timeout: 15000,
+});
 expect(res.status).toBe(0);
 expect(res.stdout.toString()).toContain('Applied configuration (non-interactive)');
+expect(existsSync(join(home, '.mcp-memory', 'config.json'))).toBe(true);
 ```
+
+Note: on darwin `init --scope user` writes a launchd plist under `<HOME>/Library/LaunchAgents` but never execs `launchctl`, so the temp `HOME` keeps it fully isolated.
 
 - [ ] **Step 2: Run to confirm fail** — needs `npm run build` first (spawns dist). Expected: FAIL (no report printed).
 
@@ -654,7 +674,7 @@ it('init usage documents the new flags', () => {
 
 - [ ] **Step 1** — `npm run build:all` (confirm `dist/skill/SKILL.md` present).
 - [ ] **Step 2** — `npm test` (full vitest battery green).
-- [ ] **Step 3** — `npm run lint` and `npm run typecheck` if present (`grep -E '"(lint|typecheck)"' package.json`).
+- [ ] **Step 3** — `npm run lint` (this is `tsc --noEmit` — the typecheck; there is no separate `typecheck` script). Confirm coverage floors still pass (the suite enforces branch ≥86 over `src/**`; `init-flags.ts` is net-new and NOT excluded — Tasks 3/4 must cover its branches).
 - [ ] **Step 4** — Manual smoke: in a temp dir, `node dist/index.js init --scope user --schedule 11:30 --no-review-on-stop` with no stdin → confirm report prints, `~/.mcp-memory/config.json` has `review_on_stop:false` + schedule `11:30`, and `~/.claude/skills/mcp-memory-graph/SKILL.md` exists. Then `node dist/index.js uninstall` removes the skill dir.
 - [ ] **Step 5** — Push branch, open PR: `gh pr create --fill --base main`. Let CI (the now-green pipeline) run; windows leg non-blocking.
 
