@@ -6,6 +6,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.5.1] - 2026-06-15
+
+### Added
+
+- `references/advanced.md` in the bundled usage skill — deep guidance the index
+  skill only one-lined: reranker tradeoffs (where it helps vs. the ConvoMem
+  −7.3pt case), dream-cycle consolidate tuning, per-key RBAC
+  (`keys create|list|revoke`), shared-DB multi-tenancy (`MCP_API_NAMESPACE`),
+  the webhook event bus, signed-provenance verify, temporal-decay shapes, and
+  worked examples (org-wide brain, webhook dispatch, scoped key). All claims
+  verified against source — no fabricated flags or behavior.
+
 ## [2.5.0] - 2026-06-15
 
 ### Added
