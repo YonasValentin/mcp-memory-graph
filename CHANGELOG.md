@@ -6,6 +6,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.5.2] - 2026-06-15
+
+### Fixed
+
+- **Nightly consolidation now actually runs after `init`.** `init` wrote the
+  launchd plist to `~/Library/LaunchAgents/` but never registered it with launchd,
+  which only scans that directory at login — so the scheduled dream-cycle cleanup
+  silently never ran until the user's next relogin/reboot. `init` now
+  `launchctl bootout` + `bootstrap`s the plist immediately, so the schedule is live
+  on the spot (and re-running with a changed `--schedule` reloads it). `uninstall`
+  boots the job out before deleting the plist. Best-effort: if `launchctl` is
+  unavailable (e.g. no GUI session in CI) it warns rather than failing — the plist
+  still activates at next login.
+
 ## [2.5.1] - 2026-06-15
 
 ### Added
