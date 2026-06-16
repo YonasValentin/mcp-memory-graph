@@ -6,7 +6,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-## [2.6.1] - 2026-06-16
+## [2.6.2] - 2026-06-16
+
+### Fixed
+
+- **Conflicts had no resolution path — `resolved_at` was never written in
+  production.** `recordConflicts` inserted `memory_conflicts` rows with
+  `resolved_at` NULL and nothing ever stamped it, so an applied supersession left
+  a phantom audit-"unresolved" row behind forever. New single-source
+  `markConflictsResolved()` stamps `resolved_at`/`resolved_by` for a conflict on
+  either endpoint; the supersede path now resolves the conflict it creates
+  (`resolved_by = 'supersede'`).
+- **Pending-conflict count/insights were endpoint-asymmetric.** `memory_health`,
+  `memory_insights`, and the SessionStart hook excluded a conflict only when its
+  OLD memory was retired — so retiring the NEW (correcting) fact left a moot
+  conflict counted as pending. The liveness guard now covers BOTH endpoints
+  (`valid_to`/`tx_expired` on old and new), in the shared
+  `countUnresolvedConflicts()` predicate and the `memory_insights` query.
 
 ### Fixed
 

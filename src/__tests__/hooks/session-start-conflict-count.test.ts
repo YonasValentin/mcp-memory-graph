@@ -62,6 +62,16 @@ describe('session-start pending-conflict count == memory_health (root cause)', (
     expect(countUnresolvedConflicts(db, { scope: 'project', namespace: 'ns' })).toBe(0);
   });
 
+  it('EXCLUDES a conflict whose NEW (correcting) memory was retired', () => {
+    addMemory(db, 'old');
+    addMemory(db, 'new');
+    addConflict(db, 'old', 'new'); // resolved_at NULL, old still live
+    db.prepare(`UPDATE memories SET valid_to = ? WHERE id = ?`).run('2026-06-02T00:00:00.000Z', 'new');
+    // the contradicting fact is gone → the conflict is moot, must not count:
+    expect(handleHealth(db, { scope: 'project', namespace: 'ns' }).conflicts.unresolved).toBe(0);
+    expect(countUnresolvedConflicts(db, { scope: 'project', namespace: 'ns' })).toBe(0);
+  });
+
   it('matches memory_health across a mixed corpus', () => {
     addMemory(db, 'a');
     addMemory(db, 'b');

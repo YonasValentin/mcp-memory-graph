@@ -112,11 +112,12 @@ export function accessCeilingCondition(
 
 /**
  * Single source of truth for the "how many conflicts are still pending?" count.
- * A conflict is PENDING when it is unresolved (`resolved_at IS NULL`) AND its OLD
- * memory is still live — a conflict whose old memory was retired by supersession
- * (`valid_to`/`tx_expired` set) is resolved-in-fact even though `resolved_at` was
- * never stamped, so it must not count. Both endpoints are scoped to the caller's
- * (scope, namespace) so a tenant never sees a foreign tenant's conflict count.
+ * A conflict is PENDING when it is unresolved (`resolved_at IS NULL`) AND BOTH
+ * endpoints are still live. A conflict whose OLD memory was retired by
+ * supersession, OR whose NEW (correcting) memory was itself later retired
+ * (`valid_to`/`tx_expired` set on either side), is moot even when `resolved_at`
+ * was never stamped, so it must not count. Both endpoints are scoped to the
+ * caller's (scope, namespace) so a tenant never sees a foreign tenant's count.
  * This mirrors `memory_health`/`memory_insights` exactly; the session-start hook
  * previously hand-rolled a naive `WHERE resolved_at IS NULL` and over-counted.
  */
@@ -134,7 +135,9 @@ export function countUnresolvedConflicts(
         `SELECT COUNT(*) AS n FROM memory_conflicts c
            JOIN memories o ON o.id = c.old_memory_id
            JOIN memories n ON n.id = c.new_memory_id
-          WHERE c.resolved_at IS NULL AND o.valid_to IS NULL AND o.tx_expired IS NULL${scopeSql}`,
+          WHERE c.resolved_at IS NULL
+            AND o.valid_to IS NULL AND o.tx_expired IS NULL
+            AND n.valid_to IS NULL AND n.tx_expired IS NULL${scopeSql}`,
       )
       .get(...o.params, ...n.params)?.n ?? 0
   );

@@ -82,7 +82,8 @@ export function handleInsights(
            JOIN memories o ON o.id = c.old_memory_id
            JOIN memories n ON n.id = c.new_memory_id
           WHERE c.resolved_at IS NULL
-            AND o.valid_to IS NULL AND o.tx_expired IS NULL${o.sql}${n.sql}
+            AND o.valid_to IS NULL AND o.tx_expired IS NULL
+            AND n.valid_to IS NULL AND n.tx_expired IS NULL${o.sql}${n.sql}
           ORDER BY c.id`,
       )
       .all(...o.params, ...n.params);

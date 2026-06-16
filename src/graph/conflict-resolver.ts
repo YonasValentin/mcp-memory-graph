@@ -168,6 +168,26 @@ export function detectConflicts(
  * Caller is responsible for wrapping this in a transaction with the matching
  * `insertMemory(...)` so partial failures don't leak.
  */
+/**
+ * Stamp `resolved_at`/`resolved_by` on every still-unresolved conflict touching
+ * `memoryId` on EITHER endpoint. Called whenever a memory is retired (supersede,
+ * consolidate, forget): once one side of a contradiction is gone the conflict is
+ * moot, and the audit columns must record how it was closed. Idempotent — the
+ * `resolved_at IS NULL` guard means an already-resolved row keeps its first
+ * resolution. Previously `resolved_at` was written nowhere in production, so
+ * every applied supersession left an audit-"unresolved" row behind forever.
+ */
+export function markConflictsResolved(
+  db: Database.Database,
+  memoryId: string,
+  resolvedBy: string,
+): void {
+  db.prepare(
+    `UPDATE memory_conflicts SET resolved_at = ${NOW_ISO_SQL}, resolved_by = ?
+     WHERE (old_memory_id = ? OR new_memory_id = ?) AND resolved_at IS NULL`,
+  ).run(resolvedBy, memoryId, memoryId);
+}
+
 export function recordConflicts(
   db: Database.Database,
   conflicts: ConflictResult[],
@@ -208,11 +228,19 @@ export function recordConflicts(
   const nNs = np?.namespace ?? '';
 
   for (const c of conflicts) {
-    if (c.type === 'superseded' && retireSuperseded) {
+    const retire = c.type === 'superseded' && retireSuperseded;
+    if (retire) {
       supersedeStmt.run(newMemoryId, c.existing_memory_id);
     }
     if (c.type === 'duplicate' || c.type === 'superseded' || c.type === 'contradicted') {
       insertStmt.run(randomUUID(), c.existing_memory_id, newMemoryId, c.type, c.description, nScope, nNs);
+    }
+    // The superseded fact was just retired, so the conflict it created is
+    // resolved-on-arrival: stamp the audit columns (and close any prior
+    // unresolved conflict on that now-dead memory) instead of leaving a phantom
+    // "unresolved" row behind.
+    if (retire) {
+      markConflictsResolved(db, c.existing_memory_id, 'supersede');
     }
   }
 }
