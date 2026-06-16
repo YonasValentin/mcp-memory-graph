@@ -1,6 +1,6 @@
 {
   "name": "mcp-memory-graph",
-  "version": "2.6.2",
+  "version": "2.6.3",
   "description": "Local-first memory MCP server for Claude Code and any MCP client: hybrid vector + knowledge-graph search, bi-temporal recall, Obsidian sync. Runs 100% on your machine, $0/token.",
   "mcpName": "io.github.YonasValentin/mcp-memory-graph",
   "author": "Yonas Valentin Mougaard Kristensen <yonasmougaard@gmail.com> (https://github.com/YonasValentin)",

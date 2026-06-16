@@ -6,7 +6,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-## [2.6.2] - 2026-06-16
+## [2.6.3] - 2026-06-16
+
+### Fixed
+
+- **`init` generated a launchd consolidation plist that never ran.** The
+  ProgramArguments used a bare `node`, but launchd runs with a minimal PATH
+  (`/usr/bin:/bin:/usr/sbin:/sbin`) that excludes nvm — so on an nvm install the
+  nightly consolidation silently failed to exec, leaving a 0-byte log and an
+  ever-growing store. The plist now uses the absolute `process.execPath` and adds
+  a `StandardOutPath` so a successful run is observable (a stderr-only log can't
+  tell "ran clean" from "never ran"). The template is extracted into a pure,
+  unit-tested `buildConsolidatePlist()`.
 
 ### Fixed
 

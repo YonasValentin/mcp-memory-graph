@@ -335,6 +335,43 @@ function buildCalendarIntervalXml(schedule: Array<{ hour: number; minute: number
   return `  <array>\n${schedule.map((s) => `  ${entry(s)}`).join('\n')}\n  </array>`;
 }
 
+/**
+ * Build the launchd consolidation plist XML. Pure (no I/O) so it is unit-tested.
+ * `nodePath` MUST be an absolute binary — launchd runs with a minimal PATH
+ * (/usr/bin:/bin:/usr/sbin:/sbin) that does not include nvm, so a bare `node`
+ * never resolves and the job silently fails. StandardOutPath makes a successful
+ * run observable (the stderr-only log can't distinguish "ran clean" from
+ * "never ran").
+ */
+export function buildConsolidatePlist(opts: {
+  nodePath: string;
+  distIndexPath: string;
+  home: string;
+  calendarIntervalXml: string;
+}): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.mcp-memory.consolidate</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${opts.nodePath}</string>
+    <string>${opts.distIndexPath}</string>
+    <string>consolidate</string>
+  </array>
+  <key>StartCalendarInterval</key>
+${opts.calendarIntervalXml}
+  <key>StandardOutPath</key>
+  <string>${opts.home}/.mcp-memory/consolidation.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>${opts.home}/.mcp-memory/consolidation.log</string>
+</dict>
+</plist>
+`;
+}
+
 function installLaunchdPlist(scope: Scope): void {
   if (!schedulesGlobalConsolidation(scope)) {
     info('Project scope — skipping the machine-global consolidation schedule');
@@ -371,25 +408,12 @@ function installLaunchdPlist(scope: Scope): void {
   const calendarIntervalXml = buildCalendarIntervalXml(schedule);
   const times = schedule.map(({ hour, minute }) => `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`).join(', ');
 
-  const plistContent = `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>com.mcp-memory.consolidate</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>node</string>
-    <string>${distIndexPath}</string>
-    <string>consolidate</string>
-  </array>
-  <key>StartCalendarInterval</key>
-${calendarIntervalXml}
-  <key>StandardErrorPath</key>
-  <string>${home}/.mcp-memory/consolidation.log</string>
-</dict>
-</plist>
-`;
+  const plistContent = buildConsolidatePlist({
+    nodePath: process.execPath,
+    distIndexPath,
+    home,
+    calendarIntervalXml,
+  });
 
   writeFileSync(plistPath, plistContent, 'utf-8');
   success(`Created launchd plist at ${plistPath}`);
