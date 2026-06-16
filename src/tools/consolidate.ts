@@ -16,6 +16,7 @@ import { computeRetention } from '../search/temporal.js';
 import { l2FromCosineSim } from '../search/scoring.js';
 import { DEDUP_COSINE_SIMILARITY } from '../constants/thresholds.js';
 import { reconcileBlocked } from '../lib/reconcile-guard.js';
+import { promoteLessons } from './promote-lessons.js';
 
 /**
  * Below this access count a memory is "weakly held" and eligible for the
@@ -122,6 +123,17 @@ export async function handleConsolidate(
      */
     forgetting_floor?: number;
     /**
+     * Opt-in promotion of the highest-signal lessons/incidents into the
+     * always-in-context core_memory tier. Undefined/false → no promotion.
+     */
+    promote_lessons?: boolean;
+    /** Minimum importance_score to promote (default 0.5). */
+    promotion_importance_floor?: number;
+    /** Max digest entries per (scope, namespace) block (default 7). */
+    promotion_max_entries?: number;
+    /** corroboration_count that promotes a lesson regardless of importance (default 2). */
+    promotion_min_corroboration?: number;
+    /**
      * RBAC §6 (re-battle-3): principal egress/integrity ceiling. Confines every
      * prune + merge to rows at/below the caller's clearance, so a sub-ceiling
      * principal can't destroy or merge an over-ceiling memory in its namespace.
@@ -137,6 +149,7 @@ export async function handleConsolidate(
     expired_pruned: 0,
     low_quality_pruned: 0,
     forgetting_pruned: 0,
+    lessons_promoted: 0,
     scores_updated: 0,
     errors: [],
     knowledge_gaps: [],
@@ -444,6 +457,32 @@ export async function handleConsolidate(
       }
     } catch (err) /* c8 ignore start */ {
       report.errors.push(`Dedup stage failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    /* c8 ignore stop */
+  }
+
+  // ── Stage 4b: Promote hard-won lessons into core memory ───────────────
+  // Opt-in. Runs after dedup (final survivor set + fresh importance scores) so
+  // the digest reflects the consolidated corpus. dry_run computes the count
+  // without writing. Failures are non-fatal — they don't abort the cycle.
+  if (input.promote_lessons && !limitReached()) {
+    try {
+      const { promoted } = promoteLessons(db, {
+        filterClause,
+        filterParams,
+        // Floor sits below the access-based score updateQualityScores assigns a
+        // fresh memory (~0.3); ranking + corroboration drive real selection. It's
+        // a dead-memory cutoff, not the bar.
+        importanceFloor: input.promotion_importance_floor ?? 0.2,
+        maxEntries: input.promotion_max_entries ?? 7,
+        minCorroboration: input.promotion_min_corroboration ?? 2,
+        dryRun,
+      });
+      report.lessons_promoted = promoted;
+    } catch (err) /* c8 ignore start */ {
+      report.errors.push(
+        `Promote stage failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
     /* c8 ignore stop */
   }

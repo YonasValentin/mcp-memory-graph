@@ -77,7 +77,7 @@ export const RELATIONSHIP_TYPES = [
 ] as const;
 
 /** Categories of auto-extracted learnings. */
-export const LEARNING_CATEGORIES = ['decision', 'pattern', 'error_fix', 'convention'] as const;
+export const LEARNING_CATEGORIES = ['decision', 'pattern', 'error_fix', 'convention', 'incident', 'lesson'] as const;
 
 /** Sortable list/query fields. */
 export const SORT_FIELDS = [

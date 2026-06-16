@@ -42,6 +42,16 @@ const EXTRACTION_PATTERNS: ExtractionPattern[] = [
     regex: /(?:convention|standard|rule|policy|guideline|naming convention|must always|should always|never)\s*[:;]?\s*(.+?)(?:\.|$)/gim,
     confidence: 0.4,
   },
+  {
+    type: 'incident',
+    regex: /(?:root cause|postmortem|the outage|the incident|went down|brought down|regression|broke production|service degradation)\s*(?:was|were|is)?\s*[:;,]?\s*(.+?)(?:\.|$)/gim,
+    confidence: 0.5,
+  },
+  {
+    type: 'lesson',
+    regex: /(?:lesson learned|in hindsight|next time|going forward|the takeaway|key takeaway)\s*[:;,]?\s*(.+?)(?:\.|$)/gim,
+    confidence: 0.4,
+  },
 ];
 
 const MAX_EXTRACTIONS = 20;

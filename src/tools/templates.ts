@@ -19,20 +19,32 @@ export interface TemplateResult {
   known: boolean;
 }
 
+/** Placeholder line written under an empty section (shared by scaffold + fill). */
+const PLACEHOLDER = '_…_';
+
 /**
  * Build a markdown scaffold from an ordered list of section names. Each section
  * becomes a `## Section` header followed by a placeholder line.
  */
 function scaffold(fields: string[]): string {
-  return fields.map((field) => `## ${field}\n_…_`).join('\n\n') + '\n';
+  return fields.map((field) => `## ${field}\n${PLACEHOLDER}`).join('\n\n') + '\n';
+}
+
+/** Normalize a section name to a lookup key so callers may pass snake_case. */
+function normalizeKey(field: string): string {
+  return field.toLowerCase().replace(/[^a-z0-9]+/g, '_');
 }
 
 /** Known scaffolds, keyed by document_type. */
 export const TEMPLATES: Record<string, { template: string; fields: string[] }> = (() => {
+  // One field list, keyed under both 'learning' (legacy) and 'lesson' (the
+  // LEARNING_CATEGORIES name + memory_lesson's default document_type).
+  const learningSections = ['What', 'Why it matters', 'How to apply'];
   const sections: Record<string, string[]> = {
     decision: ['Context', 'Decision', 'Consequences'],
     incident: ['Symptom', 'Root Cause', 'Fix', 'Prevention'],
-    learning: ['What', 'Why it matters', 'How to apply'],
+    learning: learningSections,
+    lesson: learningSections,
     'bug-fix': ['Bug', 'Cause', 'Fix', 'Test'],
     meeting: ['Attendees', 'Notes', 'Action Items'],
     session: ['Summary', 'Decisions', 'Next steps'],
@@ -74,4 +86,35 @@ export function getTemplate(documentType: string): TemplateResult {
 /** Thin wrapper over {@link getTemplate} for the MCP tool handler. */
 export function handleTemplate(input: { document_type: string }): TemplateResult {
   return getTemplate(input.document_type);
+}
+
+export interface FilledTemplate {
+  content: string;
+  fields: string[];
+  known: boolean;
+}
+
+/**
+ * Fill a scaffold's sections with caller-supplied values, keyed by the section
+ * name (exact, e.g. "Root Cause", or normalized snake_case, e.g. "root_cause").
+ * Uses the SAME field list and placeholder as {@link scaffold} so a filled note
+ * is structurally identical to its empty scaffold — a missing or blank value
+ * keeps the placeholder. Unknown document types fall back to the generic
+ * sections (known:false), mirroring {@link getTemplate}.
+ */
+export function fillTemplate(
+  documentType: string,
+  values: Record<string, string>,
+): FilledTemplate {
+  const match = TEMPLATES[documentType];
+  const fields = match ? match.fields : GENERIC_FIELDS;
+  const content =
+    fields
+      .map((field) => {
+        const raw = values[field] ?? values[normalizeKey(field)];
+        const value = raw?.trim();
+        return `## ${field}\n${value && value.length > 0 ? value : PLACEHOLDER}`;
+      })
+      .join('\n\n') + '\n';
+  return { content, fields, known: Boolean(match) };
 }

@@ -42,7 +42,7 @@ try {
   ok('server advertises instructions', instructions.length > 0 && /memory_search|memory_store/.test(instructions), instructions.slice(0, 60));
 
   const tools = await client.listTools();
-  ok('lists >= 49 tools', tools.tools.length >= 49, `got ${tools.tools.length}`);
+  ok('lists >= 50 tools', tools.tools.length >= 50, `got ${tools.tools.length}`);
   // Every tool must advertise annotations. The store is a closed-world local
   // store (openWorldHint:false) EXCEPT the M3 webhook bus, the one tool that
   // makes outbound HTTP — it is honestly tagged openWorldHint:true.

@@ -1220,6 +1220,44 @@ export const MemoryTemplateSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// 28b. MemoryLessonSchema — one-call structured lesson/incident capture
+// ---------------------------------------------------------------------------
+
+export const MemoryLessonSchema = z.object({
+  document_type: z
+    .string()
+    .min(1)
+    .default('lesson')
+    .describe(
+      'Section template to fill: lesson | incident | decision | bug-fix | meeting | ' +
+      'session. Unknown types use a generic Summary/Details/Notes scaffold.',
+    ),
+  fields: z
+    .record(z.string())
+    .describe(
+      'Section values keyed by section name (snake_case ok), e.g. ' +
+      '{symptom, root_cause, fix, prevention} for an incident or ' +
+      '{what, why_it_matters, how_to_apply} for a lesson. Omitted sections keep a placeholder.',
+    ),
+  title: z
+    .string()
+    .optional()
+    .describe('Optional title (auto-derived from the first field value when omitted)'),
+  scope: scopeFieldWithDefault(),
+  namespace: namespaceField(),
+  department: departmentField(),
+  tags: tagsField(),
+  source: sourceField(),
+  access_level: accessLevelWithDefault(),
+  importance_score: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe('Manual importance 0–1 (higher surfaces first in reflection/recall)'),
+});
+
+// ---------------------------------------------------------------------------
 // 29. MemorySessionNoteSchema (Pillar 6) — frictionless per-session capture
 // ---------------------------------------------------------------------------
 

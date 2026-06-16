@@ -199,4 +199,32 @@ describe('extractFromTranscript', () => {
       expect(results[0].confidence).toBe(0.5); // decision confidence
     }
   });
+
+  it('extracts incidents from postmortem language', () => {
+    const transcript = 'The root cause was a database connection pool exhausted under peak checkout traffic.';
+    const results = extractFromTranscript(transcript);
+    const incidents = results.filter((r) => r.type === 'incident');
+    expect(incidents.length).toBeGreaterThan(0);
+    expect(incidents[0].content).toContain('connection pool');
+  });
+
+  it('extracts lessons from hindsight language', () => {
+    const transcript = 'Lesson learned: always add a circuit breaker before calling the third party payment API.';
+    const results = extractFromTranscript(transcript);
+    const lessons = results.filter((r) => r.type === 'lesson');
+    expect(lessons.length).toBeGreaterThan(0);
+    expect(lessons[0].content).toContain('circuit breaker');
+  });
+
+  it('filters to incident category only', () => {
+    const transcript = [
+      'We decided to use GraphQL for the new API endpoints.',
+      'The root cause was an unindexed foreign key causing full table scans on every order lookup.',
+    ].join('\n');
+    const incidentsOnly = extractFromTranscript(transcript, ['incident']);
+    expect(incidentsOnly.length).toBeGreaterThan(0);
+    for (const r of incidentsOnly) {
+      expect(r.type).toBe('incident');
+    }
+  });
 });

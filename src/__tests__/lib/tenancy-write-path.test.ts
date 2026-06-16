@@ -35,11 +35,13 @@ import { CachedEmbeddingProvider } from '../../embeddings/cache.js';
 import {
   MemoryIngestSchema,
   MemorySessionNoteSchema,
+  MemoryLessonSchema,
   CoreMemoryAppendSchema,
   CoreMemoryGetSchema,
 } from '../../schemas/index.js';
 import { handleIngest } from '../../tools/ingest.js';
 import { handleSessionNote } from '../../tools/session-note.js';
+import { handleLesson } from '../../tools/lesson.js';
 import { handleCoreMemoryGet, handleCoreMemoryAppend } from '../../tools/core-memory.js';
 
 const prev = process.env.MCP_API_NAMESPACE;
@@ -76,6 +78,22 @@ describe('write/read isolation under MCP_API_NAMESPACE (F1b)', () => {
         MemoryIngestSchema.parse({
           content: 'A document long enough to chunk. '.repeat(40),
           namespace: 'callerNs',
+        }),
+      ),
+    );
+    expect(countInNamespace(db, 'nsForced')).toBeGreaterThan(0);
+    expect(countInNamespace(db, 'callerNs')).toBe(0);
+  });
+
+  it('memory_lesson persists the captured note under the forced namespace, not the caller value', async () => {
+    await handleLesson(
+      db,
+      embedder,
+      scopeToNamespace(
+        MemoryLessonSchema.parse({
+          document_type: 'incident',
+          namespace: 'callerNs',
+          fields: { symptom: 'orders endpoint returned 500 under peak load' },
         }),
       ),
     );
@@ -141,6 +159,9 @@ describe('server.ts wires every namespace-bearing tool through withForcedNs (F1b
     // session_note also threads principalAccessCeiling() (RB-8); assert the
     // withForcedNs forcing mechanism, not the full arg list.
     'handleSessionNote(getDb(), await getEmbedder(), withForcedNs(parsed)',
+    // memory_lesson writes a memory under the caller scope/namespace and threads
+    // the ceiling like extract_learnings — force-scoping must wrap its input.
+    'handleLesson(getDb(), await getEmbedder(), withCeiling(withForcedNs(parsed)))',
     'handleCoreMemoryGet(getDb(), withForcedNs(parsed))',
     'handleCoreMemoryAppend(getDb(), withForcedNs(parsed))',
     'handleCoreMemoryReplace(getDb(), withForcedNs(parsed))',

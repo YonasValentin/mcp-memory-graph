@@ -487,6 +487,8 @@ export interface ConsolidationReport {
   low_quality_pruned: number;
   /** Memories pruned by the opt-in forgetting-curve pass (0 unless `forgetting_floor` set). */
   forgetting_pruned: number;
+  /** Lessons/incidents promoted into core_memory this run (0 unless `promote_lessons` set). */
+  lessons_promoted: number;
   scores_updated: number;
   /** True execution failures only — see `knowledge_gaps` for missing-knowledge signals. */
   errors: string[];
@@ -524,6 +526,9 @@ export interface ServerConfig {
     prune_after_days: number;
     min_importance_to_keep: number;
     max_operations: number;
+    auto_promote_lessons: boolean;
+    promotion_importance_floor: number;
+    promotion_max_entries: number;
     schedule: Array<{ hour: number; minute: number }>;
   };
   hooks: {
