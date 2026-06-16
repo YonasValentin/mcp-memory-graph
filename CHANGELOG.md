@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-06-16
+
 ### Added
 
 - **Lessons-learned capture + auto-recall flywheel.** Two-part feature so the
