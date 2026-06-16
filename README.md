@@ -118,6 +118,24 @@ The first time a memory tool runs, the embedding model (about 30 MB) downloads f
 
 To undo everything: `npx mcp-memory-graph uninstall`.
 
+## Upgrading
+
+```bash
+npm install -g mcp-memory-graph@latest   # or just let `npx -y mcp-memory-graph` pull it
+npx mcp-memory-graph init                # re-run to refresh on-disk hooks + the nightly schedule
+```
+
+Upgrading the package updates the **code** that runs each session (hooks, tools, the server), so server-side fixes apply the next time a tool runs — nothing else needed for those.
+
+But files that `init` wrote earlier are **not** rewritten by a package upgrade: the Claude Code hook registrations in `settings.json` and the macOS launchd plist at `~/Library/LaunchAgents/com.mcp-memory.consolidate.plist`. If you installed before **2.6.3**, that plist used a bare `node` that launchd (whose minimal PATH excludes nvm) could not run — so the nightly consolidation silently never fired. **Re-run `npx mcp-memory-graph init` once after upgrading** to regenerate it with an absolute node path and an output log. Verify it then runs:
+
+```bash
+launchctl start com.mcp-memory.consolidate
+cat ~/.mcp-memory/consolidation.log      # should show a "Consolidation complete" report
+```
+
+To clear conflict noise that accumulated while the job wasn't running: `npx mcp-memory-graph consolidate`.
+
 ## How it works, in plain terms
 
 When you store a memory, the server turns the text into a vector (a list of 384 numbers that captures its meaning) using a small model that runs inside Node.js. It also indexes the text for keyword search. Both live in one SQLite file, by default at `~/.mcp-memory/memory.db`.

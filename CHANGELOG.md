@@ -6,6 +6,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.6.4] - 2026-06-16
+
+### Docs
+
+- **Added an "Upgrading" section to the README.** A package upgrade refreshes the
+  code that runs each session (hooks, tools, server) but does NOT rewrite files
+  `init` wrote earlier — the `settings.json` hook registrations and the launchd
+  plist. Anyone who installed before 2.6.3 must re-run `npx mcp-memory-graph init`
+  once to regenerate the plist with the absolute-node fix (2.6.3), otherwise their
+  nightly consolidation stays broken. Documents the verify + cleanup commands.
+
 ## [2.6.3] - 2026-06-16
 
 ### Fixed
