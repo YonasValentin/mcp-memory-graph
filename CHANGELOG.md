@@ -6,6 +6,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.6.1] - 2026-06-16
+
+### Fixed
+
+- **SessionStart "N conflicts pending" over-counted.** The session-start hook
+  hand-rolled a naive `SELECT COUNT(*) FROM memory_conflicts WHERE resolved_at IS
+  NULL`, which (a) counted conflicts already resolved-by-supersession (the old
+  memory is retired but `resolved_at` was never stamped, so the number only ever
+  grew) and (b) pooled every namespace, leaking a project's count across tenants.
+  The count is now the single-source `countUnresolvedConflicts()` predicate —
+  joins both endpoints, excludes retired old memories (`valid_to`/`tx_expired`),
+  and scopes to the current namespace — matching `memory_health` and
+  `memory_insights`. `memory_health` was refactored onto the same helper to kill
+  the duplicated SQL.
+
 ## [2.6.0] - 2026-06-16
 
 ### Added

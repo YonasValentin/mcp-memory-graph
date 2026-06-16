@@ -10,6 +10,8 @@
  * Centralizing it guarantees every surface agrees on what "live" means.
  */
 
+import type Database from 'better-sqlite3';
+
 /**
  * SQLite expression for "now" in the ISO-8601-with-millis-Z format
  * (`YYYY-MM-DDTHH:MM:SS.sssZ`). Use this everywhere a timestamp is written or
@@ -106,4 +108,34 @@ export function accessCeilingCondition(
     conditions: [`${col} IN (${ceiling.map(() => '?').join(',')})`],
     params: [...ceiling],
   };
+}
+
+/**
+ * Single source of truth for the "how many conflicts are still pending?" count.
+ * A conflict is PENDING when it is unresolved (`resolved_at IS NULL`) AND its OLD
+ * memory is still live — a conflict whose old memory was retired by supersession
+ * (`valid_to`/`tx_expired` set) is resolved-in-fact even though `resolved_at` was
+ * never stamped, so it must not count. Both endpoints are scoped to the caller's
+ * (scope, namespace) so a tenant never sees a foreign tenant's conflict count.
+ * This mirrors `memory_health`/`memory_insights` exactly; the session-start hook
+ * previously hand-rolled a naive `WHERE resolved_at IS NULL` and over-counted.
+ */
+export function countUnresolvedConflicts(
+  db: Database.Database,
+  input: { scope?: string; namespace?: string } = {},
+): number {
+  const o = scopeConditions(input, 'o');
+  const n = scopeConditions(input, 'n');
+  const scoped = [...o.conditions, ...n.conditions];
+  const scopeSql = scoped.length ? ` AND ${scoped.join(' AND ')}` : '';
+  return (
+    db
+      .prepare<unknown[], { n: number }>(
+        `SELECT COUNT(*) AS n FROM memory_conflicts c
+           JOIN memories o ON o.id = c.old_memory_id
+           JOIN memories n ON n.id = c.new_memory_id
+          WHERE c.resolved_at IS NULL AND o.valid_to IS NULL AND o.tx_expired IS NULL${scopeSql}`,
+      )
+      .get(...o.params, ...n.params)?.n ?? 0
+  );
 }

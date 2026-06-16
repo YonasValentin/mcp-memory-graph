@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import type BetterSqlite3 from 'better-sqlite3';
 import { resolveNamespace } from '../config/loader.js';
 import { resolveDbPath } from '../db/db-path.js';
-import { NOW_ISO_SQL } from '../db/predicates.js';
+import { NOW_ISO_SQL, countUnresolvedConflicts } from '../db/predicates.js';
 
 async function main(): Promise<void> {
   // Safety timeout - hooks must never hang
@@ -163,11 +163,13 @@ async function main(): Promise<void> {
       // Entities table may not exist yet
     }
 
-    // Unresolved conflicts
+    // Unresolved conflicts. Scope to THIS namespace and exclude conflicts already
+    // resolved-by-supersession via the shared single-source count — the previous
+    // naive `WHERE resolved_at IS NULL` pooled every namespace and never decremented
+    // on supersession, so the surfaced number only ever grew.
     let conflictCount = 0;
     try {
-      const conflicts = db.prepare('SELECT COUNT(*) as cnt FROM memory_conflicts WHERE resolved_at IS NULL').get() as { cnt: number } | undefined;
-      conflictCount = conflicts?.cnt ?? 0;
+      conflictCount = countUnresolvedConflicts(db, { namespace });
     } catch {
       // Table may not exist yet
     }

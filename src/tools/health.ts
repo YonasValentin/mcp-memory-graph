@@ -1,5 +1,10 @@
 import type Database from 'better-sqlite3';
-import { liveConditions, scopeConditions, accessCeilingCondition } from '../db/predicates.js';
+import {
+  liveConditions,
+  scopeConditions,
+  accessCeilingCondition,
+  countUnresolvedConflicts,
+} from '../db/predicates.js';
 
 export interface HealthReport {
   status: 'ok' | 'attention';
@@ -98,16 +103,7 @@ export function handleHealth(
   // memory contradicts one of theirs. Joining the NEW memory with the same scope
   // filter means a forced tenant only counts conflicts wholly within its namespace
   // (matches memory_insights, which already scopes both sides).
-  const cf = scopeClause('o', input);
-  const nf = scopeClause('n', input);
-  const unresolved = count(
-    db,
-    `SELECT COUNT(*) AS n FROM memory_conflicts c
-       JOIN memories o ON o.id = c.old_memory_id
-       JOIN memories n ON n.id = c.new_memory_id
-      WHERE c.resolved_at IS NULL AND o.valid_to IS NULL AND o.tx_expired IS NULL${cf.sql}${nf.sql}`,
-    [...cf.params, ...nf.params],
-  );
+  const unresolved = countUnresolvedConflicts(db, input);
 
   // Webhook delivery health is a SINGLE global event bus (opt-in via
   // MCP_WEBHOOKS; webhook_targets/deliveries carry no namespace dimension), so it
