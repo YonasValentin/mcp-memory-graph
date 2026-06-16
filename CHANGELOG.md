@@ -6,6 +6,26 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **Lessons-learned capture + auto-recall flywheel.** Two-part feature so the
+  server gets smarter over time:
+  - New **`memory_lesson`** tool (#50): capture a structured lesson or incident in
+    one call — fills the matching section template (incident → Symptom/Root
+    Cause/Fix/Prevention; lesson → What/Why it matters/How to apply) and stores it
+    via the normal deduped write path (a repeat capture is a NOOP).
+  - `memory_extract_learnings` now also mines **`incident`** and **`lesson`**
+    categories from transcripts (postmortem/root-cause and hindsight/takeaway
+    phrasing).
+  - The nightly **consolidate** now auto-promotes the highest-signal
+    lessons/incidents into the always-in-context **`core_memory`** tier (the recall
+    side of the flywheel) so hard-won gotchas surface at SessionStart without a
+    search. Non-destructive (writes into a delimited region, preserving
+    hand-authored core memory), idempotent, and char_limit-safe. Configurable via
+    `consolidation.auto_promote_lessons` (default **on**),
+    `promotion_importance_floor`, and `promotion_max_entries`; reported as
+    `lessons_promoted`.
+
 ## [2.5.4] - 2026-06-15
 
 ### Changed

@@ -182,3 +182,96 @@ export function handleCoreMemoryReplace(
   });
   return replace.immediate();
 }
+
+// ── Auto-promoted "hard-won lessons" digest ──────────────────────────────────
+// The nightly consolidate writes the top lesson/incident memories into a
+// DELIMITED region of the core_memory block so they're always in context. The
+// markers make the write non-destructive (user content outside survives) and
+// idempotent (the region is replaced, never stacked). HTML comments so they stay
+// invisible in rendered markdown.
+
+export const LESSONS_MARKER_START = '<!-- mcp-memory:lessons:start -->';
+export const LESSONS_MARKER_END = '<!-- mcp-memory:lessons:end -->';
+const LESSONS_HEADER = '## Hard-won lessons (auto-maintained)';
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Remove the managed lessons region (if present) from a core-memory block,
+ * preserving all user-authored content around it and collapsing the gap left
+ * behind. Idempotent and safe on content that has no region.
+ */
+export function stripManagedRegion(content: string): string {
+  const re = new RegExp(
+    `${escapeRegExp(LESSONS_MARKER_START)}[\\s\\S]*?${escapeRegExp(LESSONS_MARKER_END)}`,
+    'g',
+  );
+  return content.replace(re, '').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/**
+ * Merge a lessons digest into existing core-memory content. Non-destructive
+ * (strips any prior region, keeps user content), char_limit-safe (drops lines
+ * that wouldn't fit, never overflowing), and idempotent (same lines → same
+ * output). Returns the new content and how many lines were actually written.
+ */
+export function mergeLessonsDigest(
+  existing: string,
+  charLimit: number,
+  lines: string[],
+): { content: string; written: number } {
+  const base = stripManagedRegion(existing);
+  if (lines.length === 0) {
+    return { content: base, written: 0 };
+  }
+
+  const prefix = base.length > 0 ? `${base}\n\n` : '';
+  // Fixed cost = prefix + the empty shell (markers + header). Each bullet then
+  // adds its own length + the newline that precedes it; content.length ends up
+  // exactly == this running total, so the <= charLimit check below is exact.
+  const shell = `${LESSONS_MARKER_START}\n${LESSONS_HEADER}\n${LESSONS_MARKER_END}`;
+  let used = prefix.length + shell.length;
+
+  const bullets: string[] = [];
+  for (const line of lines) {
+    const bullet = `- ${line}`;
+    if (used + bullet.length + 1 > charLimit) break;
+    bullets.push(bullet);
+    used += bullet.length + 1;
+  }
+
+  if (bullets.length === 0) {
+    return { content: base, written: 0 };
+  }
+
+  const region = `${LESSONS_MARKER_START}\n${LESSONS_HEADER}\n${bullets.join('\n')}\n${LESSONS_MARKER_END}`;
+  return { content: `${prefix}${region}`, written: bullets.length };
+}
+
+/**
+ * Write the lessons digest into the (scope, namespace) core-memory block via the
+ * non-destructive, char_limit-safe merge. Atomic (BEGIN IMMEDIATE) like the
+ * append/replace handlers. Returns the number of lines written (0 if none fit or
+ * none supplied — in which case any stale region is cleared).
+ */
+export function applyLessonsDigest(
+  db: Database.Database,
+  scope: MemoryScope,
+  namespace: string,
+  lines: string[],
+): number {
+  const nsv = ns(namespace);
+  const apply = db.transaction((): number => {
+    const row = readRow(db, scope, nsv);
+    const current = row?.content ?? '';
+    const charLimit = row?.char_limit ?? DEFAULT_CHAR_LIMIT;
+    const { content, written } = mergeLessonsDigest(current, charLimit, lines);
+    if (content !== current) {
+      upsertContent(db, scope, nsv, content);
+    }
+    return written;
+  });
+  return apply.immediate();
+}

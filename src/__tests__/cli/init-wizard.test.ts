@@ -10,6 +10,7 @@ import {
   type WizardAnswers,
 } from '../../cli/init-wizard.js';
 import type { ServerConfig } from '../../types.js';
+import { LEARNING_CATEGORIES } from '../../constants/enums.js';
 
 // ── Scripted stub Prompter ──────────────────────────────────────────────
 // Returns canned answers in the order each prompt type is invoked, recording
@@ -150,6 +151,11 @@ describe('buildConfig', () => {
     const c = buildConfig({ ...defaultAnswers(false), schedule: [{ hour: 16, minute: 0 }] }, existing);
     expect(c.consolidation.similarity_threshold).toBe(0.9);
     expect(c.consolidation.schedule).toEqual([{ hour: 16, minute: 0 }]);
+  });
+
+  it('extraction.categories tracks LEARNING_CATEGORIES (single source of truth)', () => {
+    const config = buildConfig(defaultAnswers());
+    expect(config.extraction?.categories).toEqual([...LEARNING_CATEGORIES]);
   });
 
   it('is deterministic — same answers produce the same config', () => {

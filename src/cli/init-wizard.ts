@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { ServerConfig, MemoryScope } from '../types.js';
-import { SCOPES } from '../constants/enums.js';
+import { SCOPES, LEARNING_CATEGORIES } from '../constants/enums.js';
 
 // ── Public types ─────────────────────────────────────────────────────────
 
@@ -155,6 +155,9 @@ export function buildConfig(
     prune_after_days: 30,
     min_importance_to_keep: 0.1,
     max_operations: 100,
+    auto_promote_lessons: true,
+    promotion_importance_floor: 0.2,
+    promotion_max_entries: 7,
     schedule: [{ hour: 3, minute: 0 }],
   };
   const defaultHooks = {
@@ -180,7 +183,7 @@ export function buildConfig(
       ...(answers.reviewOnStop !== undefined ? { review_on_stop: answers.reviewOnStop } : {}),
     },
     extraction: existing?.extraction ?? {
-      categories: ['decision', 'pattern', 'error_fix', 'convention'],
+      categories: [...LEARNING_CATEGORIES],
       min_confidence: 0.4,
     },
     storage: {

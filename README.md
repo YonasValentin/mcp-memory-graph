@@ -112,7 +112,7 @@ Claude searches its memory and answers with the stored decision. That's the whol
 What memory tools do you have available?
 ```
 
-It should list all 49 tools (43 `memory_*`, 3 `vault_*`, 3 `core_memory_*`).
+It should list all 50 tools (44 `memory_*`, 3 `vault_*`, 3 `core_memory_*`).
 
 The first time a memory tool runs, the embedding model (about 30 MB) downloads from HuggingFace and is cached at `~/.cache/huggingface/`. Every start after that is instant.
 
@@ -162,7 +162,7 @@ Run them yourself: `npm run bench:longmemeval`, `bench:locomo`, `bench:convomem`
 
 ### Core
 
-- **49 MCP tools**: CRUD and retrieval, a confidence-tagged knowledge graph, a self-correcting write gate, signed provenance and verification, an event bus with SSRF-guarded webhooks, change propagation and advisor surfaces, resumable session state, expertise profiles, memory tiers, Obsidian vault round-tripping, and GDPR-grade forget and history. Full list below.
+- **50 MCP tools**: CRUD and retrieval, a confidence-tagged knowledge graph, a self-correcting write gate, signed provenance and verification, an event bus with SSRF-guarded webhooks, change propagation and advisor surfaces, resumable session state, expertise profiles, memory tiers, Obsidian vault round-tripping, and GDPR-grade forget and history. Full list below.
 - **Hybrid search**: vector similarity (meaning) plus keyword matching (exact terms), merged with Reciprocal Rank Fusion. `rerank: true` adds the cross-encoder pass. `use_graph: true` blends in HippoRAG Personalized PageRank multi-hop scores. `as_of: <timestamp>` searches the graph as it stood at a past moment.
 - **Local embeddings**: Transformers.js running all-MiniLM-L6-v2 (384 dimensions) inside Node.js. No Python, no cloud API, no GPU.
 - **SQLite storage**: one file, using better-sqlite3 with two extensions: sqlite-vec for vector nearest-neighbor search, FTS5 for keyword search with BM25 ranking.
@@ -370,7 +370,7 @@ When a search returns nothing, the query is logged. The dream cycle's gap stage 
 ### Prerequisites
 
 - **Node.js 20+**, for any client.
-- **An MCP client.** [Claude Code](https://docs.anthropic.com/en/docs/claude-code) is the first-class experience; the automatic capture and recall hooks are Claude-Code-only. Other MCP clients (Codex, Cursor, and the rest) get all 49 tools but drive them manually. See "Other MCP clients" below.
+- **An MCP client.** [Claude Code](https://docs.anthropic.com/en/docs/claude-code) is the first-class experience; the automatic capture and recall hooks are Claude-Code-only. Other MCP clients (Codex, Cursor, and the rest) get all 50 tools but drive them manually. See "Other MCP clients" below.
 - **For the Stop hook only:** the `claude` binary on `$PATH` (or `$CLAUDE_BIN`), authenticated without prompting. Optional; disable with `review_on_stop: false`.
 
 ### What `init` does
@@ -389,7 +389,7 @@ Init does seven things:
 3. Creates the config file with sensible defaults: `~/.mcp-memory/config.json` (user scope) or `<project>/.mcp-memory/config.json` (project scope; the generated `.mcp.json` pins it via `MCP_MEMORY_CONFIG_PATH`).
 4. Writes memory usage instructions to `.claude/CLAUDE.md` (project scope) or prints a snippet (user scope).
 5. **Registers the MCP server with Claude Code** — user scope runs `claude mcp add -s user memory-server -- npx -y mcp-memory-graph` for you (idempotent; best-effort — warns with the manual command if the `claude` CLI isn't on `PATH`; skip with `--no-register`). Project scope is registered via the committable `.mcp.json` instead. This makes step 2 of the Quick Start optional.
-6. Installs the `mcp-memory-graph` usage skill into `~/.claude/skills/` so Claude Code has inline guidance for all 49 tools, gotchas, and workflows. Skip with `--no-skill`.
+6. Installs the `mcp-memory-graph` usage skill into `~/.claude/skills/` so Claude Code has inline guidance for all 50 tools, gotchas, and workflows. Skip with `--no-skill`.
 7. Sets up the nightly consolidation schedule (macOS: launchd, loaded immediately so it runs without a relogin; Linux: prints a cron suggestion; skipped for project scope).
 
 Under a non-interactive shell (agent/CI) the wizard is bypassed: defaults are applied and a report is printed showing what was set and how to change each value. Passing `--yes` applies the defaults silently (no report).
@@ -413,7 +413,7 @@ npx mcp-memory-graph init --scope project --yes   # local: hooks + .mcp.json, no
 
 ## Other MCP clients (Codex, Cursor, and more)
 
-Claude Code gets the hooks; everyone else gets the same 49 tools, driven manually. The server is a standard MCP server, so any client works. A line in the client's rules file makes usage near-automatic.
+Claude Code gets the hooks; everyone else gets the same 50 tools, driven manually. The server is a standard MCP server, so any client works. A line in the client's rules file makes usage near-automatic.
 
 Register the server. Example for Codex, in `~/.codex/config.toml` (global) or `.codex/config.toml` (project, trusted only):
 
@@ -921,7 +921,7 @@ Parameters for the remaining tools are validated by Zod schemas in `src/schemas/
 | 41 | `memory_version_restore` | Roll a memory back to a previous version (snapshots the current one first) |
 | 42 | `memory_verify` | Verify the signed provenance envelope of memories (ed25519 over content_hash plus origin): per-memory `ok`/`unsigned`/`content_mismatch`/`bad_signature`/`untrusted` plus a summary. Opt-in signing via `MCP_SIGN_MEMORIES`; multi-machine allowlist via `MCP_TRUSTED_PUBKEYS` / `trusted_pubkeys` |
 
-### 43-49. Active infrastructure and typed shapes
+### 43-50. Active infrastructure and typed shapes
 
 | # | Tool | Purpose |
 |---|------|---------|
@@ -932,6 +932,7 @@ Parameters for the remaining tools are validated by Zod schemas in `src/schemas/
 | 47 | `memory_session_state` | Resumable "where was I" session state, save and resume (versioned) |
 | 48 | `memory_expertise` | Per-user expertise profile: observe a topic, get the profile |
 | 49 | `memory_export_dataset` | Export learnings and reflections as JSONL training pairs (pairs/chatml/alpaca) for fine-tuning |
+| 50 | `memory_lesson` | Capture a structured lesson or incident in one call: fills the matching section template (incident → Symptom/Root Cause/Fix/Prevention; lesson → What/Why it matters/How to apply) from your field values and stores it through the normal deduped write path |
 
 ## Architecture
 
@@ -1026,7 +1027,7 @@ Later schema versions add the knowledge-graph tables (entities, links, conflicts
 ```
 src/
 ├── index.ts        # Entry point (stdio transport)
-├── server.ts       # All 49 tool registrations
+├── server.ts       # All 50 tool registrations
 ├── config/         # Config file loading + validation
 ├── db/             # Connection, schema, migrations, repository (three-table sync)
 ├── embeddings/     # Embedding providers (Transformers.js, registry, Ollama)

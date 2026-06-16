@@ -41,6 +41,7 @@ import {
   MemoryCanvasSchema,
   MemoryConsolidateSchema,
   MemoryExtractLearningsSchema,
+  MemoryLessonSchema,
   MemoryManifestSchema,
   MemoryGraphSchema,
   MemoryExtractEntitiesSchema,
@@ -92,6 +93,7 @@ import { handleExportVault } from './tools/export-vault.js';
 import { handleCanvas } from './tools/canvas.js';
 import { handleConsolidate } from './tools/consolidate.js';
 import { handleExtractLearnings } from './tools/extract-learnings.js';
+import { handleLesson } from './tools/lesson.js';
 import { handleManifest } from './tools/manifest.js';
 import { handleGraph } from './tools/graph.js';
 import { handleExtractEntities } from './tools/extract-entities.js';
@@ -1084,6 +1086,19 @@ export function createServer(): McpServer {
     instrument('memory_export_dataset', async (input) => {
       const parsed = MemoryExportDatasetSchema.parse(input);
       return handleExportDataset(getDb(), scopedRead(parsed));
+    }),
+  );
+
+  // ── 46. memory_lesson ─────────────────────────────────────────────────────
+  reg(
+    'memory_lesson',
+    'Capture a structured lesson or incident in one call: fills the matching section template (incident → Symptom/Root Cause/Fix/Prevention; lesson → What/Why it matters/How to apply) from your field values and stores it through the normal write path (deduped — a repeat capture is a NOOP). Unknown document_types use a generic scaffold.',
+    MemoryLessonSchema.shape,
+    instrument('memory_lesson', async (input) => {
+      const parsed = MemoryLessonSchema.parse(input);
+      // Writes a memory under the caller scope/namespace → force-scope it and
+      // thread the principal ceiling, exactly like memory_extract_learnings.
+      return handleLesson(getDb(), await getEmbedder(), withCeiling(withForcedNs(parsed)));
     }),
   );
 

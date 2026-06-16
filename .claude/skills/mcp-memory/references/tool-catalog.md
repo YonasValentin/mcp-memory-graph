@@ -1,6 +1,6 @@
-# Tool Catalog — all 49 MCP tools
+# Tool Catalog — all 50 MCP tools
 
-Authoritative count: **41** (`grep -c 'server.tool(' src/server.ts`). README's "37"/"17" are stale.
+Authoritative count: **50** (`grep -c '^  reg(' src/server.ts`).
 **Param schemas are authoritative at call time** — the live MCP tool definitions (and `src/schemas/index.ts`) are the source of truth for exact params. This catalog gives the *decision-relevant* params + when-to-use, not the full Zod. Params marked `*` are required.
 
 `HTTP` column: ✅ = dedicated `/api` route reusing the same handler; ≈ = approximated via a different path; blank = MCP-only.
@@ -23,8 +23,9 @@ Authoritative count: **41** (`grep -c 'server.tool(' src/server.ts`). README's "
 | `memory_store` | The default write. One discrete fact, decision, pattern, fix, preference. | content*, scope, namespace, on_conflict(add\|update\|supersede), tags, document_type, agent_id, expires_at, importance_score (0–1, settable; else content-derived) | |
 | `memory_ingest` | A **large/full document** (not a single fact). Auto-chunks by content_type, embeds each chunk, stores with provenance + parent_id. | content*, content_type(text\|markdown\|code\|legal\|structured), chunk_size, chunk_overlap | |
 | `memory_session_note` | Frictionless running capture during a session ("daily note for agents"). First call creates, later calls append to the **same** memory keyed by `session:<id>`. | session_id*, text*, title | |
-| `memory_template` | Before storing a structured note — fetch a scaffold (decision→Context/Decision/Consequences; incident→Symptom/Root Cause/Fix/Prevention; learning, bug-fix, meeting, session). Read-only; fill then `memory_store`. | document_type* | |
-| `memory_extract_learnings` | Mine a session transcript for decisions/patterns/fixes/conventions via **heuristics (no LLM)**. Dedups against existing; optionally auto-stores. Catches common phrasing, misses subtle. | transcript*, categories, namespace, auto_store | |
+| `memory_template` | Before storing a structured note — fetch a scaffold (decision→Context/Decision/Consequences; incident→Symptom/Root Cause/Fix/Prevention; learning/lesson, bug-fix, meeting, session). Read-only; fill then `memory_store`. | document_type* | |
+| `memory_lesson` | One-call structured capture — fills the matching template (incident→Symptom/Root Cause/Fix/Prevention; lesson→What/Why it matters/How to apply) from `fields` and stores via the normal **deduped** write path (repeat capture = NOOP). Unknown type → generic scaffold. | fields*, document_type(lesson), title, namespace, tags | |
+| `memory_extract_learnings` | Mine a session transcript for decisions/patterns/fixes/conventions/**incidents/lessons** via **heuristics (no LLM)**. Dedups against existing; optionally auto-stores. Catches common phrasing, misses subtle. | transcript*, categories, namespace, auto_store | |
 | `memory_extract_entities` | Persist **agent/LLM-extracted** entities + relationships for a memory → enables `memory_graph`. The agent analyzes content and supplies structured data (server runs no LLM). | memory_id*, entities[]*, relationships[] | |
 | `memory_import` | Restore/migrate memories from JSON (round-trips with `memory_export`). Batch-embeds. Preserves original timestamps + agent_id. | data[]*, overwrite | |
 | `memory_reflect` | `mode:gather` (default) returns reflection-worthy memories + an instruction for the agent to synthesize 1–3 insights; `mode:store` persists a synthesized insight (provenance=reflection) and links it to sources. | mode(gather\|store), insight, source_ids[] | |
