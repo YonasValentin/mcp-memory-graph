@@ -6,6 +6,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-06-17
+
+### Changed
+
+- **Stop-hook session review now captures structured lessons and one reflection,
+  not just flat facts.** The background `claude -p` review (`review-and-store`)
+  was hard-scoped to `memory_store` alone, so it could only emit plain notes —
+  `memory_lesson` / `memory_reflect` were unreachable even when prompted.
+  `--allowedTools` now also grants `memory_search`, `memory_lesson`, and
+  `memory_reflect`, and the prompt routes each finding accordingly: lessons /
+  incidents / bug-fixes → `memory_lesson` (templated What/Why/How or
+  Symptom/Root-cause/Fix/Prevention), plain facts / decisions / conventions →
+  `memory_store`, with a `memory_search` dedup pass (`on_conflict: "supersede"`)
+  and one optional `memory_reflect` synthesis when several findings share a
+  theme. Auto-capture on Stop now produces the same structured, linked knowledge
+  as a deliberate manual write instead of loose, duplicate-prone notes.
+
 ## [2.6.4] - 2026-06-16
 
 ### Docs

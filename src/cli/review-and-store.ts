@@ -1,12 +1,24 @@
 #!/usr/bin/env node
 // Background CLI spawned by the Stop hook. Invokes `claude -p` headless,
-// scoped to memory_store only, so Claude reviews the session transcript
-// and stores key findings. Replaces the broken agent-type Stop hook path.
+// scoped to the memory write/recall tools, so Claude reviews the session
+// transcript and persists durable findings as structured lessons, facts,
+// and (when warranted) one synthesized reflection. Replaces the broken
+// agent-type Stop hook path.
 
 import { readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 
-const REVIEW_INSTRUCTIONS = `Review this session briefly. If there were significant technical decisions, bug fixes with root causes, discovered patterns, or established conventions worth remembering for future sessions, store each via memory_store (scope: 'project', namespace based on the project). Every memory_store call MUST set the structured \`title\` argument (max 80 chars) — title is a separate parameter of the memory_store tool, NOT a "Title:" line inside the content body. Pass title as its own field, alongside content/scope/namespace. Only store genuinely useful project knowledge — NOT code snippets, NOT meta-commentary about tools, NOT fragments. Maximum 5 entries. If nothing significant happened, store nothing.`;
+const REVIEW_INSTRUCTIONS = `Review this session and persist only durable, reusable PROJECT knowledge that will help future sessions. Be selective: at most ~5 writes total, and if nothing significant happened, write nothing.
+
+Route each finding to the right tool:
+- A lesson, incident, or bug-fix — something that went wrong (or a non-obvious gotcha) plus WHY and HOW to avoid/fix it — use memory_lesson. Set document_type to "lesson", "incident", or "bug-fix" and fill the matching fields (lesson: what, why_it_matters, how_to_apply; incident/bug-fix: symptom, root_cause, fix, prevention).
+- A plain fact, decision, pattern, or convention — use memory_store. ALWAYS pass the structured \`title\` argument (max 80 chars) as its own tool parameter, NOT a "Title:" line inside the content body.
+
+Avoid duplicates: before writing a fact, call memory_search to check whether it already exists. If your finding refines or corrects an existing memory, write with on_conflict: "supersede" (or "update") instead of adding a near-duplicate.
+
+If two or more of your findings share a higher-level theme, make ONE memory_reflect call — mode "gather" to pull the material, then mode "store" with the synthesized insight and the source_ids of the memories you just wrote. At most one reflection per session.
+
+Scope every write to "project" with a namespace derived from the repo/project. Store only genuinely useful knowledge — never code snippets, tool meta-commentary, or fragments.`;
 
 const MIN_TRANSCRIPT_CHARS = 500;
 const MAX_TRANSCRIPT_BYTES = 200_000;
@@ -34,15 +46,22 @@ async function main(): Promise<void> {
   }
 
   const sourceTag = sessionId ? `session-${sessionId}` : `stop-${new Date().toISOString()}`;
-  const prompt = `${REVIEW_INSTRUCTIONS}\n\nWhen you call memory_store, set source to "${sourceTag}".\n\n<transcript>\n${trimmed}\n</transcript>`;
+  const prompt = `${REVIEW_INSTRUCTIONS}\n\nOn every write (memory_store / memory_lesson / memory_reflect), set source to "${sourceTag}".\n\n<transcript>\n${trimmed}\n</transcript>`;
 
   const claudeBin = process.env.CLAUDE_BIN ?? 'claude';
+
+  const ALLOWED_TOOLS = [
+    'mcp__memory-server__memory_search',
+    'mcp__memory-server__memory_store',
+    'mcp__memory-server__memory_lesson',
+    'mcp__memory-server__memory_reflect',
+  ].join(',');
 
   const child = spawn(
     claudeBin,
     [
       '-p',
-      '--allowedTools', 'mcp__memory-server__memory_store',
+      '--allowedTools', ALLOWED_TOOLS,
       '--output-format', 'text',
     ],
     {
