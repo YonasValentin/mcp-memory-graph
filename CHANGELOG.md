@@ -6,6 +6,25 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.7.2] - 2026-06-17
+
+### Fixed
+
+- **A stored reflection (`memory_reflect` store mode) was classified `public`
+  regardless of its sources.** `storeInsight` calls `handleStore` directly,
+  bypassing the Zod tool-layer `internal` default, so the insight fell through to
+  `handleStore`'s `'public'` fallback (`store.ts`) — a quiet downgrade of insights
+  synthesized from `internal`/`confidential` material, and one that now recurs on
+  every Stop-hook auto-reflection. Reflections now inherit the most-restrictive
+  `access_level` of their sources, floored at `internal`.
+
+### Changed
+
+- **Extracted the Stop-review path logic into a pure, unit-tested
+  `resolveReviewPaths()` helper** (`src/cli/review-paths.ts`), so the review log +
+  per-session re-run marker locations are covered by tests instead of living
+  inline in the spawn path.
+
 ## [2.7.1] - 2026-06-17
 
 ### Added

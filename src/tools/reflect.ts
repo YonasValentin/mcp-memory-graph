@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { EmbeddingProvider, MemoryScope } from '../types.js';
 import { handleStore } from './store.js';
+import { ACCESS_LEVELS } from '../constants/enums.js';
 import { createMemoryLink } from '../graph/memory-links.js';
 import { liveConditions, scopeConditions, accessCeilingCondition } from '../db/predicates.js';
 import { reconcileBlocked } from '../lib/reconcile-guard.js';
@@ -154,6 +155,24 @@ async function storeInsight(
     return { error: 'store mode requires a non-empty "source_ids" array' };
   }
 
+  // Inherit the most-restrictive access_level of the sources so a synthesized
+  // insight is never classified MORE openly than the material it was derived
+  // from. handleStore() otherwise falls back to 'public' (store.ts) — the Zod
+  // tool-layer default 'internal' is bypassed on this direct call. Floor at
+  // 'internal' so a reflection is never 'public'.
+  const internalRank = ACCESS_LEVELS.indexOf('internal');
+  const levelRank = (level: string): number => {
+    const i = ACCESS_LEVELS.indexOf(level as (typeof ACCESS_LEVELS)[number]);
+    return i < 0 ? internalRank : i;
+  };
+  const inheritedRank = input.source_ids.reduce((max, id) => {
+    const row = db
+      .prepare<[string], { access_level: string }>('SELECT access_level FROM memories WHERE id = ?')
+      .get(id);
+    return row ? Math.max(max, levelRank(row.access_level)) : max;
+  }, internalRank);
+  const inheritedLevel = ACCESS_LEVELS[inheritedRank];
+
   const stored = await handleStore(
     db,
     embedder,
@@ -163,6 +182,7 @@ async function storeInsight(
       namespace: input.namespace,
       document_type: 'insight',
       title: input.title,
+      access_level: inheritedLevel,
     },
     undefined,
     // §6 (RB-8): thread the principal ceiling so the insight's conflict scan can't

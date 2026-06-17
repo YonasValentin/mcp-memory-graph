@@ -7,8 +7,8 @@
 
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
-import { dirname, join } from 'node:path';
 import { resolveDbPath } from '../db/db-path.js';
+import { resolveReviewPaths } from './review-paths.js';
 
 const REVIEW_INSTRUCTIONS = `Review this session and persist only durable, reusable PROJECT knowledge that will help future sessions. Be selective: at most ~5 writes total, and if nothing significant happened, write nothing.
 
@@ -53,8 +53,11 @@ async function main(): Promise<void> {
   // Logs + the per-session re-run marker live next to the DB (~/.mcp-memory/logs),
   // so a silently-failed review is observable and a re-fired Stop hook doesn't
   // re-review the same session and write duplicate memories.
-  const logDir = join(dirname(resolveDbPath()), 'logs');
-  const markerPath = sessionId ? join(logDir, `reviewed-${sessionId}.marker`) : null;
+  const { logDir, logFile, markerPath } = resolveReviewPaths(
+    resolveDbPath(),
+    sessionId,
+    new Date().toISOString(),
+  );
   try {
     mkdirSync(logDir, { recursive: true });
   } catch {
@@ -63,8 +66,6 @@ async function main(): Promise<void> {
 
   // #2 re-run guard: this session was already reviewed → don't double-write.
   if (markerPath && existsSync(markerPath)) process.exit(0);
-
-  const logFile = join(logDir, `review-${sessionId ?? new Date().toISOString()}.log`);
   const logLine = (msg: string): void => {
     try {
       appendFileSync(logFile, `[${new Date().toISOString()}] ${msg}\n`);
