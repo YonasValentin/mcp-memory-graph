@@ -24,6 +24,20 @@ const CATEGORY_ICON: Record<Category, typeof Eye> = {
   Destructive: Trash2,
   Integration: Globe,
 }
+const CATEGORY_BLURB: Record<Category, string> = {
+  Read: "safe — never mutates",
+  Write: "persists or updates data",
+  Destructive: "asks before it changes data",
+  Integration: "reaches an external system",
+}
+
+/** First sentence (or ~80 chars) of a tool description, for the compact list. */
+function firstLine(desc: string): string {
+  const trimmed = desc.trim()
+  const dot = trimmed.search(/[.!?](\s|$)/)
+  const sentence = dot > 0 ? trimmed.slice(0, dot + 1) : trimmed
+  return sentence.length > 80 ? `${sentence.slice(0, 79)}…` : sentence
+}
 
 function categoryOf(t: McpTool): Category {
   if (t.annotations?.destructiveHint) return "Destructive"
@@ -157,11 +171,21 @@ export function Tools() {
                       key={t.name}
                       onClick={() => selectTool(t)}
                       className={cn(
-                        "block w-full truncate rounded-md px-2 py-1 text-left font-mono text-xs hover:bg-accent",
-                        selected?.name === t.name && "bg-accent font-semibold",
+                        "block w-full rounded-md px-2 py-1.5 text-left hover:bg-accent",
+                        selected?.name === t.name && "bg-accent",
                       )}
                     >
-                      {t.name}
+                      <span
+                        className={cn(
+                          "block truncate font-mono text-xs",
+                          selected?.name === t.name && "font-semibold",
+                        )}
+                      >
+                        {t.name}
+                      </span>
+                      <span className="block truncate text-[11px] leading-tight text-muted-foreground">
+                        {firstLine(t.description)}
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -173,7 +197,27 @@ export function Tools() {
         {/* ── Selected tool form + result ─────────────────────────────── */}
         <section className="min-w-0 rounded-lg border p-4">
           {!selected ? (
-            <p className="text-sm text-muted-foreground">Select a tool to run it.</p>
+            <div className="reveal flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
+              <p className="microlabel">no tool selected</p>
+              <h2 className="font-display text-3xl italic text-muted-foreground">Pick a tool to begin</h2>
+              <p className="max-w-md text-sm text-muted-foreground">
+                Every tool the server advertises is listed at left. Selecting one renders its
+                arguments from the live JSON-Schema; running it calls the same MCP transport agents
+                use — directly against this on-device archive.
+              </p>
+              <dl className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1.5 text-left text-xs text-muted-foreground sm:grid-cols-2">
+                {CATEGORY_ORDER.map((c) => {
+                  const Icon = CATEGORY_ICON[c]
+                  return (
+                    <div key={c} className="flex items-center gap-2">
+                      <Icon className="h-3.5 w-3.5 shrink-0" />
+                      <dt className="font-mono">{c}</dt>
+                      <dd className="opacity-70">{CATEGORY_BLURB[c]}</dd>
+                    </div>
+                  )
+                })}
+              </dl>
+            </div>
           ) : (
             <div className="space-y-4">
               <div>
