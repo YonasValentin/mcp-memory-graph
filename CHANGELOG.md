@@ -6,6 +6,24 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.7.1] - 2026-06-17
+
+### Added
+
+- **The Stop-hook session review now logs to `~/.mcp-memory/logs/review-<session>.log`.**
+  The headless `claude -p` review previously discarded stdout + stderr
+  (`stdio: ['pipe','ignore','ignore']`), so a failed auto-capture (claude not on
+  PATH, MCP server down, a tool error) failed silently — the store looked healthy
+  while learning nothing. Output is now captured to a per-session log with
+  start/end lines, the same observability the 2.6.3 plist `StandardOutPath` fix
+  added for the nightly consolidation.
+
+### Fixed
+
+- **A Stop hook that fired twice on one session could write duplicate memories.**
+  The review drops a `reviewed-<session>.marker` on completion and exits early if
+  it already exists, so a re-fired Stop no longer re-reviews the same transcript.
+
 ## [2.7.0] - 2026-06-17
 
 ### Changed

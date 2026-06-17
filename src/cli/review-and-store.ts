@@ -5,8 +5,10 @@
 // and (when warranted) one synthesized reflection. Replaces the broken
 // agent-type Stop hook path.
 
-import { readFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
+import { dirname, join } from 'node:path';
+import { resolveDbPath } from '../db/db-path.js';
 
 const REVIEW_INSTRUCTIONS = `Review this session and persist only durable, reusable PROJECT knowledge that will help future sessions. Be selective: at most ~5 writes total, and if nothing significant happened, write nothing.
 
@@ -48,6 +50,40 @@ async function main(): Promise<void> {
   const sourceTag = sessionId ? `session-${sessionId}` : `stop-${new Date().toISOString()}`;
   const prompt = `${REVIEW_INSTRUCTIONS}\n\nOn every write (memory_store / memory_lesson / memory_reflect), set source to "${sourceTag}".\n\n<transcript>\n${trimmed}\n</transcript>`;
 
+  // Logs + the per-session re-run marker live next to the DB (~/.mcp-memory/logs),
+  // so a silently-failed review is observable and a re-fired Stop hook doesn't
+  // re-review the same session and write duplicate memories.
+  const logDir = join(dirname(resolveDbPath()), 'logs');
+  const markerPath = sessionId ? join(logDir, `reviewed-${sessionId}.marker`) : null;
+  try {
+    mkdirSync(logDir, { recursive: true });
+  } catch {
+    // best-effort; never block the review on a logdir failure
+  }
+
+  // #2 re-run guard: this session was already reviewed → don't double-write.
+  if (markerPath && existsSync(markerPath)) process.exit(0);
+
+  const logFile = join(logDir, `review-${sessionId ?? new Date().toISOString()}.log`);
+  const logLine = (msg: string): void => {
+    try {
+      appendFileSync(logFile, `[${new Date().toISOString()}] ${msg}\n`);
+    } catch {
+      // logging is best-effort
+    }
+  };
+
+  // #1 observability: capture the headless review's stdout+stderr to a file so
+  // "ran clean" is distinguishable from "never ran" (mirrors the 2.6.3
+  // StandardOutPath plist fix). Falls back to 'ignore' if the log can't open.
+  let childOut: number | 'ignore' = 'ignore';
+  try {
+    childOut = openSync(logFile, 'a');
+  } catch {
+    childOut = 'ignore';
+  }
+  logLine(`review start (source=${sourceTag}, transcript=${Buffer.byteLength(trimmed)}B)`);
+
   const claudeBin = process.env.CLAUDE_BIN ?? 'claude';
 
   const ALLOWED_TOOLS = [
@@ -66,13 +102,33 @@ async function main(): Promise<void> {
     ],
     {
       cwd: process.env.MCP_MEMORY_CWD ?? process.cwd(),
-      stdio: ['pipe', 'ignore', 'ignore'],
+      stdio: ['pipe', childOut, childOut],
       env: { ...process.env, MCP_MEMORY_REVIEW_IN_PROGRESS: '1' },
     },
   );
 
-  child.on('error', () => process.exit(0));
-  child.on('exit', () => process.exit(0));
+  const finish = (code: number): void => {
+    logLine(`review end (exit=${code})`);
+    // Mark the session reviewed so a re-fired Stop hook skips it.
+    if (markerPath) {
+      try {
+        writeFileSync(markerPath, new Date().toISOString());
+      } catch {
+        // best-effort
+      }
+    }
+    if (typeof childOut === 'number') {
+      try {
+        closeSync(childOut);
+      } catch {
+        // already closed
+      }
+    }
+    process.exit(0);
+  };
+
+  child.on('error', () => finish(-1));
+  child.on('exit', (code) => finish(code ?? 0));
 
   child.stdin!.write(prompt);
   child.stdin!.end();
