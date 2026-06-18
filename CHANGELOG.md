@@ -6,6 +6,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.10.1] - 2026-06-18
+
+Dependency maintenance — no runtime or API changes.
+
+### Security
+
+- **`npm audit fix` clears all advisories** in the dev/build tree (0
+  vulnerabilities): `hono` (high — `serve-static` path traversal, Lambda adapter
+  cookie/CORS issues; this server is Express-only and uses none of the affected
+  paths), `protobufjs` and `tar` (moderate, transitive via the ML/native-build
+  chain). All bumps are semver-compatible; the published tarball is functionally
+  identical to 2.10.0 (the fix lives in `package-lock.json`, which protects this
+  repo's own CI/builds and is not shipped to consumers).
+
 ## [2.10.0] - 2026-06-18
 
 NLI-gated self-churn dedup at the write gate, plus two correctness fixes to the
