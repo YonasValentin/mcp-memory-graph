@@ -44,7 +44,7 @@ import { RateLimiter } from '../../api/rate-limit.js';
 import { createApiKey } from '../../db/api-keys.js';
 import { handleStore } from '../../tools/store.js';
 
-const NS = 'edc';
+const NS = 'acme';
 const embedder = new CachedEmbeddingProvider(new MockEmbeddingProvider());
 const ENV_KEYS = ['MCP_MEMORY_DB_PATH', 'MCP_AUTH_TOKEN', 'MCP_BIND', 'MCP_API_NAMESPACE'];
 

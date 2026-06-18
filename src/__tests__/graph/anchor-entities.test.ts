@@ -11,7 +11,7 @@ describe('M4.1 anchor entities — work_item', () => {
   it('extracts Jira/ADO-style keys when a tracker keyword is in the same clause', () => {
     expect(typesByName('Fixed in PBI-146146.').get('PBI-146146')).toBe('work_item');
     expect(typesByName('see ticket API-42 for details').get('API-42')).toBe('work_item');
-    expect(typesByName('resolves EDC-1234 this sprint').get('EDC-1234')).toBe('work_item');
+    expect(typesByName('resolves ABC-1234 this sprint').get('ABC-1234')).toBe('work_item');
   });
 
   it('does NOT match the OPEN set of standards/product look-alikes in bare prose', () => {

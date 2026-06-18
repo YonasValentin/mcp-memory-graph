@@ -80,11 +80,11 @@ describe('handleSessionNote', () => {
       session_id: 'S3',
       text: 'scoped note',
       scope: 'project',
-      namespace: 'edc',
+      namespace: 'acme',
     });
 
     const mem = getMemoryById(db, res.memory_id);
     expect(mem?.scope).toBe('project');
-    expect(mem?.namespace).toBe('edc');
+    expect(mem?.namespace).toBe('acme');
   });
 });

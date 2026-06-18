@@ -111,11 +111,11 @@ describe('write-through vault mirror (P1.2)', () => {
 
   it('namespaced memories land under <namespace>/', async () => {
     const { memory } = await handleStore(db(), embedder, {
-      content: 'scoped note', title: 'Scoped', scope: 'project', namespace: 'edc',
+      content: 'scoped note', title: 'Scoped', scope: 'project', namespace: 'acme',
     });
     const files = liveFiles();
     expect(files).toHaveLength(1);
-    expect(files[0].startsWith('edc' + path.sep)).toBe(true);
+    expect(files[0].startsWith('acme' + path.sep)).toBe(true);
     expect(parseMemoryFile(read(files[0])).id).toBe(memory.id);
   });
 });

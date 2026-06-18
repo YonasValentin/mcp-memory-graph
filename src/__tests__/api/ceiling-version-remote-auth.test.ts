@@ -106,8 +106,8 @@ describe('F2 — remote bind fails CLOSED on the key-count transition (no stale 
     // Remote bind. Boot WITH a key so authConfigured is true at construction
     // (a remote + no-auth boot would throw at the startup gate).
     process.env.MCP_BIND = '0.0.0.0';
-    const key = createApiKey(db, { principal: 'k', namespaces: ['edc'] });
-    await handleStore(db, embedder, { content: 'corpus secret', namespace: 'edc', scope: 'project' });
+    const key = createApiKey(db, { principal: 'k', namespaces: ['acme'] });
+    await handleStore(db, embedder, { content: 'corpus secret', namespace: 'acme', scope: 'project' });
     clearKeyCountCache();
     const port = await boot();
 
@@ -142,7 +142,7 @@ describe('F2 — remote bind fails CLOSED on the key-count transition (no stale 
 
   it('a remote bind with a live key + NO bearer → 401 (auth active, not bypassed)', async () => {
     process.env.MCP_BIND = '0.0.0.0';
-    createApiKey(db, { principal: 'k', namespaces: ['edc'] });
+    createApiKey(db, { principal: 'k', namespaces: ['acme'] });
     clearKeyCountCache();
     const port = await boot();
     const res = await request(port, { path: '/api/stats' });
@@ -159,7 +159,7 @@ describe('F2 — remote bind fails CLOSED on the key-count transition (no stale 
     // Create a key while serving. liveKeyCount is no longer cached, so the very
     // next no-bearer request must NO LONGER be silently authed — auth is now
     // configured and a bearer is required.
-    createApiKey(db, { principal: 'late', namespaces: ['edc'] });
+    createApiKey(db, { principal: 'late', namespaces: ['acme'] });
     clearKeyCountCache();
     const afterCreate = await request(port, { path: '/api/stats' });
     expect(afterCreate.status).toBe(401);

@@ -95,20 +95,20 @@ describe('applyLessonsDigest', () => {
   });
 
   it('writes the digest into the core_memory block for (scope, namespace)', () => {
-    const written = applyLessonsDigest(db, 'project', 'edc', ['incident: orders 500s — pool exhausted']);
+    const written = applyLessonsDigest(db, 'project', 'acme', ['incident: orders 500s — pool exhausted']);
     expect(written).toBe(1);
-    const block = handleCoreMemoryGet(db, { scope: 'project', namespace: 'edc' });
+    const block = handleCoreMemoryGet(db, { scope: 'project', namespace: 'acme' });
     expect(block.content).toContain('- incident: orders 500s — pool exhausted');
     expect(block.content).toContain(LESSONS_MARKER_START);
   });
 
   it('preserves a pre-existing hand-authored block', () => {
     db.prepare(
-      "INSERT INTO core_memory (scope, namespace, content, char_limit) VALUES ('project','edc','I am the edc agent.',2000)",
+      "INSERT INTO core_memory (scope, namespace, content, char_limit) VALUES ('project','acme','I am the acme agent.',2000)",
     ).run();
-    applyLessonsDigest(db, 'project', 'edc', ['lesson: cache the token']);
-    const block = handleCoreMemoryGet(db, { scope: 'project', namespace: 'edc' });
-    expect(block.content).toContain('I am the edc agent.');
+    applyLessonsDigest(db, 'project', 'acme', ['lesson: cache the token']);
+    const block = handleCoreMemoryGet(db, { scope: 'project', namespace: 'acme' });
+    expect(block.content).toContain('I am the acme agent.');
     expect(block.content).toContain('- lesson: cache the token');
   });
 });

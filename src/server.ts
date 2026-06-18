@@ -940,7 +940,7 @@ export function createServer(): McpServer {
   // ── 36. memory_query_structured ───────────────────────────────────────────
   reg(
     'memory_query_structured',
-    'Structured query over memory PROPERTIES (the agent\'s "Bases/Dataview"): filter currently-valid, top-level memories by scope/namespace/department/document_type/language/tags (AND)/min_importance/created_at range, sort by created_at|updated_at|importance_score|title, paginate, and project specific fields. Exact, deterministic retrieval that complements fuzzy memory_search — use it for "all decision memories in namespace=edc with importance>0.7, newest first".',
+    'Structured query over memory PROPERTIES (the agent\'s "Bases/Dataview"): filter currently-valid, top-level memories by scope/namespace/department/document_type/language/tags (AND)/min_importance/created_at range, sort by created_at|updated_at|importance_score|title, paginate, and project specific fields. Exact, deterministic retrieval that complements fuzzy memory_search — use it for "all decision memories in namespace=acme with importance>0.7, newest first".',
     MemoryQueryStructuredSchema.shape,
     instrument('memory_query_structured', async (input) => {
       const parsed = MemoryQueryStructuredSchema.parse(input);

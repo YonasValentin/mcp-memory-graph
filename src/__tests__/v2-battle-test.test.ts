@@ -345,11 +345,11 @@ describe('Phase 5: Schema Verification', () => {
 
 describe('Phase 6: Entity Extraction', () => {
   it('regex extracts PascalCase identifiers', () => {
-    const entities = extractEntitiesRegex('We use ReactNative and TypeScript for the MyEdcApp project.');
+    const entities = extractEntitiesRegex('We use ReactNative and TypeScript for the ShopApp project.');
     const names = entities.map(e => e.name);
     expect(names).toContain('ReactNative');
     expect(names).toContain('TypeScript');
-    expect(names).toContain('MyEdcApp');
+    expect(names).toContain('ShopApp');
   });
 
   it('regex extracts tool names', () => {

@@ -2,7 +2,7 @@
  * battle-v14 G1 — vault_sync must not let a forced tenant plant memory rows in a
  * foreign namespace via per-file frontmatter. The vault-path guard only checks
  * the directory basename; buildMemoryRow honored `namespace:` from frontmatter
- * with no forcing check, so a tenant pinned to 'edc' could sync a .md declaring
+ * with no forcing check, so a tenant pinned to 'acme' could sync a .md declaring
  * `namespace: victim` and write a row into the victim namespace.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -28,16 +28,16 @@ afterEach(() => {
 describe('battle-v14 G1 — vault_sync pins namespace to the forced tenant', () => {
   it('a forced tenant cannot write a row into a foreign namespace via frontmatter', async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v14-g1-'));
-    const vault = path.join(dir, 'edc');
+    const vault = path.join(dir, 'acme');
     fs.mkdirSync(vault, { recursive: true });
     fs.writeFileSync(
       path.join(vault, 'a.md'),
       '---\nnamespace: victim\nscope: project\ntitle: Note A\n---\nThis is note A.',
     );
-    process.env.MCP_API_NAMESPACE = 'edc';
+    process.env.MCP_API_NAMESPACE = 'acme';
     await handleVaultSync(db, embedder, { vault_path: vault });
     const foreign = db
-      .prepare("SELECT COUNT(*) c FROM memories WHERE namespace <> 'edc'")
+      .prepare("SELECT COUNT(*) c FROM memories WHERE namespace <> 'acme'")
       .get() as { c: number };
     expect(foreign.c).toBe(0); // every synced row pinned to the forced tenant
   });

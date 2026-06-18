@@ -80,14 +80,14 @@ describe('handleConsolidate — contextualized probes share the stored vector sp
       content,
       title: 'Auth System',
       document_type: 'decision',
-      namespace: 'edc',
+      namespace: 'acme',
     });
     expect(stored.stored).toBe(true);
 
     const expectedPrefix = buildContextPrefix({
       title: 'Auth System',
       document_type: 'decision',
-      namespace: 'edc',
+      namespace: 'acme',
     });
     expect(expectedPrefix).not.toBe('');
 

@@ -63,7 +63,7 @@ import { runWithPrincipal, type PrincipalContext } from '../../lib/request-conte
 import { principalAccessCeiling } from '../../lib/tenancy.js';
 import type { AccessLevel } from '../../types.js';
 
-const NS = 'edc';
+const NS = 'acme';
 const INTERNAL_KEY: PrincipalContext = {
   principal: 'internal-bot',
   keyId: 'k-int',

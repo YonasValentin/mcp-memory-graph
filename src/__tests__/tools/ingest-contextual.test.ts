@@ -83,13 +83,13 @@ describe('handleIngest — contextualized embeddings share the stored vector spa
       content,
       title: 'Auth System',
       document_type: 'decision',
-      namespace: 'edc',
+      namespace: 'acme',
     });
 
     const expectedPrefix = buildContextPrefix({
       title: 'Auth System',
       document_type: 'decision',
-      namespace: 'edc',
+      namespace: 'acme',
     });
     expect(expectedPrefix).not.toBe('');
     expect(result.chunk_count).toBeGreaterThan(0);

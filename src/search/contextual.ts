@@ -35,7 +35,7 @@ function clean(value: string | null | undefined): string | undefined {
 
 /**
  * Builds a compact, deterministic one-line context prefix from the present
- * fields, e.g. `"Auth System — decision — namespace: edc"`. Returns '' when
+ * fields, e.g. `"Auth System — decision — namespace: acme"`. Returns '' when
  * none of the meaningful fields are present.
  */
 export function buildContextPrefix(ctx: ContextHints): string {

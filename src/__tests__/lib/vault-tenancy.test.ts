@@ -27,9 +27,9 @@ describe('vaultPathInForcedNamespace', () => {
   });
 
   it('forced: only the vault whose basename equals the forced namespace is allowed', () => {
-    process.env.MCP_API_NAMESPACE = 'edc';
-    expect(vaultPathInForcedNamespace('/data/vaults/edc')).toBe(true);
-    expect(vaultPathInForcedNamespace('/data/vaults/edc/')).toBe(true);
+    process.env.MCP_API_NAMESPACE = 'acme';
+    expect(vaultPathInForcedNamespace('/data/vaults/acme')).toBe(true);
+    expect(vaultPathInForcedNamespace('/data/vaults/acme/')).toBe(true);
     expect(vaultPathInForcedNamespace('/data/vaults/other-tenant')).toBe(false);
   });
 });

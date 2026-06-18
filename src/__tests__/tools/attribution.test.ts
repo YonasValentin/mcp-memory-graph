@@ -91,11 +91,11 @@ describe('handleAttribution', () => {
   });
 
   it('filters by scope/namespace', async () => {
-    await handleStore(db, embedder, { content: 'p1', scope: 'project', namespace: 'edc', agent_id: 'agent-A' });
-    await handleStore(db, embedder, { content: 'p2', scope: 'project', namespace: 'edc', agent_id: 'agent-A' });
+    await handleStore(db, embedder, { content: 'p1', scope: 'project', namespace: 'acme', agent_id: 'agent-A' });
+    await handleStore(db, embedder, { content: 'p2', scope: 'project', namespace: 'acme', agent_id: 'agent-A' });
     await handleStore(db, embedder, { content: 'g1', scope: 'global', agent_id: 'agent-Z' });
 
-    const result = handleAttribution(db, { scope: 'project', namespace: 'edc' });
+    const result = handleAttribution(db, { scope: 'project', namespace: 'acme' });
     expect(result.total).toBe(2);
     expect(result.by_agent['agent-A']).toBe(2);
     expect(result.by_agent['agent-Z']).toBeUndefined();

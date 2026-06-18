@@ -125,11 +125,11 @@ describe('handleLesson', () => {
     const result = await handleLesson(db, embedder, {
       document_type: 'incident',
       scope: 'project',
-      namespace: 'edc',
+      namespace: 'acme',
       fields: { symptom: 'nightly job stopped firing after the host upgrade' },
     });
     const row = getMemoryById(db, result.memory_id);
     expect(row?.scope).toBe('project');
-    expect(row?.namespace).toBe('edc');
+    expect(row?.namespace).toBe('acme');
   });
 });

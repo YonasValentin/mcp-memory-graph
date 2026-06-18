@@ -9,7 +9,7 @@
  *
  * Regression guard for the pre-tenancy `readKnowledgeGaps()` that read
  * `~/.mcp-memory/search-log.jsonl` globally — the one read path the v14/v15
- * tenancy sweep missed (it leaked `edc` queries into unrelated consolidations).
+ * tenancy sweep missed (it leaked `acme` queries into unrelated consolidations).
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import type Database from 'better-sqlite3';

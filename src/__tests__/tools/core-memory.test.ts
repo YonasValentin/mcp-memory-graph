@@ -35,7 +35,7 @@ describe('handleCoreMemoryGet', () => {
 
 describe('handleCoreMemoryAppend', () => {
   it('appends to empty content and get reflects it', () => {
-    const text = 'I am the agent for project edc.';
+    const text = 'I am the agent for project acme.';
     const res = handleCoreMemoryAppend(db, { scope: 'global', text });
     expect(res.ok).toBe(true);
     expect(res.content).toBe(text);
@@ -123,17 +123,17 @@ describe('handleCoreMemoryReplace', () => {
 });
 
 describe('scope/namespace isolation', () => {
-  it('keeps (global,"") independent from (project,"edc")', () => {
+  it('keeps (global,"") independent from (project,"acme")', () => {
     handleCoreMemoryAppend(db, { scope: 'global', text: 'global block' });
-    handleCoreMemoryAppend(db, { scope: 'project', namespace: 'edc', text: 'edc block' });
+    handleCoreMemoryAppend(db, { scope: 'project', namespace: 'acme', text: 'acme block' });
 
     const g = handleCoreMemoryGet(db, { scope: 'global' });
-    const p = handleCoreMemoryGet(db, { scope: 'project', namespace: 'edc' });
+    const p = handleCoreMemoryGet(db, { scope: 'project', namespace: 'acme' });
 
     expect(g.content).toBe('global block');
     expect(g.namespace).toBe('');
-    expect(p.content).toBe('edc block');
-    expect(p.namespace).toBe('edc');
+    expect(p.content).toBe('acme block');
+    expect(p.namespace).toBe('acme');
 
     // A different namespace under the same scope is also independent.
     const pOther = handleCoreMemoryGet(db, { scope: 'project', namespace: 'other' });

@@ -25,7 +25,7 @@ async function seedIncident() {
     title: 'incident: orders API 500s — pool exhausted',
     document_type: 'incident',
     scope: 'project',
-    namespace: 'edc',
+    namespace: 'acme',
     importance_score: 0.9,
   });
 }
@@ -35,7 +35,7 @@ describe('handleConsolidate promote phase', () => {
     await seedIncident();
     const report = await handleConsolidate(db, embedder, { promote_lessons: true });
     expect(report.lessons_promoted).toBe(1);
-    expect(handleCoreMemoryGet(db, { scope: 'project', namespace: 'edc' }).content).toContain(
+    expect(handleCoreMemoryGet(db, { scope: 'project', namespace: 'acme' }).content).toContain(
       'incident: orders API 500s — pool exhausted',
     );
   });
@@ -44,13 +44,13 @@ describe('handleConsolidate promote phase', () => {
     await seedIncident();
     const report = await handleConsolidate(db, embedder, {});
     expect(report.lessons_promoted).toBe(0);
-    expect(handleCoreMemoryGet(db, { scope: 'project', namespace: 'edc' }).content).toBe('');
+    expect(handleCoreMemoryGet(db, { scope: 'project', namespace: 'acme' }).content).toBe('');
   });
 
   it('dry_run reports the count without writing core_memory', async () => {
     await seedIncident();
     const report = await handleConsolidate(db, embedder, { promote_lessons: true, dry_run: true });
     expect(report.lessons_promoted).toBe(1);
-    expect(handleCoreMemoryGet(db, { scope: 'project', namespace: 'edc' }).content).toBe('');
+    expect(handleCoreMemoryGet(db, { scope: 'project', namespace: 'acme' }).content).toBe('');
   });
 });

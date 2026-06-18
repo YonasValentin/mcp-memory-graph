@@ -29,7 +29,7 @@ describe('principalAccessCeiling', () => {
   });
 
   it('returns undefined in legacy ENV-pin mode (no ALS principal)', () => {
-    process.env.MCP_API_NAMESPACE = 'edc';
+    process.env.MCP_API_NAMESPACE = 'acme';
     expect(principalAccessCeiling()).toBeUndefined();
   });
 

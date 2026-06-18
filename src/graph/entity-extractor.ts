@@ -59,7 +59,7 @@ const PACKAGE_RE = /@[\w-]+\/[\w.-]+/g;
 // dash then a MULTI-digit number (PBI-146146, API-12). `\d{2,}` already excludes
 // single-digit tech tokens (UTF-8, SHA-1, H-264 uses a dot); a small blocklist
 // then drops the two-or-more-digit standards that survive (COVID-19, ISO-8601,
-// SHA-256, RFC-822, AES-256, UTF-16). A real ticket prefix like API/EDC stays.
+// SHA-256, RFC-822, AES-256, UTF-16). A real ticket prefix like API/ABC stays.
 const WORK_ITEM_RE = /\b([A-Z][A-Z0-9]{1,9})-(\d{2,})\b/g;
 const NON_TICKET_PREFIXES = new Set(['COVID', 'ISO', 'RFC', 'SHA', 'AES', 'RSA', 'UTF', 'UTC']);
 // `[A-Z]{2,10}-\d{2,}` is also the shape of countless standards/product tokens
@@ -67,7 +67,7 @@ const NON_TICKET_PREFIXES = new Set(['COVID', 'ISO', 'RFC', 'SHA', 'AES', 'RSA',
 // no blocklist can close. So a work_item is only emitted when a tracker keyword
 // sits in the ~48 chars before it (same clause), mirroring how PR_RE already
 // demands a PR/MR keyword. "Fixed in PBI-146146" / "see JIRA-1234" / "ticket
-// ABC-99" / "closes EDC-12" qualify; a bare "USB-30 spec" in prose does not.
+// ABC-99" / "closes ABC-12" qualify; a bare "USB-30 spec" in prose does not.
 const WORK_ITEM_CONTEXT_RE =
   /(?:issue|ticket|bug|story|task|epic|jira|ado|work[ -]?item|backlog|sprint|board|pbi|fix(?:e[sd])?|close[sd]?|resolve[sd]?|implement(?:ed|s)?|ref(?:s|erence[sd]?)?|see)\b[^.!?\n]*$/i;
 const WORK_ITEM_LOOKBEHIND = 48;

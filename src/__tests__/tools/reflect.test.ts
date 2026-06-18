@@ -61,9 +61,9 @@ describe('handleReflect — mode gather', () => {
 
   it('respects scope/namespace and excludes invalidated (bi-temporal) memories', async () => {
     const inScope = await handleStore(db, embedder, {
-      content: 'Project edc decision about caching.',
+      content: 'Project acme decision about caching.',
       scope: 'project',
-      namespace: 'edc',
+      namespace: 'acme',
     });
     // Different namespace — must be excluded.
     await handleStore(db, embedder, {
@@ -73,16 +73,16 @@ describe('handleReflect — mode gather', () => {
     });
     // Same scope/namespace but invalidated (retired) — must be excluded.
     const retired = await handleStore(db, embedder, {
-      content: 'Stale edc decision to be retired.',
+      content: 'Stale acme decision to be retired.',
       scope: 'project',
-      namespace: 'edc',
+      namespace: 'acme',
     });
     db.prepare("UPDATE memories SET valid_to = datetime('now') WHERE id = ?").run(retired.memory.id);
 
     const result = await handleReflect(db, embedder, {
       mode: 'gather',
       scope: 'project',
-      namespace: 'edc',
+      namespace: 'acme',
     });
 
     expect(result.count).toBe(1);

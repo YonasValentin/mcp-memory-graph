@@ -100,7 +100,7 @@ describe('isQualityContent', () => {
   });
 
   it('rejects content starting with syntax chars', () => {
-    expect(isQualityContent('| C# patterns, SQL, CQRS | CustomerSystemsAPI |')).toBe(false);
+    expect(isQualityContent('| C# patterns, SQL, CQRS | OrdersAPI |')).toBe(false);
     expect(isQualityContent('`MeetingPreparationModal` component was recorded')).toBe(false);
     expect(isQualityContent('{key: value} is the configuration format we use')).toBe(false);
   });

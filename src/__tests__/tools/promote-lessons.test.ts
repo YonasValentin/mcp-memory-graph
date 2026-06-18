@@ -44,61 +44,61 @@ const ALL = { filterClause: '', filterParams: [] as unknown[], importanceFloor: 
 
 describe('promoteLessons', () => {
   it('promotes high-importance lessons into the core_memory block for their namespace', async () => {
-    await seed({ title: 'incident: orders API 500s — pool exhausted', content: '## Symptom\norders down', document_type: 'incident', namespace: 'edc', importance: 0.9 });
-    await seed({ title: 'lesson: add a circuit breaker before third-party calls', content: '## What\ncircuit breaker', document_type: 'lesson', namespace: 'edc', importance: 0.8 });
+    await seed({ title: 'incident: orders API 500s — pool exhausted', content: '## Symptom\norders down', document_type: 'incident', namespace: 'acme', importance: 0.9 });
+    await seed({ title: 'lesson: add a circuit breaker before third-party calls', content: '## What\ncircuit breaker', document_type: 'lesson', namespace: 'acme', importance: 0.8 });
 
     const { promoted } = promoteLessons(db, ALL);
     expect(promoted).toBe(2);
 
-    const block = handleCoreMemoryGet(db, { scope: 'project', namespace: 'edc' });
+    const block = handleCoreMemoryGet(db, { scope: 'project', namespace: 'acme' });
     expect(block.content).toContain('incident: orders API 500s — pool exhausted');
     expect(block.content).toContain('lesson: add a circuit breaker before third-party calls');
   });
 
   it('excludes lessons below the importance floor', async () => {
-    await seed({ title: 'lesson: trivial low-signal note', content: '## What\nmeh', document_type: 'lesson', namespace: 'edc', importance: 0.1 });
+    await seed({ title: 'lesson: trivial low-signal note', content: '## What\nmeh', document_type: 'lesson', namespace: 'acme', importance: 0.1 });
     const { promoted } = promoteLessons(db, ALL);
     expect(promoted).toBe(0);
-    const block = handleCoreMemoryGet(db, { scope: 'project', namespace: 'edc' });
+    const block = handleCoreMemoryGet(db, { scope: 'project', namespace: 'acme' });
     expect(block.content).toBe('');
   });
 
   it('includes a corroborated lesson even below the importance floor', async () => {
-    await seed({ title: 'lesson: repeatedly seen flaky deploy', content: '## What\nflaky', document_type: 'lesson', namespace: 'edc', importance: 0.2, corroboration: 3 });
+    await seed({ title: 'lesson: repeatedly seen flaky deploy', content: '## What\nflaky', document_type: 'lesson', namespace: 'acme', importance: 0.2, corroboration: 3 });
     const { promoted } = promoteLessons(db, { ...ALL, minCorroboration: 2 });
     expect(promoted).toBe(1);
-    expect(handleCoreMemoryGet(db, { scope: 'project', namespace: 'edc' }).content).toContain('repeatedly seen flaky deploy');
+    expect(handleCoreMemoryGet(db, { scope: 'project', namespace: 'acme' }).content).toContain('repeatedly seen flaky deploy');
   });
 
   it('caps the digest at maxEntries (highest importance first)', async () => {
     for (let i = 0; i < 6; i++) {
-      await seed({ title: `incident: distinct outage number ${i}`, content: `## Symptom\noutage ${i}`, document_type: 'incident', namespace: 'edc', importance: 0.6 + i * 0.05 });
+      await seed({ title: `incident: distinct outage number ${i}`, content: `## Symptom\noutage ${i}`, document_type: 'incident', namespace: 'acme', importance: 0.6 + i * 0.05 });
     }
     const { promoted } = promoteLessons(db, { ...ALL, maxEntries: 3 });
     expect(promoted).toBe(3);
-    const block = handleCoreMemoryGet(db, { scope: 'project', namespace: 'edc' });
+    const block = handleCoreMemoryGet(db, { scope: 'project', namespace: 'acme' });
     // top importance ones (4 and 5) kept, lowest (0) dropped
     expect(block.content).toContain('distinct outage number 5');
     expect(block.content).not.toContain('distinct outage number 0');
   });
 
   it('ignores non-lesson document types', async () => {
-    await seed({ title: 'a plain decision', content: 'some decision', document_type: 'decision', namespace: 'edc', importance: 0.9 });
+    await seed({ title: 'a plain decision', content: 'some decision', document_type: 'decision', namespace: 'acme', importance: 0.9 });
     expect(promoteLessons(db, ALL).promoted).toBe(0);
   });
 
   it('writes a separate digest per namespace', async () => {
-    await seed({ title: 'incident: edc outage', content: '## Symptom\nedc', document_type: 'incident', namespace: 'edc', importance: 0.9 });
+    await seed({ title: 'incident: acme outage', content: '## Symptom\nedc', document_type: 'incident', namespace: 'acme', importance: 0.9 });
     await seed({ title: 'incident: core outage', content: '## Symptom\ncore', document_type: 'incident', namespace: 'core', importance: 0.9 });
     promoteLessons(db, ALL);
-    expect(handleCoreMemoryGet(db, { scope: 'project', namespace: 'edc' }).content).toContain('edc outage');
+    expect(handleCoreMemoryGet(db, { scope: 'project', namespace: 'acme' }).content).toContain('acme outage');
     expect(handleCoreMemoryGet(db, { scope: 'project', namespace: 'core' }).content).toContain('core outage');
   });
 
   it('dry_run counts without writing', async () => {
-    await seed({ title: 'incident: would-be promoted', content: '## Symptom\nx', document_type: 'incident', namespace: 'edc', importance: 0.9 });
+    await seed({ title: 'incident: would-be promoted', content: '## Symptom\nx', document_type: 'incident', namespace: 'acme', importance: 0.9 });
     const { promoted } = promoteLessons(db, { ...ALL, dryRun: true });
     expect(promoted).toBe(1);
-    expect(handleCoreMemoryGet(db, { scope: 'project', namespace: 'edc' }).content).toBe('');
+    expect(handleCoreMemoryGet(db, { scope: 'project', namespace: 'acme' }).content).toBe('');
   });
 });

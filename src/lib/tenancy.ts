@@ -155,7 +155,7 @@ export function idIsInForcedNamespace(db: Database.Database, id: string): boolea
  * write ANY namespace over POST /mcp by naming a foreign vault path. The only
  * vault a pinned tenant may touch is the one whose basename equals the forced
  * namespace. Returns true (no restriction) when scoping is off. A trailing
- * separator is tolerated so `/v/edc` and `/v/edc/` both resolve to `edc`.
+ * separator is tolerated so `/v/acme` and `/v/acme/` both resolve to `acme`.
  * Principal mode: SET membership — any of the key's namespaces names a vault
  * it may touch.
  */

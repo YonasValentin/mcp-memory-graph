@@ -54,18 +54,18 @@ describe('buildContextPrefix', () => {
     const prefix = buildContextPrefix({
       title: 'Auth System',
       document_type: 'decision',
-      namespace: 'edc',
+      namespace: 'acme',
       section: 'Token rotation',
     });
     expect(prefix).toContain('Auth System');
     expect(prefix).toContain('decision');
-    expect(prefix).toContain('edc');
+    expect(prefix).toContain('acme');
     expect(prefix).toContain('Token rotation');
     expect(prefix.includes('\n')).toBe(false);
   });
 
   it('is deterministic — same input yields the same output', () => {
-    const ctx = { title: 'Auth System', document_type: 'decision', namespace: 'edc' };
+    const ctx = { title: 'Auth System', document_type: 'decision', namespace: 'acme' };
     expect(buildContextPrefix(ctx)).toBe(buildContextPrefix(ctx));
     expect(contextualizeForEmbedding('x', ctx)).toBe(contextualizeForEmbedding('x', ctx));
   });

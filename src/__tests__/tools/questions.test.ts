@@ -142,10 +142,10 @@ describe('handleQuestions', () => {
   });
 
   it('filters by scope/namespace', async () => {
-    await handleStore(db, embedder, { content: 'in scope', title: 'InScope', scope: 'project', namespace: 'edc' });
+    await handleStore(db, embedder, { content: 'in scope', title: 'InScope', scope: 'project', namespace: 'acme' });
     await handleStore(db, embedder, { content: 'out of scope', title: 'OutScope', scope: 'global' });
 
-    const result = handleQuestions(db, { scope: 'project', namespace: 'edc' });
+    const result = handleQuestions(db, { scope: 'project', namespace: 'acme' });
     const text = result.questions.map((q) => q.question).join(' ');
     expect(text).toContain('InScope');
     expect(text).not.toContain('OutScope');

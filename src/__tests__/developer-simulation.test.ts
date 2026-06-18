@@ -1,5 +1,5 @@
 /**
- * Developer Simulation: 2 Weeks at EDC
+ * Developer Simulation: 2 Weeks at Acme
  *
  * Simulates a senior developer's daily usage of the MCP Memory Graph
  * across 3 projects, multiple departments, and realistic workflows.
@@ -32,7 +32,7 @@ let db: Database.Database;
 const embedder = new CachedEmbeddingProvider(new MockEmbeddingProvider());
 const ids: Record<string, string> = {};
 
-describe('Developer Simulation: 2 Weeks at EDC', () => {
+describe('Developer Simulation: 2 Weeks at Acme', () => {
   beforeAll(() => {
     db = createTestDb();
   });
@@ -42,22 +42,22 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
   // ═══════════════════════════════════════════════════════════════════════
 
   describe('Day 1: Onboarding & Knowledge Capture', () => {
-    it('stores MyEdcApp architecture overview', async () => {
+    it('stores ShopApp architecture overview', async () => {
       const r = await handleStore(db, embedder, {
-        content: 'MyEdcApp is a React Native mobile application for EDC real estate agents. It must always use the EDC design system components. The app communicates with CustomerSystemsAPI via REST. Authentication is handled by IdentityServer with JWT tokens. All API calls must include the X-Correlation-Id header for distributed tracing.',
-        title: 'MyEdcApp Architecture Overview',
-        tags: ['architecture', 'myedcapp', 'overview'],
-        scope: 'project', namespace: 'myedcapp', department: 'engineering',
+        content: 'ShopApp is a React Native mobile application for Acme retail staff. It must always use the Acme design system components. The app communicates with OrdersAPI via REST. Authentication is handled by IdentityServer with JWT tokens. All API calls must include the X-Correlation-Id header for distributed tracing.',
+        title: 'ShopApp Architecture Overview',
+        tags: ['architecture', 'shopapp', 'overview'],
+        scope: 'project', namespace: 'shopapp', department: 'engineering',
       });
       ids.myedcArch = r.memory.id;
       expect(r.stored).toBe(true);
       expect(r.memory.importance_score).toBeGreaterThan(0.5); // "must always" keywords
     });
 
-    it('stores CustomerSystemsAPI tech stack', async () => {
+    it('stores OrdersAPI tech stack', async () => {
       const r = await handleStore(db, embedder, {
-        content: 'CustomerSystemsAPI is built with .NET 8 using MediatR for CQRS pattern. Database is PostgreSQL with Dapper for data access. The API follows the BaseResponse pattern where all endpoints return BaseResponse<T> with Success, Message, and Data fields. Background jobs run via Hangfire.',
-        title: 'CustomerSystems Tech Stack',
+        content: 'OrdersAPI is built with .NET 8 using MediatR for CQRS pattern. Database is PostgreSQL with Dapper for data access. The API follows the BaseResponse pattern where all endpoints return BaseResponse<T> with Success, Message, and Data fields. Background jobs run via Hangfire.',
+        title: 'OrdersAPI Tech Stack',
         tags: ['architecture', 'dotnet', 'backend'],
         scope: 'project', namespace: 'customer-api', department: 'engineering',
       });
@@ -78,8 +78,8 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
 
     it('stores team coding conventions (cross-project)', async () => {
       const r = await handleStore(db, embedder, {
-        content: 'EDC coding conventions: (1) All public methods must have XML documentation. (2) Use PascalCase for public members, camelCase for private. (3) Never use var when the type is not obvious. (4) All async methods must end with Async suffix. (5) Required: unit tests for all business logic with minimum 80% coverage.',
-        title: 'EDC Coding Conventions',
+        content: 'Acme coding conventions: (1) All public methods must have XML documentation. (2) Use PascalCase for public members, camelCase for private. (3) Never use var when the type is not obvious. (4) All async methods must end with Async suffix. (5) Required: unit tests for all business logic with minimum 80% coverage.',
+        title: 'Acme Coding Conventions',
         tags: ['conventions', 'standards', 'coding'],
         scope: 'team',
       });
@@ -101,10 +101,10 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
     });
 
     it('ingests API specification document with chunking', async () => {
-      const apiSpec = `# CustomerSystemsAPI Specification\n\n## Authentication\nAll requests require a Bearer token in the Authorization header.\n\n## Endpoints\n\n### GET /api/customers\nReturns a paginated list of customers.\n\n### GET /api/customers/{id}\nReturns a single customer by ID.\n\n### POST /api/customers\nCreates a new customer record.\n\n### PUT /api/customers/{id}\nUpdates an existing customer.\n\n### DELETE /api/customers/{id}\nSoft-deletes a customer (sets IsActive to false).\n\n## Error Handling\nAll errors return BaseResponse with Success=false and a descriptive Message.\n\n## Rate Limiting\nAPI is rate-limited to 100 requests per minute per API key.`;
+      const apiSpec = `# OrdersAPI Specification\n\n## Authentication\nAll requests require a Bearer token in the Authorization header.\n\n## Endpoints\n\n### GET /api/customers\nReturns a paginated list of customers.\n\n### GET /api/customers/{id}\nReturns a single customer by ID.\n\n### POST /api/customers\nCreates a new customer record.\n\n### PUT /api/customers/{id}\nUpdates an existing customer.\n\n### DELETE /api/customers/{id}\nSoft-deletes a customer (sets IsActive to false).\n\n## Error Handling\nAll errors return BaseResponse with Success=false and a descriptive Message.\n\n## Rate Limiting\nAPI is rate-limited to 100 requests per minute per API key.`;
       const r = await handleIngest(db, embedder, {
         content: apiSpec,
-        title: 'CustomerSystems API Spec',
+        title: 'OrdersAPI Spec',
         content_type: 'markdown',
         scope: 'project', namespace: 'customer-api',
         tags: ['api', 'specification'],
@@ -114,19 +114,19 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
       expect(r.chunk_count).toBeGreaterThan(1);
     });
 
-    it('extracts entities for MyEdcApp', () => {
+    it('extracts entities for ShopApp', () => {
       const r = handleExtractEntities(db, {
         memory_id: ids.myedcArch,
         entities: [
-          { name: 'MyEdcApp', type: 'project' },
+          { name: 'ShopApp', type: 'project' },
           { name: 'React Native', type: 'tool', aliases: ['RN', 'ReactNative'] },
-          { name: 'CustomerSystemsAPI', type: 'project', aliases: ['CSAPI'] },
+          { name: 'OrdersAPI', type: 'project', aliases: ['OAPI'] },
           { name: 'IdentityServer', type: 'tool' },
         ],
         relationships: [
-          { source: 'MyEdcApp', target: 'React Native', type: 'uses' },
-          { source: 'MyEdcApp', target: 'CustomerSystemsAPI', type: 'depends_on' },
-          { source: 'MyEdcApp', target: 'IdentityServer', type: 'uses' },
+          { source: 'ShopApp', target: 'React Native', type: 'uses' },
+          { source: 'ShopApp', target: 'OrdersAPI', type: 'depends_on' },
+          { source: 'ShopApp', target: 'IdentityServer', type: 'uses' },
         ],
       });
       // v14 G5: a single user's graph is shared (namespace ''), so a concept this
@@ -137,11 +137,11 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
       expect(r.relationships_created).toBe(3);
     });
 
-    it('extracts entities for CustomerSystemsAPI', () => {
+    it('extracts entities for OrdersAPI', () => {
       const r = handleExtractEntities(db, {
         memory_id: ids.customerTech,
         entities: [
-          { name: 'CustomerSystemsAPI', type: 'project' },
+          { name: 'OrdersAPI', type: 'project' },
           { name: '.NET', type: 'tool', aliases: ['dotnet', 'DotNet'] },
           { name: 'MediatR', type: 'tool' },
           { name: 'PostgreSQL', type: 'tool', aliases: ['Postgres', 'PG'] },
@@ -150,10 +150,10 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
           { name: 'BaseResponse', type: 'pattern' },
         ],
         relationships: [
-          { source: 'CustomerSystemsAPI', target: '.NET', type: 'uses' },
-          { source: 'CustomerSystemsAPI', target: 'MediatR', type: 'uses' },
-          { source: 'CustomerSystemsAPI', target: 'PostgreSQL', type: 'uses' },
-          { source: 'CustomerSystemsAPI', target: 'Dapper', type: 'uses' },
+          { source: 'OrdersAPI', target: '.NET', type: 'uses' },
+          { source: 'OrdersAPI', target: 'MediatR', type: 'uses' },
+          { source: 'OrdersAPI', target: 'PostgreSQL', type: 'uses' },
+          { source: 'OrdersAPI', target: 'Dapper', type: 'uses' },
         ],
       });
       expect(r.entities_created).toBeGreaterThanOrEqual(4);
@@ -161,7 +161,7 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
 
     it('knowledge graph shows PostgreSQL shared between projects', () => {
       const graph = handleGraph(db, { entity: 'PostgreSQL', depth: 2 });
-      expect(graph.entities.some(e => e.name === 'CustomerSystemsAPI')).toBe(true);
+      expect(graph.entities.some(e => e.name === 'OrdersAPI')).toBe(true);
     });
 
     it('manifest returns all stored memories', () => {
@@ -218,10 +218,10 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
 
     it('stores JWT architecture decision', async () => {
       const r = await handleStore(db, embedder, {
-        content: 'Architecture decision: MyEdcApp will use JWT with refresh tokens for mobile authentication. Access tokens expire after 15 minutes. Refresh tokens expire after 30 days. Tokens are stored in secure storage (Keychain on iOS, EncryptedSharedPreferences on Android). We decided this because OAuth2 PKCE adds too much complexity for our mobile-first use case.',
+        content: 'Architecture decision: ShopApp will use JWT with refresh tokens for mobile authentication. Access tokens expire after 15 minutes. Refresh tokens expire after 30 days. Tokens are stored in secure storage (Keychain on iOS, EncryptedSharedPreferences on Android). We decided this because OAuth2 PKCE adds too much complexity for our mobile-first use case.',
         title: 'Auth: JWT with Refresh Tokens',
         tags: ['architecture', 'auth', 'jwt', 'decisions'],
-        scope: 'project', namespace: 'myedcapp',
+        scope: 'project', namespace: 'shopapp',
       });
       ids.jwtDecision = r.memory.id;
       expect(r.memory.importance_score).toBeGreaterThan(0.5); // "decided" keyword
@@ -229,10 +229,10 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
 
     it('stores implementation details with code', async () => {
       const r = await handleStore(db, embedder, {
-        content: 'JWT implementation in MyEdcApp:\n```typescript\nconst authConfig = {\n  accessTokenTTL: 900, // 15 minutes\n  refreshTokenTTL: 2592000, // 30 days\n  issuer: "https://identity.edc.dk",\n  audience: "myedcapp-mobile"\n};\n```\nThe RefreshTokenService must handle token rotation — each refresh invalidates the previous token.',
+        content: 'JWT implementation in ShopApp:\n```typescript\nconst authConfig = {\n  accessTokenTTL: 900, // 15 minutes\n  refreshTokenTTL: 2592000, // 30 days\n  issuer: "https://identity.example.com",\n  audience: "shopapp-mobile"\n};\n```\nThe RefreshTokenService must handle token rotation — each refresh invalidates the previous token.',
         title: 'JWT Implementation Code',
         tags: ['auth', 'jwt', 'implementation', 'code'],
-        scope: 'project', namespace: 'myedcapp',
+        scope: 'project', namespace: 'shopapp',
       });
       ids.jwtImpl = r.memory.id;
     });
@@ -240,7 +240,7 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
     it('finds new JWT memory in search results', async () => {
       const r = await handleSearch(db, embedder, {
         query: 'JWT refresh token mobile authentication',
-        detail_level: 'summary', namespace: 'myedcapp',
+        detail_level: 'summary', namespace: 'shopapp',
       });
       const foundIds = r.results.map((x: any) => x.id);
       expect(foundIds).toContain(ids.jwtDecision);
@@ -251,7 +251,7 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
         content: 'We decided to use Redis for session storage with a 24-hour TTL for active sessions. Redis Sentinel provides high availability. Connection string pattern: redis://sentinel:26379/0. This decision was because in-memory session state does not survive pod restarts in Kubernetes.',
         title: 'Redis Session Storage Decision',
         tags: ['architecture', 'auth', 'redis', 'decisions'],
-        scope: 'project', namespace: 'myedcapp',
+        scope: 'project', namespace: 'shopapp',
       });
       ids.redisDecision = r.memory.id;
     });
@@ -264,14 +264,14 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
           { name: 'OAuth2', type: 'concept' },
         ],
         relationships: [
-          { source: 'MyEdcApp', target: 'JWT', type: 'uses' },
+          { source: 'ShopApp', target: 'JWT', type: 'uses' },
         ],
       });
       handleExtractEntities(db, {
         memory_id: ids.redisDecision,
         entities: [{ name: 'Redis', type: 'tool' }],
         relationships: [
-          { source: 'MyEdcApp', target: 'Redis', type: 'uses' },
+          { source: 'ShopApp', target: 'Redis', type: 'uses' },
         ],
       });
       const graph = handleGraph(db, { entity: 'JWT', depth: 1 });
@@ -285,12 +285,12 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
         content: 'Sprint 42 auth task: Implement biometric login for iOS using FaceID and TouchID via expo-local-authentication package. Must fall back to PIN if biometrics unavailable.',
         title: 'Sprint 42: Biometric Login',
         tags: ['sprint-42', 'auth', 'priority-high', 'ios'],
-        scope: 'project', namespace: 'myedcapp',
+        scope: 'project', namespace: 'shopapp',
       });
 
       const authOnly = await handleSearch(db, embedder, {
         query: 'login authentication', tags: ['auth'],
-        detail_level: 'ids_only', scope: 'project', namespace: 'myedcapp',
+        detail_level: 'ids_only', scope: 'project', namespace: 'shopapp',
       });
       expect(authOnly.results.length).toBeGreaterThanOrEqual(1);
     });
@@ -315,8 +315,8 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
       const importanceBefore = before!.importance_score;
 
       // 3 searches that should hit this memory
-      await handleSearch(db, embedder, { query: 'MyEdcApp architecture overview', detail_level: 'ids_only' });
-      await handleSearch(db, embedder, { query: 'EDC mobile app React Native', detail_level: 'ids_only' });
+      await handleSearch(db, embedder, { query: 'ShopApp architecture overview', detail_level: 'ids_only' });
+      await handleSearch(db, embedder, { query: 'Acme mobile app React Native', detail_level: 'ids_only' });
 
       const after = getMemoryById(db, ids.myedcArch);
       expect(after!.importance_score).toBeGreaterThan(importanceBefore);
@@ -330,7 +330,7 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
   describe('Day 5: Bug Investigation & Incident Response', () => {
     it('stores production incident', async () => {
       const r = await handleStore(db, embedder, {
-        content: 'INCIDENT: Production outage at 14:32 UTC. CustomerSystemsAPI returned 503 for all requests. Root cause: database connection pool exhaustion. 47 connections were leaked by the BatchProcessingService which failed to dispose SqlConnection objects in error paths.',
+        content: 'INCIDENT: Production outage at 14:32 UTC. OrdersAPI returned 503 for all requests. Root cause: database connection pool exhaustion. 47 connections were leaked by the BatchProcessingService which failed to dispose SqlConnection objects in error paths.',
         title: 'P1 Incident: Connection Pool Exhaustion',
         tags: ['incident', 'p1', 'production', 'database'],
         scope: 'project', namespace: 'customer-api', department: 'engineering',
@@ -405,7 +405,7 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
           { name: 'SqlConnection', type: 'concept' },
         ],
         relationships: [
-          { source: 'BatchProcessingService', target: 'CustomerSystemsAPI', type: 'part_of' },
+          { source: 'BatchProcessingService', target: 'OrdersAPI', type: 'part_of' },
         ],
       });
       const graph = handleGraph(db, { entity: 'BatchProcessingService', depth: 1 });
@@ -419,7 +419,7 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
         id: ids.incident,
         content: getMemoryById(db, ids.incident)!.content +
           '\n\nPOST-MORTEM: Time to detect: 8 minutes. Time to mitigate: 23 minutes. Customer impact: ~200 users saw 503 errors. Action items: (1) Add connection pool alerting. (2) Code review checklist item for IDisposable. (3) Load test batch processor.',
-        changed_by: 'yonas',
+        changed_by: 'alice',
       });
       expect(updated).not.toBeNull();
 
@@ -479,7 +479,7 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
         id: ids.mysqlDecision,
         content: getMemoryById(db, ids.mysqlDecision)!.content +
           '\n\n⚠️ DEPRECATED: Migrated to ClickHouse in Q2 2026. This decision is no longer active.',
-        changed_by: 'yonas',
+        changed_by: 'alice',
       });
       expect(updated).not.toBeNull();
     });
@@ -495,7 +495,7 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
         content: 'Temporary: Feature flag cleanup reminder. Remove the ENABLE_NEW_SEARCH flag after sprint 43 ends.',
         title: 'Sprint 43 Cleanup Reminder',
         tags: ['temporary', 'sprint-43'],
-        scope: 'project', namespace: 'myedcapp',
+        scope: 'project', namespace: 'shopapp',
         expires_at: expires,
       });
       ids.tempReminder = r.memory.id;
@@ -506,7 +506,7 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
       const expired = await handleStore(db, embedder, {
         content: 'This expired task note should be deletable via expired_only filter in the batch cleanup process.',
         title: 'Expired Task',
-        scope: 'project', namespace: 'myedcapp',
+        scope: 'project', namespace: 'shopapp',
       });
       db.prepare("UPDATE memories SET expires_at = '2020-01-01T00:00:00Z' WHERE id = ?").run(expired.memory.id);
       const deleted = deleteMemoriesByFilter(db, { expired_only: true });
@@ -576,7 +576,7 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
       // Store a low-quality draft first
       await handleStore(db, embedder, {
         content: 'TODO draft WIP placeholder', title: 'Junk Note',
-        scope: 'project', namespace: 'myedcapp',
+        scope: 'project', namespace: 'shopapp',
       });
       const report = await handleConsolidate(db, embedder, {
         prune_low_quality: true, dry_run: false,
@@ -586,7 +586,7 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
     });
 
     it('knowledge graph still works after consolidation', () => {
-      const graph = handleGraph(db, { entity: 'MyEdcApp', depth: 1 });
+      const graph = handleGraph(db, { entity: 'ShopApp', depth: 1 });
       expect(graph.entities.length).toBeGreaterThanOrEqual(1);
     });
 
@@ -604,7 +604,7 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
     it('PostgreSQL connects both projects via 2-hop graph', () => {
       const graph = handleGraph(db, { entity: 'PostgreSQL', depth: 2 });
       const names = graph.entities.map(e => e.name);
-      expect(names).toContain('CustomerSystemsAPI');
+      expect(names).toContain('OrdersAPI');
     });
 
     it('browses all tool-type entities', () => {
@@ -615,7 +615,7 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
 
     it('stores team member info and queries person entities', async () => {
       const r = await handleStore(db, embedder, {
-        content: 'Team members: Yonas (senior dev, mobile + backend), Jacob (tech lead, .NET), Anders (DevOps). Jacob reviews all .NET PRs. Anders manages the Kubernetes cluster.',
+        content: 'Team members: Alice (senior dev, mobile + backend), Bob (tech lead, .NET), Carol (DevOps). Bob reviews all .NET PRs. Carol manages the Kubernetes cluster.',
         title: 'Team Structure',
         tags: ['team', 'people'],
         scope: 'team',
@@ -623,9 +623,9 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
       handleExtractEntities(db, {
         memory_id: r.memory.id,
         entities: [
-          { name: 'Yonas', type: 'person' },
-          { name: 'Jacob', type: 'person' },
-          { name: 'Anders', type: 'person' },
+          { name: 'Alice', type: 'person' },
+          { name: 'Bob', type: 'person' },
+          { name: 'Carol', type: 'person' },
         ],
       });
       const people = handleGraph(db, { entity_type: 'person' });
@@ -684,7 +684,7 @@ describe('Developer Simulation: 2 Weeks at EDC', () => {
   describe('Stress: Scale Test', () => {
     it('batch stores 100 microservice docs across 3 namespaces', async () => {
       const services = ['auth', 'billing', 'shipping', 'search', 'notification', 'analytics', 'payment', 'inventory', 'reporting', 'monitoring'];
-      const namespaces = ['myedcapp', 'customer-api', 'devops'];
+      const namespaces = ['shopapp', 'customer-api', 'devops'];
 
       for (let i = 0; i < 100; i++) {
         const svc = services[i % services.length];

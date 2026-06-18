@@ -40,7 +40,7 @@ describe('memory_update contextualized re-embedding', () => {
       content: 'Original auth notes.',
       title: 'Auth System',
       document_type: 'decision',
-      namespace: 'edc',
+      namespace: 'acme',
       scope: 'project',
     });
 
@@ -51,7 +51,7 @@ describe('memory_update contextualized re-embedding', () => {
     const expected = contextualizeForEmbedding(newContent, {
       title: 'Auth System',
       document_type: 'decision',
-      namespace: 'edc',
+      namespace: 'acme',
     });
 
     // The context prefix must be non-empty for this titled/typed memory, and the
