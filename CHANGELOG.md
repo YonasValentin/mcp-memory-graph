@@ -6,6 +6,26 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.7.4] - 2026-06-18
+
+### Added
+
+- **Task-aware recall via a `UserPromptSubmit` hook** (`memory-user-prompt`).
+  `SessionStart` fires before any prompt exists, so it can only surface a generic
+  nudge; this hook fires *with* the prompt text, keyword-searches the DB
+  read-only (no embedder), and prints the top matching memory titles to stdout so
+  the agent recalls relevant prior work before re-deriving it. Self-gates on task
+  signal — an id or ≥2 meaningful tokens — so bare "yes"/"ok"/"continue" stay
+  silent, with a match floor that stops a high-importance memory riding a single
+  weak word onto every prompt. Registered by `init` and removed by `uninstall`
+  alongside the other hooks; pure helpers are unit-tested.
+
+### Changed
+
+- **Replaced identifying fixtures in the test corpus with neutral data**
+  (fictional app/service/person names, `example.com`). No runtime behavior
+  change.
+
 ## [2.7.2] - 2026-06-17
 
 ### Fixed
