@@ -6,6 +6,37 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-06-18
+
+Trust-surfacing: make volatile and unverified memories *self-suspicious* so recall
+nudges verification instead of presenting stale point-in-time facts as current
+truth. (Schema v19 — three nullable columns, auto-migrated, non-destructive.)
+
+### Added
+
+- **Volatility-aware freshness.** Each memory is auto-classified `volatile` /
+  `normal` / `stable` from its content + `document_type` at write time. A
+  `volatile` deploy/status fact earns a freshness warning within **days** (soft
+  >2d, strong >7d), `normal` keeps the historic 30/90-day thresholds, `stable`
+  references stay quiet until months old.
+- **`auto_decay` search option.** When set (and no explicit `temporal_decay`),
+  volatile results decay on a short half-life while durable facts are left
+  untouched — down-ranks stale operational facts with no hand-tuned half-life.
+- **Verification tier → groundedness.** New `verification_tier`
+  (`source_verified` > `tool_verified` > `asserted` > `unverified`) and
+  `verification_detail`, settable on `memory_store` and (the main case) after the
+  fact via `memory_update`. Folded into `computeGroundedness`
+  (`0.35 confidence + 0.22 provenance + 0.18 verification + 0.25 recency`), so an
+  unverified claim ranks a full trust tier below the same claim verified against
+  live state.
+- **`memory_link_check` tool.** The inverse of `memory_unlinked_mentions`:
+  reports broken `[[wikilinks]]` (a `[[Title]]` resolving to no live memory) and
+  dangling wikilink edges (target deleted/superseded). Read-only.
+- **Louder contradiction surfacing.** `memory_store` now returns a `warnings[]`
+  alert when a contradiction/supersede near-match is detected but kept (default
+  `on_conflict: 'add'`), naming the conflicting memory and suggesting
+  `on_conflict: 'supersede'` — instead of burying it in `conflicts`.
+
 ## [2.7.6] - 2026-06-18
 
 ### Documentation
