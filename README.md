@@ -201,11 +201,12 @@ Run them yourself: `npm run bench:longmemeval`, `bench:locomo`, `bench:convomem`
 
 ### Claude Code hooks
 
-Four opt-in hooks, installed by `init`:
+Five opt-in hooks, installed by `init`:
 
 | Hook | When it fires | What it does |
 |---|---|---|
-| SessionStart | session begins | Fast status check (memory count, expired, stale docs) |
+| SessionStart | session begins | Status check (memory count, expired, stale docs) and surfaces the top memories for the project |
+| UserPromptSubmit | each prompt that carries a task signal (a ticket/PR id or ≥2 keywords) | Keyword-searches the store and surfaces matching memories so you recall prior work before re-deriving it; stays silent on trivial prompts |
 | PostToolUse | after a memory search | Tracks hits and misses to `search-log.jsonl` |
 | PreCompact | before context compression | Optional learning extraction (off by default) |
 | Stop | session ends | Spawns headless `claude -p` to review the session and store learnings |
@@ -403,7 +404,7 @@ User scope writes hooks to `~/.claude/settings.json`, so they fire in every Clau
 Init does seven things:
 
 1. Verifies the hook scripts exist in `dist/hooks/`.
-2. Registers the four hooks in settings.json.
+2. Registers the five hooks in settings.json.
 3. Creates the config file with sensible defaults: `~/.mcp-memory/config.json` (user scope) or `<project>/.mcp-memory/config.json` (project scope; the generated `.mcp.json` pins it via `MCP_MEMORY_CONFIG_PATH`).
 4. Writes memory usage instructions to `.claude/CLAUDE.md` (project scope) or prints a snippet (user scope).
 5. **Registers the MCP server with Claude Code** — user scope runs `claude mcp add -s user memory-server -- npx -y mcp-memory-graph` for you (idempotent; best-effort — warns with the manual command if the `claude` CLI isn't on `PATH`; skip with `--no-register`). Project scope is registered via the committable `.mcp.json` instead. This makes step 2 of the Quick Start optional.
@@ -589,7 +590,8 @@ The config file controls self-improvement behavior, hook settings, and per-proje
   "hooks": {
     "extract_on_compact": false,
     "extract_on_session_end": false,
-    "track_searches": true
+    "track_searches": true,
+    "review_on_stop": true
   },
   "extraction": {
     "categories": ["decision", "pattern", "error_fix", "convention"],
