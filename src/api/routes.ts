@@ -239,6 +239,9 @@ export function registerApiRoutes(
       min_confidence: q.min_confidence,
       date_from: q.date_from,
       date_to: q.date_to,
+      // Opt-in only: REST reranks just when ?rerank=true. handleSearch treats
+      // undefined as off, so absent/false leave the surface model-free.
+      rerank: q.rerank,
     });
     res.json(result);
   }));

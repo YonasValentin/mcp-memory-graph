@@ -6,6 +6,45 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.10.0] - 2026-06-18
+
+NLI-gated self-churn dedup at the write gate, plus two correctness fixes to the
+REST search surface and conflict bookkeeping.
+
+### Added
+
+- **`detectParaphrases` — NLI mutual-entailment dedup.** The dual of
+  `detectContradictions`: a near neighbour the new memory **mutually entails**
+  (both directions `entailment`, both ≥ minScore) is a reworded restatement of an
+  existing fact. On the default `add` path `memory_store` now collapses such a
+  paraphrase to a `NOOP` — it reinforces the kept fact (spaced-repetition access
+  bump) instead of inserting a new row and a fresh `memory_conflicts` row. This
+  stops the per-session self-churn the session-review writer produced (the same
+  fact re-stored with reworded titles flooded the conflict detector). The gate is
+  NLI-only and mutual-entailment-only, so it never fires without a classifier and
+  never collapses two distinct-but-similar facts (battle-v16 stays green); a
+  classifier load failure degrades to no-dedup, never failing the write.
+
+### Fixed
+
+- **REST `/api/search` honours an opt-in `rerank` param.** The REST surface
+  plumbed no `rerank` into `handleSearch`, so it could never rerank — unlike MCP
+  `memory_search`, which defaults rerank ON. REST stays opt-in (default off) to
+  keep the dashboard's latency low and the hermetic test suite model-free; pass
+  `?rerank=true` to enable the cross-encoder.
+- **Soft-`memory_forget` resolves the conflicts it is party to.** Forgetting a
+  memory now stamps `resolved_at`/`resolved_by = 'forget'` on every still-open
+  conflict touching it, instead of leaving a phantom `resolved_at IS NULL` row
+  behind (hard delete and consolidate already FK-cascade the row away; the store
+  supersede path already stamped). Closes the last audit gap so the unresolved
+  count and a naive `resolved_at IS NULL` reader agree.
+
+### Changed
+
+- **Tool-count docs corrected to 51** (45 `memory_*`, 3 `vault_*`,
+  3 `core_memory_*`) across the README, skill preamble, and tool reference, and
+  the previously-undocumented `memory_link_check` got a reference entry.
+
 ## [2.9.1] - 2026-06-18
 
 ### Fixed

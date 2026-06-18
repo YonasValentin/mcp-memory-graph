@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { EmbeddingProvider, Memory, MemoryInput, MemoryRow } from '../types.js';
-import { insertMemory, invalidateMemory, getMemoryById, updateMemory, rowToMemory, findNearDuplicates } from '../db/repository.js';
+import { insertMemory, invalidateMemory, getMemoryById, updateMemory, rowToMemory, findNearDuplicates, recordAccess } from '../db/repository.js';
 import { computeContentSignal, classifyVolatility } from '../search/content-signals.js';
 import { extractEntitiesRegex } from '../graph/entity-extractor.js';
 import { storeExtractedEntities, weaveGraphEdges } from '../graph/entity-store.js';
@@ -10,7 +10,7 @@ import { detectConflicts, recordConflicts, type ConflictResult } from '../graph/
 import { forcedNamespace } from '../lib/tenancy.js';
 import { currentPrincipal } from '../lib/request-context.js';
 import { getConfiguredStoreDefaults, type ConfiguredStoreDefaults } from '../config/loader.js';
-import { detectContradictions, type NliClassifier } from '../graph/contradiction.js';
+import { detectContradictions, detectParaphrases, type NliClassifier } from '../graph/contradiction.js';
 import { buildSimilarityEdges } from '../graph/similarity-edges.js';
 import { contextualizeForEmbedding } from '../search/contextual.js';
 import { redactRecord, redactModeFromEnv } from '../lib/redact-content.js';
@@ -233,6 +233,10 @@ export async function handleStore(
   // `contradicted` — the bi-temporal retire of the old fact is done by
   // invalidateMemory below, not by recordConflicts' superseded-stamp path.
   const nliContradictions: ConflictResult[] = [];
+  // #4 self-churn dedup: the currently-valid memory the new content merely
+  // REWORDS (mutual NLI entailment), if any. Set inside the NLI block below;
+  // consumed by the paraphrase-NOOP short-circuit on the default add path.
+  let paraphraseTargetId: string | null = null;
   // M6.2 compute governor: NLI runs an entailment model over each near neighbor —
   // the heaviest per-store op. Over budget (throttle/block), skip it; the overlap
   // heuristic still runs (documented quality downgrade, never an error). Default
@@ -300,6 +304,28 @@ export async function handleStore(
         description: `NLI contradiction (score: ${c.score.toFixed(3)})`,
       });
     }
+
+    // #4 self-churn dedup: among the SAME shortlist, find a near neighbour the
+    // new content mutually entails (a reworded restatement of an existing fact).
+    // Exclude anything the contradiction pass already flagged — a contradiction
+    // can never also be a paraphrase, and it owns the retire. Reworded re-stores
+    // are the conflict-detector flood (memory be1fc787); collapsing them to a
+    // NOOP stops a fresh memory + conflict row accruing every session. Mutual
+    // entailment (not one-way) keeps battle-v16 distinct-but-similar facts safe.
+    if (nliInvalidated.length === 0) {
+      // Same cold-load degradation as detectContradictions above: a classify()
+      // model-load failure must skip the dedup enrichment, never fail the write.
+      try {
+        const paraphrases = await detectParaphrases(nli, input.content, candidates);
+        if (paraphrases.length > 0) {
+          // Closest/strongest first; collapse into the single best-matching fact.
+          paraphrases.sort((a, b) => b.score - a.score);
+          paraphraseTargetId = paraphrases[0].id;
+        }
+      } catch (err) {
+        logger.warn({ event: 'nli_pass_skipped', err: err instanceof Error ? err.message : String(err) });
+      }
+    }
   }
 
   // When NLI retired a contradicted fact, the new memory always supersedes it:
@@ -332,6 +358,30 @@ export async function handleStore(
   // in the `conflicts` array. NLI-retired (DELETE) and merged (UPDATE) paths
   // already resolved the conflict, so they produce no warning.
   const warningsOut = buildContradictionWarnings(db, reportedConflicts, decision.op);
+
+  // ── #4 PARAPHRASE NOOP: the new content merely rewords an existing fact. ──
+  // Gated to the DEFAULT add path: explicit on_conflict='supersede'/'update'
+  // ask for retire/merge and own their own semantics, so only the implicit
+  // "just store this" path dedups. NLI mutual entailment (not the keyword
+  // heuristic) is the signal, so this never collapses a distinct fact and never
+  // fires without a classifier. Reinforce the kept fact (the access path's
+  // spaced-repetition bump) and return without inserting a row or a conflict —
+  // stopping the per-session self-churn at its source (memory be1fc787).
+  if (!nliContradiction && (input.on_conflict ?? 'add') === 'add' && paraphraseTargetId) {
+    const existingRow = getMemoryById(db, paraphraseTargetId);
+    if (existingRow) {
+      recordAccess(db, [{ memory_id: existingRow.id, access_type: 'get' }]);
+      // Re-read so the returned snapshot reflects the reinforcement bump.
+      const reinforced = getMemoryById(db, existingRow.id) ?? existingRow;
+      return {
+        stored: false,
+        memory: rowToMemory(reinforced),
+        operation: 'NOOP',
+        operation_reason: `Paraphrase of ${existingRow.id} — reinforced, not re-added`,
+        warnings: warningsOut,
+      };
+    }
+  }
 
   // ── NOOP: exact duplicate already present — return it without inserting. ──
   if (!nliContradiction && decision.op === 'NOOP') {

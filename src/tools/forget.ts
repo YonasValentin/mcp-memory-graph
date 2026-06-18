@@ -9,6 +9,7 @@ import {
 } from '../db/repository.js';
 import { mirrorMemoryWrite, mirrorMemoryRemove } from '../vault/write-through.js';
 import { notify, rowToEventPayload, propagateSafe } from '../events/hooks.js';
+import { markConflictsResolved } from '../graph/conflict-resolver.js';
 
 export interface ForgetResult {
   forgotten: boolean;
@@ -102,6 +103,12 @@ export function handleForget(
     // child chunks are independently searchable, so soft-forgetting only the
     // parent would leave the "forgotten" content recallable (battle-v7 H5).
     invalidateSubtree(db, input.id);
+    // The fact is retired, so any conflict it is party to is resolved-by-removal:
+    // stamp resolved_at/resolved_by instead of leaving a phantom unresolved row
+    // (the count's JOIN already excludes a retired party, but a naive
+    // `resolved_at IS NULL` reader would still over-count, and the audit trail
+    // would be blank). Mirrors recordConflicts' resolve-on-retire stamp.
+    markConflictsResolved(db, input.id, 'forget');
     // Write-through: mirrorMemoryWrite sees the now-stamped valid_to and moves
     // the file to .memory/deleted/ so the tombstone travels through git.
     mirrorMemoryWrite(db, input.id);

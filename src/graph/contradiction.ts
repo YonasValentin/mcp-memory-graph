@@ -194,3 +194,38 @@ export async function detectContradictions(
   }
   return hits;
 }
+
+/**
+ * The dual of {@link detectContradictions}: returns the candidates that are a
+ * PARAPHRASE of the new memory — i.e. mutual entailment. The existing fact must
+ * entail the new one AND the new must entail the existing (both directions, both
+ * `entailment`, both ≥ `minScore`). Reported score is the weaker (min) direction.
+ *
+ * Why mutual (never one-way): one-way entailment is a generalization/refinement
+ * ("staging deploys nightly" entails "staging deploys", not vice-versa) — those
+ * are DISTINCT facts that must both survive (battle-v16). Only mutual entailment
+ * means "the same fact, reworded", which is the self-churn the dedup gate kills.
+ * Contradictions are handled by detectContradictions and excluded here by the
+ * `entailment` label check.
+ *
+ * Pure with respect to the injected `nli` (no DB, no model of its own) — fully
+ * unit-testable with a deterministic stub.
+ */
+export async function detectParaphrases(
+  nli: NliClassifier,
+  newContent: string,
+  candidates: { id: string; content: string }[],
+  opts?: { minScore?: number },
+): Promise<Array<{ id: string; score: number }>> {
+  const minScore = opts?.minScore ?? 0.6;
+  const hits: Array<{ id: string; score: number }> = [];
+  for (const candidate of candidates) {
+    const forward = await nli.classify(candidate.content, newContent);
+    if (forward.label !== 'entailment' || forward.score < minScore) continue;
+    // Reverse pass: equivalence is symmetric, so demand both directions agree.
+    const reverse = await nli.classify(newContent, candidate.content);
+    if (reverse.label !== 'entailment' || reverse.score < minScore) continue;
+    hits.push({ id: candidate.id, score: Math.min(forward.score, reverse.score) });
+  }
+  return hits;
+}

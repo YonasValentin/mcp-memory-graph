@@ -1579,6 +1579,11 @@ export const ApiSearchQuerySchema = z.object({
   min_confidence: floatFromString(0, 1),
   date_from: optDatetime('date_from'),
   date_to: optDatetime('date_to'),
+  // Opt-in cross-encoder rerank for the REST surface. Unlike MCP memory_search
+  // (which defaults rerank ON — precision over latency for agent recall), the
+  // human-facing /api/search and bundled dashboard default OFF to keep search
+  // snappy; pass `?rerank=true` to opt in. Left unset, REST does not rerank.
+  rerank: optBool(),
 });
 
 export const ApiListQuerySchema = z.object({

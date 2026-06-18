@@ -1,4 +1,4 @@
-# Tool reference (all 50)
+# Tool reference (all 51)
 
 One database, one model, $0/token. Every result is sanitized (ANSI/control/Trojan-Source stripped) before it leaves the server. Tools below are grouped by job; key params are noted inline.
 
@@ -28,6 +28,7 @@ One database, one model, $0/token. Every result is sanitized (ANSI/control/Troja
 - **`memory_graph`** — traverse entities + relationships + linked memories, depth 1–3.
 - **`memory_extract_entities`** — store LLM-extracted entities and relationships for a memory.
 - **`memory_unlinked_mentions`** — entity names mentioned in text with no edge yet (suggested links).
+- **`memory_link_check`** — validate a memory's `[[Title]]` wikilinks: reports which resolve to a live memory and which are dangling. Pass `id` for one memory.
 - **`memory_communities`** — GraphRAG community detection over the entity graph (corpus-level themes).
 - **`memory_consolidate`** — the dream cycle: Score → Expire → Prune → Dedup → **Promote** → Gaps. `dry_run:true` FIRST. `similarity_threshold` (0.85), `prune_expired`, `prune_low_quality`, `max_operations`, scope/namespace limits. The nightly run also auto-promotes the top lessons/incidents into `core_memory` (always-in-context) — config `consolidation.auto_promote_lessons` (default on), `promotion_importance_floor`, `promotion_max_entries`.
 - **`memory_extract_learnings`** — heuristically mine a transcript for decisions/patterns/error_fixes/conventions/incidents/lessons; `auto_store` (true).

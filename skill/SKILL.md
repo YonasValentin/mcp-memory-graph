@@ -2,7 +2,7 @@
 name: mcp-memory-graph
 description: >-
   Drive the mcp-memory-graph MCP server like an expert: store, recall, and reconcile
-  durable knowledge across sessions over 50 local tools ($0/token, one SQLite file).
+  durable knowledge across sessions over 51 local tools ($0/token, one SQLite file).
   Use when ANY memory tool is in play (mcp__*memory*__), when the user says "remember
   this" / "recall that" / "store a decision", when a memory seems missing (scope, privacy,
   or rerank surprise), for Obsidian vault sync, core memory, the dream-cycle consolidate,
