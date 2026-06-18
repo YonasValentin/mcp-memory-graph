@@ -107,17 +107,25 @@ export function insertMemory(
         author, department, tags, access_level, language, metadata,
         parent_id, chunk_index, version, created_at, updated_at, expires_at,
         access_count, last_accessed_at, importance_score, confidence_score,
-        valid_from, valid_to, tx_expired, agent_id
+        valid_from, valid_to, tx_expired, agent_id,
+        volatility, verification_tier, verification_detail
       ) VALUES (
         @id, @scope, @namespace, @title, @content, @document_type, @source,
         @author, @department, @tags, @access_level, @language, @metadata,
         @parent_id, @chunk_index, @version, @created_at, @updated_at, @expires_at,
         @access_count, @last_accessed_at, @importance_score, @confidence_score,
-        @created_at, NULL, NULL, @agent_id
+        @created_at, NULL, NULL, @agent_id,
+        @volatility, @verification_tier, @verification_detail
       )
     `);
 
-    const result = stmt.run({ ...memory, agent_id: memory.agent_id ?? null });
+    const result = stmt.run({
+      ...memory,
+      agent_id: memory.agent_id ?? null,
+      volatility: memory.volatility ?? null,
+      verification_tier: memory.verification_tier ?? null,
+      verification_detail: memory.verification_detail ?? null,
+    });
     const rowid = BigInt(result.lastInsertRowid);
 
     // M2.2 — signed provenance envelope (opt-in via MCP_SIGN_MEMORIES). Sign the
@@ -204,6 +212,9 @@ export function updateMemory(
       'language',
       'importance_score',
       'confidence_score',
+      'volatility',
+      'verification_tier',
+      'verification_detail',
     ];
 
     // Only fields that are PRESENT in `updates` AND differ from the stored value
@@ -758,6 +769,9 @@ export function rowToMemory(row: MemoryRow): Memory {
     confidence_score: row.confidence_score,
     provenance: (row.provenance as Memory['provenance']) ?? 'manual',
     agent_id: row.agent_id ?? null,
+    volatility: (row.volatility as Memory['volatility']) ?? null,
+    verification_tier: (row.verification_tier as Memory['verification_tier']) ?? null,
+    verification_detail: row.verification_detail ?? null,
   };
 }
 

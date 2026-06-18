@@ -1,7 +1,8 @@
 import type Database from 'better-sqlite3';
-import type { EmbeddingProvider, SearchOptions, SearchResult, SearchResultSummary, SearchResultIdOnly, MemoryRow } from '../types.js';
+import type { EmbeddingProvider, SearchOptions, SearchResult, SearchResultSummary, SearchResultIdOnly, MemoryRow, VolatilityClass, TemporalDecayConfig } from '../types.js';
 import { applyTemporalDecay } from './temporal.js';
 import { computeConfidence, confidenceLabel, computeGroundedness } from './scoring.js';
+import { classifyVolatility } from './content-signals.js';
 import { NOW_ISO_SQL } from '../db/predicates.js';
 import { rowToMemory, VEC0_MAX_K } from '../db/repository.js';
 import { extractEntitiesRegex } from '../graph/entity-extractor.js';
@@ -33,9 +34,33 @@ function memoryAgeDays(updatedAt: string): number {
   return Math.max(0, Math.floor((Date.now() - new Date(updatedAt).getTime()) / 86_400_000));
 }
 
-export function freshnessWarning(ageDays: number): string | null {
-  if (ageDays > 90) return `This memory is ${ageDays} days old. Verify against current state before asserting as fact.`;
-  if (ageDays > 30) return `This memory is ${ageDays} days old. Information may be outdated.`;
+/**
+ * Age thresholds (days) at which a memory earns a soft / strong freshness
+ * warning, keyed by how fast its truth decays. A `volatile` deploy/status fact
+ * is suspect within days; a `stable` reference fact only after months. Missing /
+ * unknown volatility falls back to `normal` (the historical 30/90 behaviour).
+ */
+const FRESHNESS_THRESHOLDS: Record<VolatilityClass, { soft: number; strong: number }> = {
+  volatile: { soft: 2, strong: 7 },
+  normal: { soft: 30, strong: 90 },
+  stable: { soft: 180, strong: 365 },
+};
+
+export function freshnessWarning(ageDays: number, volatility: VolatilityClass = 'normal'): string | null {
+  const { soft, strong } = FRESHNESS_THRESHOLDS[volatility] ?? FRESHNESS_THRESHOLDS.normal;
+  if (ageDays > strong) return `This memory is ${ageDays} days old. Verify against current state before asserting as fact.`;
+  if (ageDays > soft) return `This memory is ${ageDays} days old. Information may be outdated.`;
+  return null;
+}
+
+/**
+ * Per-volatility decay config for `auto_decay` searches. Volatile facts get a
+ * short exponential half-life so they sink as they age; normal/stable facts are
+ * left at full score (null = no decay) — recall order for durable facts is
+ * unchanged.
+ */
+export function autoDecayConfig(volatility: VolatilityClass): TemporalDecayConfig | null {
+  if (volatility === 'volatile') return { type: 'exponential', half_life_days: 3 };
   return null;
 }
 
@@ -367,12 +392,28 @@ export async function hybridSearch(
     .map((item, fusedRank) => ({ ...item, fusedRank }));
 
   // --- Temporal decay ---
+  // Explicit temporal_decay wins. Otherwise, auto_decay derives a PER-ROW config
+  // from each row's volatility class so a stale "deployed/live" fact sinks while
+  // a stable reference fact is left untouched — no global half-life to hand-tune.
   if (options.temporal_decay) {
     ranked = ranked.map(item => {
       const row = rowMap.get(item.rowid)!;
       return {
         ...item,
         score: applyTemporalDecay(item.score, row.created_at, options.temporal_decay!, row.access_count, row.stability),
+      };
+    });
+    ranked.sort((a, b) => b.score - a.score);
+  } else if (options.auto_decay) {
+    ranked = ranked.map(item => {
+      const row = rowMap.get(item.rowid)!;
+      const volatility = (row.volatility as VolatilityClass | null | undefined)
+        ?? classifyVolatility(row.content, row.document_type);
+      const cfg = autoDecayConfig(volatility);
+      if (!cfg) return item;
+      return {
+        ...item,
+        score: applyTemporalDecay(item.score, row.created_at, cfg, row.access_count, row.stability),
       };
     });
     ranked.sort((a, b) => b.score - a.score);
@@ -427,12 +468,18 @@ export async function hybridSearch(
 
     const ageDays = memoryAgeDays(row.updated_at);
 
+    // Volatility drives the freshness threshold. Use the stored class; fall back
+    // to live classification for pre-v19 rows that never had it stamped.
+    const volatility = (row.volatility as VolatilityClass | null | undefined)
+      ?? classifyVolatility(row.content, row.document_type);
+
     // Groundedness (M2.4): a TRUST signal distinct from relevance `confidence`.
-    // Folds the stored confidence_score + provenance tier + recency.
+    // Folds the stored confidence_score + provenance tier + verification + recency.
     const { groundedness, groundedness_level } = computeGroundedness(
       {
         confidence_score: row.confidence_score,
         provenance: row.provenance,
+        verification_tier: row.verification_tier,
         created_at: row.created_at,
         updated_at: row.updated_at,
         valid_to: (row as unknown as { valid_to?: string | null }).valid_to,
@@ -450,7 +497,7 @@ export async function hybridSearch(
       groundedness_level,
       match_type: matchType,
       age_days: ageDays,
-      freshness_warning: freshnessWarning(ageDays),
+      freshness_warning: freshnessWarning(ageDays, volatility),
     };
   });
 

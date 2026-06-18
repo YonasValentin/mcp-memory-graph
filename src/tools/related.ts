@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { EmbeddingProvider, SearchResult, MemoryRow } from '../types.js';
+import type { EmbeddingProvider, SearchResult, MemoryRow, VolatilityClass } from '../types.js';
 import {
   getMemoryById,
   getMemoryRowid,
@@ -10,6 +10,7 @@ import {
 } from '../db/repository.js';
 import { cosineSimFromL2, confidenceLabel, computeGroundedness } from '../search/scoring.js';
 import { freshnessWarning } from '../search/hybrid.js';
+import { classifyVolatility } from '../search/content-signals.js';
 
 interface VecMatch {
   rowid: number;
@@ -115,6 +116,7 @@ export async function handleRelated(
       {
         confidence_score: row.confidence_score,
         provenance: row.provenance,
+        verification_tier: row.verification_tier,
         created_at: row.created_at,
         updated_at: row.updated_at,
         valid_to: row.valid_to,
@@ -122,6 +124,9 @@ export async function handleRelated(
       },
       new Date().toISOString(),
     );
+
+    const volatility = (row.volatility as VolatilityClass | null | undefined)
+      ?? classifyVolatility(row.content, row.document_type);
 
     results.push({
       memory: rowToMemory(row),
@@ -132,7 +137,7 @@ export async function handleRelated(
       groundedness_level,
       match_type: 'vector',
       age_days: ageDays,
-      freshness_warning: freshnessWarning(ageDays),
+      freshness_warning: freshnessWarning(ageDays, volatility),
     });
   }
 

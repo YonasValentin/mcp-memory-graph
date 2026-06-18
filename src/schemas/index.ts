@@ -10,6 +10,8 @@ import {
   RELATIONSHIP_TYPES,
   LEARNING_CATEGORIES,
   SORT_FIELDS,
+  VOLATILITY_CLASSES,
+  VERIFICATION_TIERS,
 } from '../constants/enums.js';
 
 // ---------------------------------------------------------------------------
@@ -136,6 +138,24 @@ export const MemoryStoreSchema = z.object({
       '"update": merge content into the existing match (append + re-embed + version bump). ' +
       '"supersede": retire (invalidate) the conflicting match and add this as the current one.',
     ),
+  volatility: z
+    .enum(VOLATILITY_CLASSES)
+    .optional()
+    .describe(
+      'Override the auto-derived volatility class. Omit to auto-classify from ' +
+      'content + document_type (volatile deploy/status facts warn sooner on recall).',
+    ),
+  verification_tier: z
+    .enum(VERIFICATION_TIERS)
+    .optional()
+    .describe(
+      'How well this fact is verified: source_verified > tool_verified > asserted > ' +
+      'unverified. Lowers groundedness for unverified claims. Omit ⇒ neutral.',
+    ),
+  verification_detail: z
+    .string()
+    .optional()
+    .describe('Free text: how/when/by-what the fact was verified (e.g. "checked live UAT DB 2026-06-18").'),
 });
 
 // ---------------------------------------------------------------------------
@@ -202,6 +222,14 @@ export const MemorySearchSchema = z.object({
     })
     .optional()
     .describe('Apply time-based decay to favor recent memories'),
+  auto_decay: z
+    .boolean()
+    .optional()
+    .describe(
+      'When true and no explicit temporal_decay is given, derive decay per result ' +
+      'from its volatility class (volatile facts decay fast, stable facts not at all). ' +
+      'Down-ranks stale volatile facts without hand-tuning a half-life.',
+    ),
   // battle-v9 CLASS 5: validate like as_of. An unvalidated/partial date reaches
   // a lexicographic range slice and silently returns wrong results.
   date_from: z
@@ -339,6 +367,21 @@ export const MemoryUpdateSchema = z.object({
     .max(1)
     .optional()
     .describe('Reassign importance 0-1 (governance/criticality)'),
+  verification_tier: z
+    .enum(VERIFICATION_TIERS)
+    .optional()
+    .describe(
+      'Set/upgrade the verification tier after the fact (the main post-hoc use ' +
+      'case — you verify a stored claim against live state later). Raises/lowers groundedness.',
+    ),
+  verification_detail: z
+    .string()
+    .optional()
+    .describe('Free text accompanying a verification_tier change.'),
+  volatility: z
+    .enum(VOLATILITY_CLASSES)
+    .optional()
+    .describe('Manual override of the auto-derived volatility class.'),
 });
 
 // ---------------------------------------------------------------------------
@@ -510,6 +553,26 @@ export const MemoryUnlinkedMentionsSchema = z.object({
     .max(1)
     .default(0.6)
     .describe('Minimum cosine similarity for a mention (0-1)'),
+});
+
+// ---------------------------------------------------------------------------
+// 8b-ii. MemoryLinkCheckSchema
+// ---------------------------------------------------------------------------
+
+export const MemoryLinkCheckSchema = z.object({
+  id: z
+    .string()
+    .optional()
+    .describe('Check one memory by ID. Omit to sweep a whole partition (scope/namespace).'),
+  scope: z.enum(SCOPES).optional().describe('Sweep scope (when no id is given)'),
+  namespace: z.string().optional().describe('Sweep namespace (when no id is given)'),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(1000)
+    .default(100)
+    .describe('Max source memories to inspect in a sweep'),
 });
 
 // ---------------------------------------------------------------------------

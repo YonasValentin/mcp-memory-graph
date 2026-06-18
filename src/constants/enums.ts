@@ -79,6 +79,18 @@ export const RELATIONSHIP_TYPES = [
 /** Categories of auto-extracted learnings. */
 export const LEARNING_CATEGORIES = ['decision', 'pattern', 'error_fix', 'convention', 'incident', 'lesson'] as const;
 
+/**
+ * How fast a memory's truth decays — auto-derived from content + document_type at
+ * write time. Drives tier-specific freshness warnings on recall.
+ */
+export const VOLATILITY_CLASSES = ['volatile', 'normal', 'stable'] as const;
+
+/**
+ * How well a stored fact was verified, distinct from provenance (who wrote it).
+ * Ordered most→least trustworthy; weighted into groundedness.
+ */
+export const VERIFICATION_TIERS = ['source_verified', 'tool_verified', 'asserted', 'unverified'] as const;
+
 /** Sortable list/query fields. */
 export const SORT_FIELDS = [
   'created_at',

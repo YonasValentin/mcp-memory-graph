@@ -5,7 +5,7 @@ import { DEFAULT_EMBEDDING_MODEL } from '../constants/enums.js';
  * The current schema version baked into this codebase. Updated together with
  * a new entry in `runMigrations`.
  */
-export const CURRENT_SCHEMA_VERSION = 18;
+export const CURRENT_SCHEMA_VERSION = 19;
 
 /**
  * Persistent memory-to-memory edge store (Pillar 1). Edges carry a confidence
@@ -308,7 +308,10 @@ export function initializeSchema(db: Database.Database): void {
       signed_at TEXT,
       revalidation_status TEXT,
       embedding_model TEXT,
-      embedding_dim INTEGER
+      embedding_dim INTEGER,
+      volatility TEXT,
+      verification_tier TEXT,
+      verification_detail TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
@@ -322,6 +325,8 @@ export function initializeSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance_score);
     CREATE INDEX IF NOT EXISTS idx_memories_access_count ON memories(access_count);
     CREATE INDEX IF NOT EXISTS idx_memories_superseded ON memories(superseded_at);
+    CREATE INDEX IF NOT EXISTS idx_memories_verification ON memories(verification_tier);
+    CREATE INDEX IF NOT EXISTS idx_memories_volatility ON memories(volatility);
     CREATE INDEX IF NOT EXISTS idx_memories_condensation ON memories(condensation_level, importance_score, access_count);
     -- battle-v9 CLASS 3: at most ONE live session-note memory per source. The
     -- partial UNIQUE index is the cross-process backstop that stops two

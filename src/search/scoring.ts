@@ -77,6 +77,8 @@ export interface GroundednessRow {
   confidence_score: number;
   /** How the memory came to exist; drives the provenance tier. Defaults to the middle tier. */
   provenance?: string | null;
+  /** How well the fact was verified (source/tool/asserted/unverified). Null ⇒ neutral. */
+  verification_tier?: string | null;
   /** ISO birth instant; lower bound of the recency/validity window. */
   created_at?: string | null;
   /** ISO last-write instant; preferred window lower bound when present. */
@@ -101,10 +103,14 @@ export interface Groundedness {
  * Groundedness asks "how much should I believe this memory" by fusing four
  * stored signals into a single 0..1 score:
  *
- *  - `confidence_score` — the explicit, stored trust (weight 0.45).
+ *  - `confidence_score` — the explicit, stored trust (weight 0.35).
  *  - provenance tier — operator-authored `manual`/`vault_sync` (1.0) outrank
  *    derived `learning_extraction`/`consolidation_merge`/`import` (0.6) which
- *    outrank machine `reflection`/`ingest` (0.35) (weight 0.30).
+ *    outrank machine `reflection`/`ingest` (0.35) (weight 0.22).
+ *  - verification tier — `source_verified` (1.0) > `tool_verified` (0.8) >
+ *    `asserted` (0.5) > `unverified` (0.3); null ⇒ 0.5 neutral (weight 0.18).
+ *    This is what makes an un-verified "deployed/live" claim rank a tier below
+ *    the same claim verified against live state.
  *  - recency vs `valid_to` — fraction of the validity window still remaining at
  *    `now`; open-ended ⇒ 1, expired ⇒ 0 (weight 0.25).
  *  - reinforcement — `log1p(access_count)/log1p(20)` saturating boost added on
@@ -132,12 +138,20 @@ export function computeGroundedness(
     ingest: 0.35,
   };
 
+  const VERIFICATION_TIER: Record<string, number> = {
+    source_verified: 1.0,
+    tool_verified: 0.8,
+    asserted: 0.5,
+    unverified: 0.3,
+  };
+
   const stored = clamp01(row.confidence_score);
   const tier = row.provenance != null ? PROVENANCE_TIER[row.provenance] ?? 0.6 : 0.6;
+  const verification = row.verification_tier != null ? VERIFICATION_TIER[row.verification_tier] ?? 0.5 : 0.5;
   const recency = remainingValidityFraction(row, now);
 
-  // Weighted base across the three primary signals (weights sum to 1).
-  const base = 0.45 * stored + 0.3 * tier + 0.25 * recency;
+  // Weighted base across the four primary signals (weights sum to 1).
+  const base = 0.35 * stored + 0.22 * tier + 0.18 * verification + 0.25 * recency;
 
   // Reinforcement: a small, bounded, monotone boost that saturates by ~20 hits.
   // A non-finite access_count (NaN/Infinity from corrupt data) must degrade to a

@@ -77,9 +77,10 @@ describe('migrate v16 — api_keys table', () => {
       value: string;
     };
     expect(v.value).toBe(String(CURRENT_SCHEMA_VERSION));
-    // RB-8 added v17 (session-source namespace index) + v18 (ingest_source_tracking
-    // namespace) past v16; the v16 api_keys table (asserted above) still lands.
-    expect(CURRENT_SCHEMA_VERSION).toBe(18);
+    // Migrations past v16 keep landing (v17 session-source ns index, v18
+    // ingest_source_tracking ns, v19 trust-surfacing columns); the v16 api_keys
+    // table (asserted above) still lands. Bump this pin when CURRENT advances.
+    expect(CURRENT_SCHEMA_VERSION).toBe(19);
     expect(() => migrateDatabase(db)).not.toThrow();
   });
 

@@ -636,6 +636,29 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: 19,
+    up: (db) => {
+      // Synthetic migration fixtures stamp a minimal DB with no `memories` table
+      // (they target one later migration); tolerate that like v18 does.
+      if (!tableExists(db, 'memories')) return;
+      // Trust-surfacing columns (all nullable; NULL degrades to a neutral default
+      // in every reader, so this is backward-safe and needs no backfill):
+      //   volatility           — 'volatile'|'normal'|'stable', auto-derived at write
+      //                          time; drives tier-specific freshness warnings.
+      //   verification_tier    — 'source_verified'|'tool_verified'|'asserted'|
+      //                          'unverified'; weighted into groundedness so an
+      //                          unverified fact ranks as less trustworthy.
+      //   verification_detail  — free text: how/when/by-what the fact was verified.
+      addColumn(db, 'ALTER TABLE memories ADD COLUMN volatility TEXT');
+      addColumn(db, 'ALTER TABLE memories ADD COLUMN verification_tier TEXT');
+      addColumn(db, 'ALTER TABLE memories ADD COLUMN verification_detail TEXT');
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_memories_verification ON memories(verification_tier);
+        CREATE INDEX IF NOT EXISTS idx_memories_volatility ON memories(volatility);
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

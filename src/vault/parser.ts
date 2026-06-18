@@ -97,10 +97,13 @@ function sanitizeFrontmatter(obj: Record<string, unknown>): Record<string, unkno
   return clean;
 }
 
-function extractLinks(body: string): string[] {
+export function extractLinks(body: string): string[] {
   const seen = new Set<string>();
   let match: RegExpExecArray | null;
 
+  // exec() with a /g regex advances lastIndex on the shared instance; reset so a
+  // prior partial scan (or a thrown caller) can't make us skip the first link.
+  WIKI_LINK_RE.lastIndex = 0;
   while ((match = WIKI_LINK_RE.exec(body)) !== null) {
     const target = match[1].trim();
     if (target) {

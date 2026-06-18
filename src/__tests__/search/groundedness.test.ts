@@ -179,4 +179,59 @@ describe('computeGroundedness', () => {
     expect(groundedness).toBeLessThanOrEqual(1);
     expect(['high', 'medium', 'low']).toContain(groundedness_level);
   });
+
+  // v19: verification tier — orthogonal to provenance, weighted 0.18 into the base.
+  describe('verification_tier', () => {
+    const base = {
+      confidence_score: 0.6,
+      provenance: 'manual' as const,
+      created_at: '2026-06-01T00:00:00.000Z',
+      updated_at: '2026-06-01T00:00:00.000Z',
+      valid_to: null,
+      access_count: 0,
+    };
+
+    it('ranks source_verified > tool_verified > asserted > unverified, all else equal', () => {
+      const sv = computeGroundedness({ ...base, verification_tier: 'source_verified' }, NOW).groundedness;
+      const tv = computeGroundedness({ ...base, verification_tier: 'tool_verified' }, NOW).groundedness;
+      const as = computeGroundedness({ ...base, verification_tier: 'asserted' }, NOW).groundedness;
+      const un = computeGroundedness({ ...base, verification_tier: 'unverified' }, NOW).groundedness;
+      expect(sv).toBeGreaterThan(tv);
+      expect(tv).toBeGreaterThan(as);
+      expect(as).toBeGreaterThan(un);
+    });
+
+    it('treats a missing tier as the neutral middle (== asserted)', () => {
+      const none = computeGroundedness({ ...base }, NOW).groundedness;
+      const asserted = computeGroundedness({ ...base, verification_tier: 'asserted' }, NOW).groundedness;
+      expect(none).toBeCloseTo(asserted, 10);
+    });
+
+    it('pulls an unverified claim a full trust tier below the same claim source-verified', () => {
+      // The motivating case: an unverified "deployed/live" fact must read as less
+      // trustworthy than one checked against live state.
+      const claim = {
+        confidence_score: 0.7,
+        provenance: 'reflection' as const,
+        created_at: NOW,
+        updated_at: NOW,
+        valid_to: null,
+        access_count: 0,
+      };
+      const verified = computeGroundedness({ ...claim, verification_tier: 'source_verified' }, NOW);
+      const unverified = computeGroundedness({ ...claim, verification_tier: 'unverified' }, NOW);
+      expect(verified.groundedness).toBeGreaterThan(unverified.groundedness);
+      // crosses the medium/high (0.7) or low/medium (0.4) boundary, not just a nudge
+      expect(verified.groundedness - unverified.groundedness).toBeGreaterThan(0.1);
+    });
+
+    it('ignores an unknown tier string (degrades to neutral, never NaN)', () => {
+      const { groundedness } = computeGroundedness(
+        { ...base, verification_tier: 'bogus-tier' },
+        NOW
+      );
+      expect(groundedness).toBeGreaterThanOrEqual(0);
+      expect(groundedness).toBeLessThanOrEqual(1);
+    });
+  });
 });

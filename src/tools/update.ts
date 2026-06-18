@@ -5,6 +5,7 @@ import { contextualizeForEmbedding } from '../search/contextual.js';
 import { mirrorMemoryWrite } from '../vault/write-through.js';
 import { notify, rowToEventPayload, propagateSafe } from '../events/hooks.js';
 import { clearRevalidation } from '../graph/propagate.js';
+import { classifyVolatility } from '../search/content-signals.js';
 
 export async function handleUpdate(
   db: Database.Database,
@@ -45,6 +46,21 @@ export async function handleUpdate(
   }
   if (input.importance_score !== undefined) {
     updates.importance_score = input.importance_score;
+  }
+  // v19 trust-surfacing. verification_tier/detail are the main post-hoc edit
+  // (you verify a stored claim against live state later).
+  if (input.verification_tier !== undefined) {
+    updates.verification_tier = input.verification_tier;
+  }
+  if (input.verification_detail !== undefined) {
+    updates.verification_detail = input.verification_detail;
+  }
+  // Volatility: explicit override wins; else re-derive when the content changes
+  // (new wording may flip a fact volatile/stable). Untouched when content is unchanged.
+  if (input.volatility !== undefined) {
+    updates.volatility = input.volatility;
+  } else if (input.content !== undefined && input.content !== existing.content) {
+    updates.volatility = classifyVolatility(input.content, existing.document_type);
   }
 
   let newEmbedding: Float32Array | undefined;

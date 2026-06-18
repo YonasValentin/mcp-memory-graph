@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { EmbeddingProvider, Memory, MemoryInput, MemoryRow } from '../types.js';
 import { insertMemory, invalidateMemory, getMemoryById, updateMemory, rowToMemory, findNearDuplicates } from '../db/repository.js';
-import { computeContentSignal } from '../search/content-signals.js';
+import { computeContentSignal, classifyVolatility } from '../search/content-signals.js';
 import { extractEntitiesRegex } from '../graph/entity-extractor.js';
 import { storeExtractedEntities, weaveGraphEdges } from '../graph/entity-store.js';
 import { detectConflicts, recordConflicts, type ConflictResult } from '../graph/conflict-resolver.js';
@@ -47,6 +47,13 @@ interface StoreResult {
   /** True when on_conflict=supersede was asked but nothing matched to retire. */
   superseded_nothing?: boolean;
   conflicts?: ConflictResult[];
+  /**
+   * Human-readable alerts the caller should SEE, even on the default 'add' path:
+   * a contradiction/supersede match that was detected but NOT acted on (because
+   * on_conflict='add'), plus a hint to re-run with 'supersede'. Makes "this new
+   * note contradicts an old one" loud instead of buried in `conflicts`.
+   */
+  warnings?: string[];
 }
 
 /**
@@ -312,6 +319,13 @@ export async function handleStore(
   ];
   const conflictsOut = reportedConflicts.length > 0 ? reportedConflicts : undefined;
 
+  // Loud, human-readable alert for a contradiction/supersede match that the
+  // chosen op did NOT act on (i.e. on_conflict='add' kept both facts). This is
+  // the "your new note contradicts an old one" nudge that was previously buried
+  // in the `conflicts` array. NLI-retired (DELETE) and merged (UPDATE) paths
+  // already resolved the conflict, so they produce no warning.
+  const warningsOut = buildContradictionWarnings(db, reportedConflicts, decision.op);
+
   // ── NOOP: exact duplicate already present — return it without inserting. ──
   if (!nliContradiction && decision.op === 'NOOP') {
     const existingRow = decision.targetId ? getMemoryById(db, decision.targetId) : null;
@@ -322,6 +336,7 @@ export async function handleStore(
         operation: 'NOOP',
         operation_reason: decision.reason,
         conflicts: conflictsOut,
+        warnings: warningsOut,
       };
     }
     // Existing row vanished between detection and lookup — fall through to ADD.
@@ -414,6 +429,12 @@ export async function handleStore(
     // default lets all of a deployment's writes be auto-tagged, else null
     // (today's behaviour — no attribution).
     agent_id: input.agent_id ?? process.env.MCP_AGENT_ID ?? null,
+    // v19 trust-surfacing. Volatility is auto-derived from content + document_type
+    // (explicit input wins) so deploy/status facts warn sooner on recall.
+    // Verification defaults to unset (neutral) — a fact is "asserted" until proven.
+    volatility: input.volatility ?? classifyVolatility(input.content, input.document_type ?? null),
+    verification_tier: input.verification_tier ?? null,
+    verification_detail: input.verification_detail ?? null,
   };
 
   // Atomically: retire any contradicted/superseded facts, insert the memory,
@@ -532,5 +553,33 @@ export async function handleStore(
         : decision.reason,
     superseded_nothing: supersedeRetiredNothing || undefined,
     conflicts: conflictsOut,
+    warnings: warningsOut,
   };
+}
+
+/**
+ * Build loud, human-readable warnings for contradiction/supersede matches that
+ * the chosen write op left UNACTED (on_conflict='add' keeps both facts). Returns
+ * undefined when nothing needs surfacing or the op already resolved the conflict
+ * (UPDATE merged, DELETE retired). Read-only: only looks up titles for context.
+ */
+function buildContradictionWarnings(
+  db: Database.Database,
+  conflicts: ConflictResult[],
+  op: WriteOp,
+): string[] | undefined {
+  if (op === 'UPDATE' || op === 'DELETE') return undefined;
+  const lines: string[] = [];
+  for (const c of conflicts) {
+    if (c.type !== 'contradicted' && c.type !== 'superseded') continue;
+    const existing = getMemoryById(db, c.existing_memory_id);
+    const title = existing?.title ? `"${existing.title}"` : '(untitled)';
+    const verb = c.type === 'contradicted' ? 'contradicts' : 'may supersede';
+    lines.push(
+      `⚠️ This memory ${verb} existing memory ${c.existing_memory_id} ${title} ` +
+      `(overlap ${c.overlap_score.toFixed(2)}). If it replaces the old fact, re-run with ` +
+      `on_conflict:'supersede' to retire it; otherwise both will stay live.`,
+    );
+  }
+  return lines.length > 0 ? lines : undefined;
 }

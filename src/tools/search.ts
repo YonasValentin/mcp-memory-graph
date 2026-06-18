@@ -41,6 +41,7 @@ interface SearchInput {
   offset?: number;
   search_mode?: SearchMode;
   temporal_decay?: TemporalDecayConfig;
+  auto_decay?: boolean;
   date_from?: string;
   date_to?: string;
   min_confidence?: number;
@@ -80,6 +81,7 @@ export async function handleSearch(
     offset: input.offset ?? 0,
     search_mode: input.search_mode ?? 'hybrid',
     temporal_decay: input.temporal_decay,
+    auto_decay: input.auto_decay,
     date_from: input.date_from,
     date_to: input.date_to,
     min_confidence: input.min_confidence,

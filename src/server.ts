@@ -60,6 +60,7 @@ import {
   MemoryForgetSchema,
   MemoryHistorySchema,
   MemoryUnlinkedMentionsSchema,
+  MemoryLinkCheckSchema,
   MemoryQueryStructuredSchema,
   MemoryVersionDiffSchema,
   MemoryVersionRestoreSchema,
@@ -113,6 +114,7 @@ import { handleQuestions } from './tools/questions.js';
 import { handleForget } from './tools/forget.js';
 import { handleHistory } from './tools/history.js';
 import { handleUnlinkedMentions } from './tools/unlinked-mentions.js';
+import { handleLinkCheck } from './tools/link-check.js';
 import { runStructuredQuery } from './search/structured-query.js';
 import { handleVersionDiff, handleVersionRestore } from './tools/version-history.js';
 import { handleWebhook } from './tools/webhooks.js';
@@ -288,6 +290,7 @@ export function createServer(): McpServer {
     'memory_query', 'memory_query_structured', 'core_memory_get',
     'memory_communities', 'memory_template', 'memory_attribution',
     'memory_questions', 'memory_history', 'memory_unlinked_mentions',
+    'memory_link_check',
     'memory_version_diff', 'memory_insights', 'memory_health',
     'memory_export_dataset',
   ]);
@@ -934,6 +937,21 @@ export function createServer(): McpServer {
       // §6 (RB-8): mirror memory_related — thread the ceiling so neighbour
       // titles/snippets above the principal's clearance are never echoed.
       return handleUnlinkedMentions(getDb(), await getEmbedder(), withCeiling(parsed));
+    }),
+  );
+
+  // ── 35b. memory_link_check ────────────────────────────────────────────────
+  reg(
+    'memory_link_check',
+    'Find BROKEN [[wikilinks]] — the inverse of memory_unlinked_mentions. Reports (1) unresolved: a [[Title]] in a memory\'s content that matches no LIVE memory title in the same scope/namespace; (2) dangling_edges: stored wikilink edges whose target memory was deleted or superseded. Resolution is by TITLE (memories have no slug) so write [[Exact Title]]. Pass an id to check one memory, or scope/namespace to sweep a partition. Read-only.',
+    MemoryLinkCheckSchema.shape,
+    instrument('memory_link_check', async (input) => {
+      const parsed = MemoryLinkCheckSchema.parse(input);
+      // A by-id check is a read of that memory — non-confirm a foreign/over-ceiling id.
+      if (parsed.id && (!idInForcedNs(parsed.id) || !idWithinCeiling(parsed.id))) {
+        throw new Error('Memory not found');
+      }
+      return handleLinkCheck(getDb(), scopedRead(parsed));
     }),
   );
 

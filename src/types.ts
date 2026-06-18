@@ -8,6 +8,8 @@ import type {
   ENTITY_TYPES,
   SORT_FIELDS,
   LEARNING_CATEGORIES,
+  VOLATILITY_CLASSES,
+  VERIFICATION_TIERS,
 } from './constants/enums.js';
 
 export type MemoryScope = (typeof SCOPES)[number];
@@ -31,6 +33,21 @@ export type CondensationLevel = 'full' | 'summary' | 'one_liner';
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
 export type ProvenanceType = 'manual' | 'vault_sync' | 'learning_extraction' | 'consolidation_merge' | 'import' | 'ingest' | 'reflection';
+
+/**
+ * How fast a memory's truth decays — auto-derived from content + document_type at
+ * write time (see {@link import('./search/content-signals.js').classifyVolatility}).
+ * Drives tier-specific freshness warnings: a `volatile` deploy/status fact warns
+ * within days, a `stable` reference fact only after months.
+ */
+export type VolatilityClass = (typeof VOLATILITY_CLASSES)[number];
+
+/**
+ * How well a stored fact was verified, distinct from provenance (who wrote it).
+ * Weighted into groundedness so an `asserted`/`unverified` claim ranks as less
+ * trustworthy than one `source_verified` against live state. NULL ⇒ neutral.
+ */
+export type VerificationTier = (typeof VERIFICATION_TIERS)[number];
 
 export interface Memory {
   readonly id: string;
@@ -66,6 +83,12 @@ export interface Memory {
   provenance: ProvenanceType;
   /** Which agent wrote this memory (multi-agent attribution), distinct from `author`. */
   agent_id: string | null;
+  /** How fast this fact decays (auto-derived). NULL ⇒ classified on read. */
+  volatility: VolatilityClass | null;
+  /** How well this fact was verified. NULL ⇒ neutral (treated as asserted). */
+  verification_tier: VerificationTier | null;
+  /** Free text: how/when/by-what the fact was verified. */
+  verification_detail: string | null;
 }
 
 export interface MemoryRow {
@@ -116,6 +139,10 @@ export interface MemoryRow {
   /** M6.4 which embedder produced this row's vector (NULL = deployment default). */
   embedding_model?: string | null;
   embedding_dim?: number | null;
+  /** v19 trust-surfacing columns (NULL on pre-v19 rows; readers fall back to a neutral default). */
+  volatility?: string | null;
+  verification_tier?: string | null;
+  verification_detail?: string | null;
   rowid?: number;
 }
 
@@ -145,6 +172,12 @@ export interface MemoryInput {
    * the new memory. UPDATE/DELETE are strictly opt-in.
    */
   on_conflict?: 'add' | 'update' | 'supersede';
+  /** Override the auto-derived volatility class; omitted ⇒ classified from content + document_type. */
+  volatility?: VolatilityClass;
+  /** How well this fact is verified (defaults to unset/neutral on store). */
+  verification_tier?: VerificationTier;
+  /** Free text: how/when/by-what the fact was verified. */
+  verification_detail?: string;
 }
 
 export interface MemoryUpdate {
@@ -155,6 +188,12 @@ export interface MemoryUpdate {
   expires_at?: string | null;
   changed_by?: string;
   importance_score?: number;
+  /** Set/upgrade the verification tier after the fact (the main post-hoc use case). */
+  verification_tier?: VerificationTier;
+  /** Free text accompanying a verification_tier change. */
+  verification_detail?: string;
+  /** Manual override of the auto-derived volatility class. */
+  volatility?: VolatilityClass;
 }
 
 export interface SearchOptions {
@@ -179,6 +218,13 @@ export interface SearchOptions {
   offset?: number;
   search_mode: SearchMode;
   temporal_decay?: TemporalDecayConfig;
+  /**
+   * Opt-in: when true and no explicit `temporal_decay` is given, derive a decay
+   * config from each result's volatility class (volatile facts decay fast,
+   * stable facts not at all). Lets callers say "down-rank stale volatile facts"
+   * without hand-tuning a half-life. Default false — fused order unchanged.
+   */
+  auto_decay?: boolean;
   date_from?: string;
   date_to?: string;
   min_confidence?: number;
