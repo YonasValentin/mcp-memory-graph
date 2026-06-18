@@ -8,6 +8,7 @@ import { GREEN, CYAN, RESET, success, warn, info, dim } from './cli-output.js';
 // Match hook commands by substring — they contain the hook file name
 const HOOK_IDENTIFIERS = [
   'memory-session-start',
+  'memory-user-prompt',
   'memory-post-search',
   'memory-pre-compact',
   'memory-session-end', // legacy (replaced by memory-stop)
@@ -37,6 +38,7 @@ function cleanupLegacyHookFiles(): void {
   const hooksDir = join(home, '.claude', 'hooks');
   const legacyFiles = [
     'memory-session-start.mjs', 'memory-session-start.js',
+    'memory-user-prompt.mjs', 'memory-user-prompt.js',
     'memory-post-search.mjs', 'memory-post-search.js',
     'memory-pre-compact.mjs', 'memory-pre-compact.js',
     'memory-session-end.mjs', 'memory-session-end.js',

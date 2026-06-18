@@ -24,6 +24,7 @@ const skillSourceDir = join(__dirname, '..', 'skill'); // dist/skill (present af
 // Settings.json references them via absolute path — no copying needed.
 const HOOK_NAMES = [
   'memory-session-start.js',
+  'memory-user-prompt.js',
   'memory-post-search.js',
   'memory-pre-compact.js',
   'memory-stop.js',
@@ -66,6 +67,12 @@ function buildHooksToAdd(): Record<string, HookGroup[]> {
   return {
     SessionStart: [
       { hooks: [{ type: 'command', command: q('memory-session-start.js') }] },
+    ],
+    // Task-aware recall: SessionStart fires before any prompt and can only emit a
+    // generic nudge; this fires WITH the prompt so it can surface memories about
+    // the task the user just described, before the agent re-derives solved work.
+    UserPromptSubmit: [
+      { hooks: [{ type: 'command', command: q('memory-user-prompt.js'), timeout: 5 }] },
     ],
     PostToolUse: [
       {
