@@ -138,11 +138,16 @@ async function main(): Promise<void> {
       }
     }
 
-    // Top memories for this namespace
+    // Top memories: PREFER the resolved namespace, but do NOT hard-filter on it.
+    // Memories are often stored under an explicit namespace the cwd basename does
+    // not resolve to (e.g. an org/team name vs the dir name), which silently hid
+    // them — the "Key:" line then showed unrelated memories or nothing. Ranking
+    // same-namespace first, then by importance across the corpus, surfaces the
+    // most important memories even when basename != stored namespace.
     const topMemories = db.prepare(
       `SELECT title FROM memories WHERE parent_id IS NULL AND superseded_at IS NULL
        AND valid_to IS NULL AND tx_expired IS NULL
-       AND namespace = ? ORDER BY importance_score DESC LIMIT 3`
+       ORDER BY (namespace = ?) DESC, importance_score DESC LIMIT 3`
     ).all(namespace) as Array<{ title: string | null }>;
     const topTitles = topMemories.filter(m => m.title).map(m => `'${m.title}'`);
 
