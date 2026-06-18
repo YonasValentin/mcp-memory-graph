@@ -627,6 +627,42 @@ export function getMemoryById(
   );
 }
 
+/**
+ * Resolve a full UUID OR an 8-char (4–35 char) hex short-id prefix to a single
+ * memory id. The recall hooks surface `id.slice(0, 8)`, so this lets `memory_get`
+ * accept the exact token the hooks advertise instead of demanding the full UUID.
+ *
+ * Exact match is tried first (fast path, byte-identical to prior behavior for
+ * full ids). Only a hex-looking partial is treated as a prefix — never a LIKE on
+ * arbitrary input — and the prefix scan is restricted to live, top-level rows.
+ * Returns the full id, an `{ ambiguous }` list when a prefix hits >1 row, or null.
+ */
+export function resolveMemoryId(
+  db: Database.Database,
+  idOrPrefix: string,
+): string | { ambiguous: string[] } | null {
+  const exact = db
+    .prepare<[string], { id: string }>('SELECT id FROM memories WHERE id = ?')
+    .get(idOrPrefix);
+  if (exact) return exact.id;
+
+  // Guard the LIKE: only hex partials shorter than a full UUID are prefixes.
+  if (!/^[0-9a-f]{4,35}$/i.test(idOrPrefix)) return null;
+
+  const rows = db
+    .prepare<[string], { id: string; title: string | null }>(
+      `SELECT id, title FROM memories
+       WHERE id LIKE ? AND parent_id IS NULL AND superseded_at IS NULL
+         AND valid_to IS NULL AND tx_expired IS NULL
+       LIMIT 6`,
+    )
+    .all(`${idOrPrefix}%`);
+
+  if (rows.length === 0) return null;
+  if (rows.length === 1) return rows[0].id;
+  return { ambiguous: rows.map((r) => `${r.id.slice(0, 8)} '${r.title ?? ''}'`) };
+}
+
 export function getMemoryRowid(
   db: Database.Database,
   id: string,

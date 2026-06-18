@@ -80,6 +80,18 @@ describe('memory-user-prompt hook helpers', () => {
       expect(block).toContain('search MCP before re-deriving');
     });
 
+    it('appends a 1-line snippet when content is present', () => {
+      const block = formatRecall([
+        {
+          id: 'b5951ab3-7cd4-4191-8e35-ce1436bb45ff',
+          title: '#4821 fix',
+          content: 'first line snippet\nsecond line ignored',
+          importance_score: 0.3,
+        },
+      ]);
+      expect(block).toContain("'#4821 fix' [b5951ab3] — first line snippet");
+    });
+
     it('returns null when nothing titled survives', () => {
       expect(formatRecall([])).toBeNull();
       expect(formatRecall([{ id: 'x', title: null, content: 'c', importance_score: 0 }])).toBeNull();

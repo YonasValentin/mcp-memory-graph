@@ -73,6 +73,18 @@ try {
 
   ok('memory_get by id', id1 ? /pooling|postgres/i.test(text(await client.callTool({ name: 'memory_get', arguments: { id: id1 } }))) : false);
 
+  // Short-id prefix: memory_get accepts the 8-char id the recall hooks print.
+  ok('memory_get by 8-char short-id prefix',
+    id1 ? /pooling|postgres/i.test(text(await client.callTool({ name: 'memory_get', arguments: { id: id1.slice(0, 8) } }))) : false,
+    id1?.slice(0, 8));
+
+  // rerank_score: with rerank on, reranked hits carry a 0–1 cross-encoder score.
+  const rr = json(await client.callTool({ name: 'memory_search', arguments: { query: 'database connection overhead', limit: 5, rerank: true } }));
+  const scored = (rr?.results ?? []).filter((h) => typeof h.rerank_score === 'number');
+  ok('rerank surfaces rerank_score in (0,1)',
+    scored.length > 0 && scored.every((h) => h.rerank_score > 0 && h.rerank_score < 1),
+    JSON.stringify(scored.map((h) => h.rerank_score)));
+
   // M2.2 — the signed-provenance moat, end to end on real models: with
   // MCP_SIGN_MEMORIES=1 the store above signed an ed25519 envelope; memory_verify
   // must recompute the content hash + verify the signature → "verified".

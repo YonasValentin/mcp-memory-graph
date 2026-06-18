@@ -15,6 +15,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import type BetterSqlite3 from 'better-sqlite3';
 import { resolveDbPath } from '../db/db-path.js';
+import { formatKeyLine } from './recall-format.js';
 
 /** English/Danish stopwords stripped from the token set before searching. */
 const STOPWORDS = new Set([
@@ -80,7 +81,7 @@ export function rankMemories(rows: MemoryRow[], tokens: string[], limit = 3): Me
 export function formatRecall(memories: MemoryRow[]): string | null {
   const lines = memories
     .filter(m => m.title)
-    .map(m => `- '${m.title}' [${m.id.slice(0, 8)}]`);
+    .map(m => `- ${formatKeyLine(m, 80)}`);
   if (lines.length === 0) return null;
   return (
     `Possibly-relevant stored memories (search MCP before re-deriving this task):\n` +

@@ -261,6 +261,9 @@ export interface TemporalDecayConfig {
 export interface SearchResult {
   memory: Memory;
   score: number;
+  /** 0–1 cross-encoder relevance (sigmoid of the rerank logit). Present only
+   *  when `rerank` ran and this row was in the reranked head; null otherwise. */
+  rerank_score?: number | null;
   confidence: number;
   confidence_level: ConfidenceLevel;
   /** Trust signal (M2.4) — distinct from `confidence` (pure relevance). Folds
@@ -280,6 +283,7 @@ export interface SearchResultSummary {
   snippet: string;
   tags: string[];
   score: number;
+  rerank_score?: number | null;
   confidence_level: ConfidenceLevel;
   importance_score: number;
   freshness_warning?: string;

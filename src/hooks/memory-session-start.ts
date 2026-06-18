@@ -8,6 +8,7 @@ import type BetterSqlite3 from 'better-sqlite3';
 import { resolveNamespace } from '../config/loader.js';
 import { resolveDbPath } from '../db/db-path.js';
 import { NOW_ISO_SQL, countUnresolvedConflicts } from '../db/predicates.js';
+import { formatKeyLine } from './recall-format.js';
 
 async function main(): Promise<void> {
   // Safety timeout - hooks must never hang
@@ -145,11 +146,13 @@ async function main(): Promise<void> {
     // same-namespace first, then by importance across the corpus, surfaces the
     // most important memories even when basename != stored namespace.
     const topMemories = db.prepare(
-      `SELECT title FROM memories WHERE parent_id IS NULL AND superseded_at IS NULL
+      `SELECT id, title, content FROM memories WHERE parent_id IS NULL AND superseded_at IS NULL
        AND valid_to IS NULL AND tx_expired IS NULL
        ORDER BY (namespace = ?) DESC, importance_score DESC LIMIT 3`
-    ).all(namespace) as Array<{ title: string | null }>;
-    const topTitles = topMemories.filter(m => m.title).map(m => `'${m.title}'`);
+    ).all(namespace) as Array<{ id: string; title: string | null; content: string | null }>;
+    // Short snippet (capped tighter than the prompt-time hook) so the per-session
+    // "Key:" line gains a relevance cue + copy-pasteable short-id without bloat.
+    const topTitles = topMemories.filter(m => m.title).map(m => formatKeyLine(m, 40));
 
     // Top entities for this project
     let entityContext = '';

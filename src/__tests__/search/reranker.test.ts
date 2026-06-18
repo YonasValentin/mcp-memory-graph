@@ -6,6 +6,7 @@ import { hybridSearch } from '../../search/hybrid.js';
 import {
   CrossEncoderReranker,
   extractRelevanceScore,
+  rerankRelevance,
   type Reranker,
 } from '../../search/reranker.js';
 
@@ -153,6 +154,59 @@ describe('cross-encoder reranking stage (Pillar 3, T6)', () => {
     expect(results.map((r) => r.memory.id)).toEqual(
       baseline.results.map((r) => r.memory.id),
     );
+  });
+
+  it('rerank=true surfaces rerank_score in (0,1) for the reranked head', async () => {
+    const db = createTestDb();
+    const embedder = new MockEmbeddingProvider();
+    const { c } = await seed(db, embedder);
+
+    const { results } = await hybridSearch(
+      db,
+      embedder,
+      { query: 'deploy', search_mode: 'keyword', limit: 10, offset: 0, rerank: true },
+      new StubReranker('TARGETTOKEN'),
+    );
+
+    for (const r of results) {
+      expect(r.rerank_score).not.toBeNull();
+      expect(r.rerank_score!).toBeGreaterThan(0);
+      expect(r.rerank_score!).toBeLessThan(1);
+    }
+    // The TARGETTOKEN doc scored logit 1 → sigmoid(1); others scored 0 → sigmoid(0)=0.5.
+    const favored = results.find((r) => r.memory.id === c)!;
+    expect(favored.rerank_score!).toBeCloseTo(rerankRelevance(1), 6);
+  });
+
+  it('rerank disabled leaves rerank_score null', async () => {
+    const db = createTestDb();
+    const embedder = new MockEmbeddingProvider();
+    await seed(db, embedder);
+
+    const { results } = await hybridSearch(db, embedder, {
+      query: 'deploy',
+      search_mode: 'keyword',
+      limit: 10,
+      offset: 0,
+    });
+
+    expect(results.every((r) => r.rerank_score == null)).toBe(true);
+  });
+
+  it('rows beyond rerank_top_n keep a null rerank_score', async () => {
+    const db = createTestDb();
+    const embedder = new MockEmbeddingProvider();
+    await seed(db, embedder); // 3 candidates
+
+    const { results } = await hybridSearch(
+      db,
+      embedder,
+      { query: 'deploy', search_mode: 'keyword', limit: 10, offset: 0, rerank: true, rerank_top_n: 1 },
+      new StubReranker('TARGETTOKEN'),
+    );
+
+    expect(results[0].rerank_score).not.toBeNull(); // reranked head
+    expect(results.slice(1).every((r) => r.rerank_score == null)).toBe(true); // untouched tail
   });
 
   it('CrossEncoderReranker constructs without loading a model', () => {

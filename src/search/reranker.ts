@@ -27,6 +27,16 @@ export function extractRelevanceScore(logits: number[]): number {
   return logits[0];
 }
 
+/**
+ * Map a raw ms-marco cross-encoder logit to a 0–1 relevance probability via
+ * sigmoid. The raw logit is unbounded (hard to threshold); sigmoid gives a
+ * stable score that is comparable ACROSS queries, unlike a per-query min-max.
+ * Surfaced as `SearchResult.rerank_score` so callers can cut on relevance.
+ */
+export function rerankRelevance(logit: number): number {
+  return 1 / (1 + Math.exp(-logit));
+}
+
 /** Reorders candidate docs for a query by joint relevance. */
 export interface Reranker {
   /** Returns one {id, score} per input doc (higher = more relevant). Order need

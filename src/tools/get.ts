@@ -1,6 +1,11 @@
 import type Database from 'better-sqlite3';
 import type { Memory, MemoryRow } from '../types.js';
-import { getMemoryById, rowToMemory, recordAccess } from '../db/repository.js';
+import {
+  getMemoryById,
+  resolveMemoryId,
+  rowToMemory,
+  recordAccess,
+} from '../db/repository.js';
 import {
   getOutgoingLinks,
   getBacklinks,
@@ -20,7 +25,19 @@ export function handleGet(
   db: Database.Database,
   input: { id: string; include_chunks: boolean },
 ): GetResult | null {
-  const row = getMemoryById(db, input.id);
+  // Accept a full UUID or an 8-char short-id prefix (the form the recall hooks
+  // print). Resolve to the real id ONCE here so every downstream read uses it.
+  const resolved = resolveMemoryId(db, input.id);
+  if (resolved && typeof resolved === 'object') {
+    throw new Error(
+      `Ambiguous id prefix '${input.id}' matches ${resolved.ambiguous.length}: ${resolved.ambiguous.join(', ')}`,
+    );
+  }
+  if (!resolved) {
+    return null;
+  }
+
+  const row = getMemoryById(db, resolved);
   if (!row) {
     return null;
   }
@@ -28,10 +45,10 @@ export function handleGet(
   // F-EXPORT-VAULTPATH: `_vault` bookkeeping is stripped at the rowToMemory
   // chokepoint (db/repository) — every read surface is covered there.
   const memory = rowToMemory(row);
-  recordAccess(db, [{ memory_id: input.id, access_type: 'get' }]);
+  recordAccess(db, [{ memory_id: resolved, access_type: 'get' }]);
 
-  const links = getOutgoingLinks(db, input.id);
-  const backlinks = getBacklinks(db, input.id);
+  const links = getOutgoingLinks(db, resolved);
+  const backlinks = getBacklinks(db, resolved);
 
   if (!input.include_chunks) {
     return { memory, links, backlinks };
@@ -45,7 +62,7 @@ export function handleGet(
     .prepare<[string, string, string | null], MemoryRow>(
       'SELECT *, rowid FROM memories WHERE parent_id = ? AND scope = ? AND namespace IS ? ORDER BY chunk_index',
     )
-    .all(input.id, row.scope, row.namespace ?? null);
+    .all(resolved, row.scope, row.namespace ?? null);
 
   const chunks = chunkRows.map((r) => rowToMemory(r));
   return { memory, chunks, links, backlinks };

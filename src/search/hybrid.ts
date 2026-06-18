@@ -8,7 +8,7 @@ import { rowToMemory, VEC0_MAX_K } from '../db/repository.js';
 import { extractEntitiesRegex } from '../graph/entity-extractor.js';
 import { normalizeName, entityIdsByNameOrAlias } from '../graph/entity-store.js';
 import { rankMemoriesByPPR } from '../graph/pagerank.js';
-import type { Reranker } from './reranker.js';
+import { type Reranker, rerankRelevance } from './reranker.js';
 import { logger } from '../lib/logger.js';
 
 // Smart/curly quotes that FTS5 can't parse and that users frequently paste.
@@ -382,14 +382,16 @@ export async function hybridSearch(
 
   // Apply importance boost: RRF score * (1 + importance * 0.5)
   // This gives high-importance memories a ranking advantage without overwhelming relevance
-  let ranked = Array.from(rrfScores.entries())
-    .map(([rowid, score]) => {
-      const row = rowMap.get(rowid)!;
-      const importanceBoost = 1 + (row.importance_score ?? 0.5) * 0.5;
-      return { rowid, score: score * importanceBoost };
-    })
-    .sort((a, b) => b.score - a.score)
-    .map((item, fusedRank) => ({ ...item, fusedRank }));
+  // `rerankScore` is the raw cross-encoder logit, set only on reranked head items.
+  let ranked: { rowid: number; score: number; fusedRank: number; rerankScore?: number }[] =
+    Array.from(rrfScores.entries())
+      .map(([rowid, score]) => {
+        const row = rowMap.get(rowid)!;
+        const importanceBoost = 1 + (row.importance_score ?? 0.5) * 0.5;
+        return { rowid, score: score * importanceBoost };
+      })
+      .sort((a, b) => b.score - a.score)
+      .map((item, fusedRank) => ({ ...item, fusedRank }));
 
   // --- Temporal decay ---
   // Explicit temporal_decay wins. Otherwise, auto_decay derives a PER-ROW config
@@ -437,11 +439,14 @@ export async function hybridSearch(
       });
       const scored = await reranker.rerank(options.query, docs);
       const scoreById = new Map(scored.map((s) => [s.id, s.score]));
-      const reordered = [...head].sort((a, b) => {
-        const sa = scoreById.get(rowMap.get(a.rowid)!.id) ?? -Infinity;
-        const sb = scoreById.get(rowMap.get(b.rowid)!.id) ?? -Infinity;
-        return sb - sa;
-      });
+      const reordered = [...head]
+        .sort((a, b) => {
+          const sa = scoreById.get(rowMap.get(a.rowid)!.id) ?? -Infinity;
+          const sb = scoreById.get(rowMap.get(b.rowid)!.id) ?? -Infinity;
+          return sb - sa;
+        })
+        // Keep the raw logit so it can be surfaced as a 0–1 `rerank_score`.
+        .map((item) => ({ ...item, rerankScore: scoreById.get(rowMap.get(item.rowid)!.id) }));
       ranked = [...reordered, ...tail];
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -491,6 +496,7 @@ export async function hybridSearch(
     return {
       memory: rowToMemory(row),
       score: item.score,
+      rerank_score: item.rerankScore != null ? rerankRelevance(item.rerankScore) : null,
       confidence,
       confidence_level: confidenceLabel(confidence),
       groundedness,
@@ -535,6 +541,7 @@ export function toSummary(result: SearchResult): SearchResultSummary {
     snippet,
     tags: result.memory.tags,
     score: result.score,
+    ...(result.rerank_score != null ? { rerank_score: result.rerank_score } : {}),
     confidence_level: result.confidence_level,
     importance_score: result.memory.importance_score,
     ...(result.freshness_warning ? { freshness_warning: result.freshness_warning } : {}),
