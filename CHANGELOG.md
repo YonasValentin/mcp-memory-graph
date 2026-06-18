@@ -6,6 +6,44 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.9.1] - 2026-06-18
+
+### Fixed
+
+- **NLI write-gate is link-aware.** The self-correcting contradiction gate no
+  longer auto-retires a memory that the new memory explicitly **references** — by
+  full id, 8-char short-id, or a `[[Title]]` wikilink. A citation means "relates
+  to / builds on", the opposite of "supersedes", so an MNLI false-positive can no
+  longer retire a fact the author deliberately linked (the failure mode: a new
+  release note that links the prior release note it summarizes was retiring it).
+  Genuine, **unlinked** negations still self-correct on the default `add` path.
+
+## [2.9.0] - 2026-06-18
+
+Recall ergonomics: make per-turn memory recall cheaper — the recall hooks now
+advertise everything `memory_get` needs, and rerank relevance is finally
+surfaced as a usable score.
+
+### Added
+
+- **`memory_get` accepts an 8-char short-id prefix.** The recall hooks print
+  `id.slice(0, 8)`; `memory_get` now resolves that exact token (any hex prefix
+  4–35 chars) as well as the full UUID. An ambiguous prefix returns an error
+  listing the candidates instead of silently resolving one; the exact-match fast
+  path is unchanged.
+- **`SearchResult.rerank_score`.** When `rerank` runs, each reranked-head result
+  carries a 0–1 relevance (sigmoid of the cross-encoder logit) — stable and
+  comparable across queries, so callers can threshold on rerank relevance. The
+  fused `score` (unusable as a cut) is untouched; the tail and rerank-off paths
+  report `null`.
+
+### Changed
+
+- **Recall hooks show a one-line snippet.** Both the `UserPromptSubmit` and
+  `SessionStart` hooks render a short snippet beside each title, so relevance is
+  judgeable without a follow-up `memory_get`/`memory_search`. The session-start
+  `Key:` line also gains the copy-pasteable short-id.
+
 ## [2.8.0] - 2026-06-18
 
 Trust-surfacing: make volatile and unverified memories *self-suspicious* so recall

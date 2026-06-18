@@ -199,6 +199,62 @@ describe('handleStore — NLI write-gate on the DEFAULT (on_conflict=add) path',
     expect(validToOf(db, e.memory.id)).not.toBeNull();
   });
 
+  it('link-aware guard: does NOT retire a candidate the new memory links by id ([[id]])', async () => {
+    const db = createTestDb();
+    const embedder = new ProximityEmbedder();
+    const nli = new StubNli();
+
+    const e = await handleStore(db, embedder, { content: 'PREMISE: The API uses port 3000' }, nli);
+
+    // The new note would NLI-contradict (it carries a NOT cue), but it explicitly
+    // LINKS the prior memory by id — a reference signals "relates to", not
+    // "supersedes". The guard must keep the prior fact valid (no auto-retire).
+    const n = await handleStore(
+      db,
+      embedder,
+      { content: `HYPOTHESIS: builds on the earlier note, NOT a correction — see [[${e.memory.id}]]` },
+      nli,
+    );
+
+    expect(validToOf(db, e.memory.id)).toBeNull(); // NOT retired — it was linked
+    expect(n.operation).toBe('ADD');
+  });
+
+  it('link-aware guard: does NOT retire a candidate linked by 8-char short-id', async () => {
+    const db = createTestDb();
+    const embedder = new ProximityEmbedder();
+    const nli = new StubNli();
+
+    const e = await handleStore(db, embedder, { content: 'PREMISE: The API uses port 3000' }, nli);
+    const n = await handleStore(
+      db,
+      embedder,
+      { content: `HYPOTHESIS: related work, NOT a reversal — cf [[${e.memory.id.slice(0, 8)}]]` },
+      nli,
+    );
+
+    expect(validToOf(db, e.memory.id)).toBeNull();
+    expect(n.operation).toBe('ADD');
+  });
+
+  it('regression: an UNLINKED genuine negation still auto-retires on default add', async () => {
+    const db = createTestDb();
+    const embedder = new ProximityEmbedder();
+    const nli = new StubNli();
+
+    const e = await handleStore(db, embedder, { content: 'PREMISE: The API uses port 3000' }, nli);
+    const n = await handleStore(
+      db,
+      embedder,
+      { content: 'HYPOTHESIS: The API does NOT use port 3000 — it uses 8080' },
+      nli,
+    );
+
+    // No link → R3 self-correction is preserved.
+    expect(n.operation).toBe('DELETE');
+    expect(validToOf(db, e.memory.id)).not.toBeNull();
+  });
+
   it('with classifier but no contradiction (neutral): normal ADD, prior fact stays valid', async () => {
     const db = createTestDb();
     const embedder = new ProximityEmbedder();

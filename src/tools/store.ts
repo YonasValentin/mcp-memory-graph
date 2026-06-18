@@ -251,18 +251,25 @@ export async function handleStore(
       // `parent_id IS NULL` mirrors detectConflicts' guard so the NLI path can't
       // retire a single chunk child of a chunked document (G3-F2).
       const row = db
-        .prepare<[string], { content: string; valid_to: string | null; parent_id: string | null }>(
-          'SELECT content, valid_to, parent_id FROM memories WHERE id = ?',
+        .prepare<[string], { content: string; title: string | null; valid_to: string | null; parent_id: string | null }>(
+          'SELECT content, title, valid_to, parent_id FROM memories WHERE id = ?',
         )
         .get(hit.id);
       // RB-8 §6: skip an over-ceiling target — the NLI path retires (and would
       // expose) a contradicted fact, so a sub-ceiling caller must never reach a
       // confidential/restricted same-namespace row here either.
+      //
+      // Link-aware guard: never feed a candidate the new memory explicitly
+      // REFERENCES (by id, short-id, or [[Title]] wikilink) into the NLI gate. A
+      // citation means "builds on / relates to", the opposite of "supersedes" —
+      // so an MNLI over-prediction can't auto-retire a fact the author cited
+      // (the failure that retired a linked release note).
       if (
         row &&
         row.valid_to === null &&
         row.parent_id === null &&
-        !(accessCeiling && isOverCeiling(db, hit.id, accessCeiling))
+        !(accessCeiling && isOverCeiling(db, hit.id, accessCeiling)) &&
+        !contentReferencesCandidate(input.content, { id: hit.id, title: row.title })
       ) {
         candidates.push({ id: hit.id, content: row.content });
       }
@@ -563,6 +570,30 @@ export async function handleStore(
  * undefined when nothing needs surfacing or the op already resolved the conflict
  * (UPDATE merged, DELETE retired). Read-only: only looks up titles for context.
  */
+/**
+ * True when `content` explicitly references `cand` — by full id, by 8-char
+ * short-id, or by a `[[Title]]` wikilink to its title. A reference signals
+ * "relates to / builds on", the OPPOSITE of "supersedes", so the NLI write-gate
+ * must never auto-retire a candidate the new memory links: it guards against an
+ * MNLI false-positive retiring a fact the author deliberately cited (e.g. a new
+ * release note that links the prior release note it summarizes).
+ */
+function contentReferencesCandidate(
+  content: string,
+  cand: { id: string; title: string | null },
+): boolean {
+  const lc = content.toLowerCase();
+  const id = cand.id.toLowerCase();
+  if (lc.includes(id) || lc.includes(id.slice(0, 8))) return true;
+  if (cand.title) {
+    const title = cand.title.toLowerCase().trim();
+    for (const m of content.matchAll(/\[\[([^\]]+)\]\]/g)) {
+      if (m[1].toLowerCase().trim() === title) return true;
+    }
+  }
+  return false;
+}
+
 function buildContradictionWarnings(
   db: Database.Database,
   conflicts: ConflictResult[],
