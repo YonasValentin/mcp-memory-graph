@@ -6,6 +6,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.7.5] - 2026-06-18
+
+### Fixed
+
+- **`SessionStart` "Key:" line no longer hides memories stored under an explicit
+  namespace.** It filtered top memories by the cwd-basename-resolved namespace,
+  so memories under a different explicit namespace (e.g. an org/team name vs the
+  dir name) never surfaced. It now *prefers* the resolved namespace but ranks by
+  importance across the corpus, so the most important memories appear even when
+  basename ≠ stored namespace — the same blind spot fixed in the new
+  `UserPromptSubmit` recall hook.
+
+### Changed
+
+- Replaced a personal handle (`namespace: 'yonas'`) in a battle/demo script with
+  neutral data.
+
 ## [2.7.4] - 2026-06-18
 
 ### Added
