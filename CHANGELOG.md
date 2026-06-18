@@ -6,6 +6,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.7.6] - 2026-06-18
+
+### Documentation
+
+- README now documents all **five** Claude Code hooks — added the
+  `UserPromptSubmit` task-aware recall hook (shipped in 2.7.4) to the hooks table
+  and the `init` step, fixing the stale "four hooks" count. The example config
+  also shows the recommended `review_on_stop: true`, so the docs are 1:1 with how
+  `init` actually wires the tool.
+
 ## [2.7.5] - 2026-06-18
 
 ### Fixed
