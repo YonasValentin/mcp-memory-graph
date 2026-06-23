@@ -7,6 +7,8 @@
 
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { resolveDbPath } from '../db/db-path.js';
 import { resolveReviewPaths } from './review-paths.js';
 
@@ -26,9 +28,54 @@ const MIN_TRANSCRIPT_CHARS = 500;
 const MAX_TRANSCRIPT_BYTES = 200_000;
 const HARD_TIMEOUT_MS = 5 * 60 * 1000;
 
-setTimeout(() => process.exit(1), HARD_TIMEOUT_MS);
+// The only tools the reviewer is ever allowed to call.
+const ALLOWED_TOOLS = [
+  'mcp__memory-server__memory_search',
+  'mcp__memory-server__memory_store',
+  'mcp__memory-server__memory_lesson',
+  'mcp__memory-server__memory_reflect',
+].join(',');
+
+/**
+ * Path to this package's compiled MCP server entry (`dist/index.js`), resolved
+ * relative to this file (`dist/cli/review-and-store.js`) so it is portable
+ * across install locations — no hardcoded npm path, no `npx` resolve.
+ */
+export function resolveServerEntry(): string {
+  return join(dirname(fileURLToPath(import.meta.url)), '..', 'index.js');
+}
+
+/**
+ * Build the argv for the headless `claude -p` reviewer. We pin it to a single,
+ * self-described MCP server (this package, launched with the current node
+ * binary) and pass `--strict-mcp-config` so Claude ignores the user's ambient
+ * project/user MCP config entirely. That removes the `npx`-cold-start connect
+ * race (the reviewer no longer competes with ~6 other servers booting at once)
+ * AND makes the reviewer cwd-independent, so it works from any project — not
+ * just the one where `memory-server` happens to be registered.
+ */
+export function buildReviewerArgs(
+  serverEntry: string,
+  allowedTools: string = ALLOWED_TOOLS,
+): { args: string[]; mcpConfig: string } {
+  const mcpConfig = JSON.stringify({
+    mcpServers: {
+      'memory-server': { type: 'stdio', command: process.execPath, args: [serverEntry], env: {} },
+    },
+  });
+  const args = [
+    '-p',
+    '--strict-mcp-config',
+    '--mcp-config', mcpConfig,
+    '--allowedTools', allowedTools,
+    '--output-format', 'text',
+  ];
+  return { args, mcpConfig };
+}
 
 async function main(): Promise<void> {
+  setTimeout(() => process.exit(1), HARD_TIMEOUT_MS);
+
   const [transcriptPath, sessionId] = process.argv.slice(2);
   if (!transcriptPath) process.exit(1);
 
@@ -87,24 +134,21 @@ async function main(): Promise<void> {
 
   const claudeBin = process.env.CLAUDE_BIN ?? 'claude';
 
-  const ALLOWED_TOOLS = [
-    'mcp__memory-server__memory_search',
-    'mcp__memory-server__memory_store',
-    'mcp__memory-server__memory_lesson',
-    'mcp__memory-server__memory_reflect',
-  ].join(',');
+  const { args } = buildReviewerArgs(resolveServerEntry());
 
   const child = spawn(
     claudeBin,
-    [
-      '-p',
-      '--allowedTools', ALLOWED_TOOLS,
-      '--output-format', 'text',
-    ],
+    args,
     {
       cwd: process.env.MCP_MEMORY_CWD ?? process.cwd(),
       stdio: ['pipe', childOut, childOut],
-      env: { ...process.env, MCP_MEMORY_REVIEW_IN_PROGRESS: '1' },
+      // MCP_TIMEOUT: give the pinned server generous headroom to connect within
+      // the reviewer's single turn (default Claude Code startup window is short).
+      env: {
+        ...process.env,
+        MCP_MEMORY_REVIEW_IN_PROGRESS: '1',
+        MCP_TIMEOUT: process.env.MCP_TIMEOUT ?? '30000',
+      },
     },
   );
 
@@ -135,4 +179,15 @@ async function main(): Promise<void> {
   child.stdin!.end();
 }
 
-main().catch(() => process.exit(0));
+// Only run when invoked as the entry script — keeps the module import-safe so
+// the pure helpers above (buildReviewerArgs/resolveServerEntry) can be unit-tested.
+const isMain = (() => {
+  try {
+    return process.argv[1] === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+})();
+if (isMain) {
+  main().catch(() => process.exit(0));
+}

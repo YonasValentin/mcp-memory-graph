@@ -6,6 +6,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.10.2] - 2026-06-23
+
+### Fixed
+
+- **Stop-hook reviewer no longer loses the MCP connect race.** The headless
+  `claude -p` review process ran with only `--allowedTools` and relied on
+  ambient MCP auto-discovery, so the `npx`-launched `memory-server`
+  intermittently lost the cold-start race against lighter servers and the
+  session review silently fell back to file memory instead of writing lessons
+  to the graph. It also failed from projects where `memory-server` wasn't
+  registered. The reviewer now spawns with `--strict-mcp-config` and a pinned,
+  self-described server (current node binary + local `dist/index.js`) plus a
+  generous `MCP_TIMEOUT`, so it loads exactly one server — fast and
+  cwd-independent. `buildReviewerArgs`/`resolveServerEntry` extracted as pure,
+  unit-tested helpers; the CLI module is now import-safe (`isMain` guard).
+
 ## [2.10.1] - 2026-06-18
 
 Dependency maintenance — no runtime or API changes.
