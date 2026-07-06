@@ -126,15 +126,19 @@ export async function handleCondense(
  * `restored` is true if EITHER applied. A live, never-condensed memory has
  * nothing to do → `restored:false`.
  *
- * REFUSAL (M2.8): the NLI write-gate retires a CONTRADICTED fact the same way a
- * soft FORGET does — invalidateMemory stamps `valid_to` (and leaves
- * `superseded_at` NULL) — so un-tombstoning it blindly would reinstate a stale
- * fact next to its correction. Restore therefore distinguishes the two by the
- * gate's exact footprint: an UNRESOLVED `memory_conflicts` row of type
- * 'contradicted' pointing at this memory. A soft FORGET records no such row, so
- * it still restores. When a contradiction is detected the call refuses up front
- * (`restored:false`, `reason:'contradiction-retired'`) — nothing is mutated, so
- * a condensed-and-contradicted fact is not silently un-condensed either.
+ * CONTRADICTION-RETIRED (M2.8 revised): the NLI write-gate retires a CONTRADICTED
+ * fact the same way a soft FORGET does — invalidateMemory stamps `valid_to` (and
+ * leaves `superseded_at` NULL) and records an UNRESOLVED `memory_conflicts` row of
+ * type 'contradicted'. The original M2.8 hard-REFUSED to un-tombstone such a fact,
+ * which turned an NLI FALSE POSITIVE into unrecoverable-via-API data loss (only a
+ * manual sqlite `UPDATE ... SET valid_to = NULL` could recover it). Revised: the
+ * fact IS reinstated, and the call returns a `warning` naming the memory it was
+ * said to contradict so the caller can reconcile the two (or re-store the correct
+ * one with on_conflict='supersede'). A soft FORGET records no such row → no warning.
+ *
+ * SUPERSEDED-RETIRED (battle-v9 CLASS 4) is still REFUSED: a `superseded_at`-stamped
+ * fact has a successor in an explicit supersession chain, so reinstating it would
+ * create genuine double-truth — restore it through the chain instead.
  */
 export async function handleRestore(
   db: Database.Database,
@@ -143,9 +147,12 @@ export async function handleRestore(
 ): Promise<{
   restored: boolean;
   message: string;
-  reason?: 'contradiction-retired' | 'superseded-retired';
+  reason?: 'superseded-retired';
   reinstated?: boolean;
   uncondensed?: boolean;
+  /** Set when the reinstated fact had been retired by an NLI contradiction —
+   *  names the contradicting ("correcting") memory so the caller can reconcile. */
+  warning?: string;
 }> {
   // Tombstone columns aren't on the partial MemoryRow type — read them with an
   // explicit typed query (matches the repository's bitemporal-column pattern).
@@ -167,18 +174,11 @@ export async function handleRestore(
   // Snapshot the tombstone state before any mutation below.
   const wasTombstoned = tomb.valid_to !== null || tomb.tx_expired !== null;
 
-  // Refusal: reinstating a fact that a NEWER fact already replaced would create
-  // double-truth (the stale fact live next to its correction/successor), so
-  // refuse up front — BEFORE any un-condense / un-tombstone mutation. Two retire
-  // shapes both qualify, and only on an actually-tombstoned row (a live row has
-  // nothing to reinstate):
-  //   (a) battle-v9 CLASS 4 — a SUPERSEDED retire (superseded_at set, e.g. the
-  //       heuristic supersede path): a successor exists in the supersession
-  //       chain, so it must be restored through that chain, never un-tombstoned
-  //       here. Refuse regardless of any memory_conflicts row.
-  //   (b) M2.8 — an NLI CONTRADICTION retire (superseded_at NULL + an unresolved
-  //       'contradicted' memory_conflicts row). RESOLVED conflict rows are
-  //       historical audit, not an active retirement, so they don't refuse.
+  // Refusal (battle-v9 CLASS 4): a SUPERSEDED retire (superseded_at set, e.g. the
+  // heuristic supersede path) has a successor in an explicit supersession chain,
+  // so reinstating it here would place a stale fact next to its successor
+  // (double-truth). Refuse up front — restore it through the chain instead. Only
+  // on an actually-tombstoned row (a live row has nothing to reinstate).
   if (wasTombstoned && tomb.superseded_at !== null) {
     return {
       restored: false,
@@ -187,20 +187,30 @@ export async function handleRestore(
         'Refused: this fact was superseded by a newer fact. Reinstating it would place a stale fact next to its successor (double-truth). Restore the successor through its supersession chain, or store the intended fact fresh.',
     };
   }
+
+  // M2.8 (revised): an NLI CONTRADICTION retire (superseded_at NULL + an unresolved
+  // 'contradicted' memory_conflicts row) is REINSTATED, not refused — an NLI false
+  // positive must be recoverable via the API. We still surface WHICH memory it was
+  // said to contradict so the caller can reconcile the two. RESOLVED conflict rows
+  // are historical audit, not an active retirement, so they emit no warning.
+  let contradictionWarning: string | undefined;
   if (wasTombstoned && tomb.superseded_at === null) {
-    const contradiction = db
-      .prepare<[string], { count: number }>(
-        `SELECT COUNT(*) AS count FROM memory_conflicts
-         WHERE old_memory_id = ? AND conflict_type = 'contradicted' AND resolved_at IS NULL`,
+    const conflict = db
+      .prepare<[string], { new_memory_id: string }>(
+        `SELECT new_memory_id FROM memory_conflicts
+         WHERE old_memory_id = ? AND conflict_type = 'contradicted' AND resolved_at IS NULL
+         ORDER BY rowid DESC LIMIT 1`,
       )
       .get(input.id);
-    if (contradiction && contradiction.count > 0) {
-      return {
-        restored: false,
-        reason: 'contradiction-retired',
-        message:
-          'Refused: this fact was retired by an NLI-detected contradiction (a correcting fact supersedes it). Reinstating it would place a stale fact next to its correction. Restore the correcting fact instead, or store the intended fact fresh.',
-      };
+    if (conflict) {
+      const other = getMemoryById(db, conflict.new_memory_id);
+      const otherLabel = other?.title
+        ? `"${other.title}" (${conflict.new_memory_id})`
+        : conflict.new_memory_id;
+      contradictionWarning =
+        `⚠️ This fact was retired by an NLI-detected contradiction with memory ${otherLabel}. ` +
+        `It is reinstated, but both facts are now live — reconcile them, or re-run memory_store ` +
+        `with on_conflict='supersede' on the correct one to retire the other.`;
     }
   }
 
@@ -251,5 +261,8 @@ export async function handleRestore(
   const parts: string[] = [];
   if (reinstated) parts.push('reinstated into default recall');
   if (uncondensed) parts.push('restored to original full content');
-  return { restored: true, message: `Memory ${parts.join(' and ')}`, reinstated, uncondensed };
+  const message =
+    `Memory ${parts.join(' and ')}` +
+    (contradictionWarning ? ` — ${contradictionWarning}` : '');
+  return { restored: true, message, reinstated, uncondensed, warning: contradictionWarning };
 }

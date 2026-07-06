@@ -139,12 +139,13 @@ describe('handleStore — F-NLI-COLDLOAD: classify() load failure degrades, neve
       .all()[0].id;
     db.prepare('UPDATE memories SET valid_to = ? WHERE id = ?').run(new Date().toISOString(), twinId);
 
-    // Retry with a now-working classifier (the model finished downloading):
-    // the genuine contradiction is detected and the old fact retired.
+    // Retry with a now-working classifier (the model finished downloading) and
+    // on_conflict='supersede' to opt into the retire: the genuine contradiction is
+    // detected and the old fact retired (proving the cold-load failure wasn't cached).
     const retry = await handleStore(
       db,
       embedder,
-      { content: 'HYPOTHESIS the service does NOT listen on port 3000' },
+      { content: 'HYPOTHESIS the service does NOT listen on port 3000', on_conflict: 'supersede' },
       new SymmetricNli(),
     );
     expect(retry.stored).toBe(true);

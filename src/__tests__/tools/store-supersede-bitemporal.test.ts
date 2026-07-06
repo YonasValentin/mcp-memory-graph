@@ -69,7 +69,7 @@ describe('handleStore — L1: NLI retire leaves no as_of double-truth window', (
     const n = await handleStore(
       db,
       embedder,
-      { content: 'HYPOTHESIS the service does NOT listen on port 3000' },
+      { content: 'HYPOTHESIS the service does NOT listen on port 3000', on_conflict: 'supersede' },
       nli,
     );
 

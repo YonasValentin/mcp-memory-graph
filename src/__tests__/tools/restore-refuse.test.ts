@@ -1,20 +1,18 @@
 /**
- * M2.8: memory_restore must REFUSE to reinstate an NLI-contradiction-retired
- * fact.
+ * M2.8 (REVISED): memory_restore must be able to REINSTATE an
+ * NLI-contradiction-retired fact.
  *
- * handleRestore un-tombstones a soft-forgotten memory. But the NLI write-gate
- * retires a CONTRADICTED fact the SAME way (invalidateMemory → stamps valid_to,
- * leaves superseded_at NULL) and records a `memory_conflicts` row of type
- * 'contradicted'. Naively un-tombstoning that fact reinstates a stale fact next
- * to its correction. Decision = REFUSE: restore must distinguish the two and
- * refuse to reinstate a contradiction-retired fact, while STILL restoring a
- * genuinely soft-forgotten memory and STILL un-condensing.
+ * The original M2.8 decision hard-REFUSED to un-tombstone a contradiction-retired
+ * fact. That made an NLI FALSE POSITIVE (an over-predicted contradiction between
+ * two unrelated notes) an unrecoverable-via-API data loss — the only workaround
+ * was a manual `UPDATE memories SET valid_to = NULL` against the sqlite file.
  *
- * The reliable discriminator is the NLI write-gate's exact DB footprint: a
- * tombstoned row (valid_to set) with superseded_at NULL AND an unresolved
- * `memory_conflicts` row where old_memory_id = id AND conflict_type =
- * 'contradicted'. A soft FORGET stamps valid_to but records NO such conflict
- * row, so it is never mistaken for a contradiction.
+ * Revised decision = ALLOW: restore reinstates the fact and returns a WARNING
+ * naming the memory it was said to contradict, so the caller can reconcile the
+ * two (or re-run memory_store with on_conflict='supersede' on the correct one).
+ * A genuinely soft-forgotten memory still restores cleanly (no warning), and a
+ * SUPERSEDED-retired fact (superseded_at set — a real successor chain) is still
+ * refused (covered by class4-bitemporal.test.ts).
  *
  * The mock embedder makes distinct texts near-orthogonal (L2 ≈ 1.4 even for
  * near-identical text), so a real reversal never reaches the NLI shortlist in
@@ -65,8 +63,8 @@ function nliContradictionRetire(oldId: string, newId: string): void {
   );
 }
 
-describe('handleRestore — refuses an NLI-contradiction-retired fact (M2.8)', () => {
-  it('REFUSES to reinstate a fact retired by an NLI contradiction', async () => {
+describe('handleRestore — reinstates an NLI-contradiction-retired fact (M2.8 revised)', () => {
+  it('REINSTATES a fact retired by an NLI contradiction and warns naming the contradicting memory', async () => {
     const a = await handleStore(db, embedder, {
       content: 'The deploy target is the staging server',
       title: 'Deploy',
@@ -86,13 +84,18 @@ describe('handleRestore — refuses an NLI-contradiction-retired fact (M2.8)', (
 
     const result = await handleRestore(db, embedder, { id: a.memory.id });
 
-    expect(result.restored).toBe(false);
-    expect(result.reason).toBe('contradiction-retired');
-    expect(result.reinstated).toBeFalsy();
+    // An NLI false positive must be recoverable via the API — restore succeeds.
+    expect(result.restored).toBe(true);
+    expect(result.reinstated).toBe(true);
+    expect(result.reason).toBeUndefined();
+    // …and surfaces WHICH memory it was said to contradict so the caller can
+    // reconcile (the correcting fact's id and/or title).
+    expect(result.warning).toBeTypeOf('string');
+    expect(result.warning).toContain(aPrime.memory.id);
 
-    // A stays tombstoned — the stale fact was NOT reinstated next to its fix.
+    // A is back in default recall — valid_to cleared.
     const after = getMemoryById(db, a.memory.id)!;
-    expect(after.valid_to).not.toBeNull();
+    expect(after.valid_to).toBeNull();
   });
 
   it('STILL restores a genuinely soft-forgotten memory (no contradiction row)', async () => {
@@ -141,9 +144,10 @@ describe('handleRestore — refuses an NLI-contradiction-retired fact (M2.8)', (
     expect(row.condensation_level).toBe('full');
   });
 
-  it('does NOT refuse a soft-forgotten memory whose contradiction was already resolved', async () => {
+  it('restores a soft-forgotten memory whose contradiction was already resolved WITHOUT a warning', async () => {
     // A contradiction row that has been resolved (resolved_at set) is historical
-    // audit, not an active retirement — restore should not refuse on it.
+    // audit, not an active retirement — restore succeeds and, because the warning
+    // query only considers UNRESOLVED rows, emits no contradiction warning.
     const a = await handleStore(db, embedder, {
       content: 'The cache TTL is 60 seconds',
       title: 'Cache',
@@ -162,5 +166,6 @@ describe('handleRestore — refuses an NLI-contradiction-retired fact (M2.8)', (
     expect(result.restored).toBe(true);
     expect(result.reinstated).toBe(true);
     expect(result.reason).toBeUndefined();
+    expect(result.warning).toBeUndefined();
   });
 });

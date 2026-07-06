@@ -127,19 +127,22 @@ describe('handleStore — H2: cross-namespace NLI contradiction is isolated', ()
     const premise = await handleStore(db, embedder, { content: 'PREMISE the service listens on port 3000', namespace: 'project-a' }, nli);
     expect(premise.stored).toBe(true);
 
-    const hypo = await handleStore(db, embedder, { content: 'HYPOTHESIS the service does NOT listen on port 3000', namespace: 'project-b' }, nli);
+    // on_conflict='supersede' OPTS INTO the retire, so this proves the partition
+    // isolates project A's fact from project B's supersede — not the add-path
+    // non-retire.
+    const hypo = await handleStore(db, embedder, { content: 'HYPOTHESIS the service does NOT listen on port 3000', namespace: 'project-b', on_conflict: 'supersede' }, nli);
     expect(hypo.stored).toBe(true);
 
     // Project A's fact must remain valid — project B cannot retire it.
     expect(validToOf(premise.memory.id)).toBeNull();
   });
 
-  it('still retires a contradicted fact WITHIN the same namespace (no regression)', async () => {
+  it('still retires a contradicted fact WITHIN the same namespace under supersede (no regression)', async () => {
     const premise = await handleStore(db, embedder, { content: 'PREMISE the service listens on port 3000', namespace: 'project-a' }, nli);
-    const hypo = await handleStore(db, embedder, { content: 'HYPOTHESIS the service does NOT listen on port 3000', namespace: 'project-a' }, nli);
+    const hypo = await handleStore(db, embedder, { content: 'HYPOTHESIS the service does NOT listen on port 3000', namespace: 'project-a', on_conflict: 'supersede' }, nli);
 
     expect(hypo.stored).toBe(true);
-    expect(hypo.operation).toBe('DELETE'); // NLI contradiction path
+    expect(hypo.operation).toBe('DELETE'); // NLI contradiction path (supersede)
     expect(validToOf(premise.memory.id)).not.toBeNull(); // retired
   });
 });

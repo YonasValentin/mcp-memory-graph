@@ -6,6 +6,29 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [2.10.3] - 2026-07-06
+
+### Fixed
+
+- **NLI write-gate no longer auto-retires a contradicted fact on the default
+  `add` path.** Contradiction *detection* still runs on every store, but the
+  gate now only *retires* the contradicted fact when the writer passes
+  `on_conflict: 'supersede'`. On the default `add` path a detected
+  contradiction is reported (`conflicts` + a loud warning) and **both facts
+  stay live** — a near-twin or an extending note can no longer silently
+  bi-temporally retire an existing memory on a false-positive MNLI score
+  (observed retiring valid memories at overlap ~0.74). `nliRetires =
+  nliContradictionDetected && on_conflict === 'supersede'`.
+- **`memory_restore` no longer refuses a `contradiction-retired` fact.** With
+  the default path no longer auto-retiring, the blanket refusal in
+  `handleRestore` is removed; a fact retired by a genuine supersede still
+  carries a warning on reinstatement rather than a hard refusal. Fixes the
+  case where a false-positive auto-retire left a valid memory unrecoverable
+  except via raw `UPDATE memories SET valid_to = NULL`.
+- Docs (`ENV.md`, `MULTI-TENANCY.md`) updated to describe detect-always /
+  retire-only-on-`supersede` semantics; NLI write-gate tests updated for the
+  new default-path behavior.
+
 ## [2.10.2] - 2026-06-23
 
 ### Fixed

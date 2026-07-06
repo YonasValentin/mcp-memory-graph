@@ -1,16 +1,20 @@
 /**
- * R3 — self-correcting NLI write-gate on the DEFAULT store path.
+ * R3 — self-correcting NLI write-gate, honouring the `on_conflict` contract.
  *
- * The HIGH correctness bug (BATTLE-PLAN §2 #6): "X uses port 3000" then "X does
- * NOT use port 3000" was classified a duplicate / NOOP (or a silent second
- * "current" fact) and the correction was dropped — because the NLI contradiction
- * check only ran when BOTH a classifier was injected AND on_conflict==='supersede'.
- * No default integration sets on_conflict, so the gate never fired in practice.
+ * DETECTION runs on EVERY store whenever an NLI classifier is available: the gate
+ * reads each near-neighbour as a premise vs. the new content as hypothesis and
+ * catches real logical contradictions (negations) the cheap overlap heuristic is
+ * blind to. That much is policy-independent.
  *
- * Post-fix: whenever an NLI classifier is available, it runs over the near-dup
- * shortlist on EVERY store (regardless of on_conflict). A detected contradiction
- * is never a duplicate/NOOP — both facts are retained and the superseded one is
- * bi-temporally invalidated, with the contradiction recorded in memory_conflicts.
+ * ACTING on a detected contradiction is NOT policy-independent. The documented
+ * `on_conflict` contract is: "add" (default) inserts as new (an exact duplicate is
+ * skipped) and NEVER retires an existing fact; "supersede" retires the conflicting
+ * match. So a detected contradiction:
+ *   - on the DEFAULT 'add' path → is REPORTED (conflicts + a loud warning) and the
+ *     correction is added as new, but BOTH facts stay live. An NLI false positive
+ *     (two unrelated notes scoring ~0.60) must never silently retire a memory.
+ *   - on the 'supersede' path → bi-temporally retires the contradicted fact
+ *     (operation DELETE), the caller having opted into the destructive resolution.
  *
  * The classifier is a DETERMINISTIC stub (no model download), mirroring the
  * existing graph/contradiction.test.ts pattern.
@@ -83,8 +87,8 @@ function conflictCount(db: Database.Database): number {
   return (db.prepare('SELECT COUNT(*) as c FROM memory_conflicts').get() as { c: number }).c;
 }
 
-describe('handleStore — NLI write-gate on the DEFAULT (on_conflict=add) path', () => {
-  it('canonical regression: fact then its negation is NOT a duplicate/NOOP; contradiction recorded, both retained', async () => {
+describe('handleStore — NLI write-gate honours on_conflict', () => {
+  it('DEFAULT add + contradiction: reported + warned, prior fact NOT retired, correction added anew', async () => {
     const db = createTestDb();
     const embedder = new ProximityEmbedder();
     const nli = new StubNli();
@@ -101,7 +105,8 @@ describe('handleStore — NLI write-gate on the DEFAULT (on_conflict=add) path',
     const before = memCount(db);
 
     // Store the NEGATION with the DEFAULT on_conflict (no supersede) + the stub.
-    // This is the exact scenario that previously dropped the correction.
+    // This is the exact destructive-retire bug: 'add' must NOT retire the prior
+    // fact on an NLI contradiction — it reports + warns and keeps both.
     const n = await handleStore(
       db,
       embedder,
@@ -109,18 +114,51 @@ describe('handleStore — NLI write-gate on the DEFAULT (on_conflict=add) path',
       nli,
     );
 
-    // NOT classified a duplicate / NOOP — the correction is retained.
+    // The correction is added as new, NOT collapsed to a duplicate/NOOP…
+    expect(n.stored).toBe(true);
+    expect(n.operation).toBe('ADD');
+    expect(memCount(db)).toBe(before + 1);
+
+    // …and the prior fact is LEFT LIVE (valid_to still NULL) — no silent retire.
+    expect(validToOf(db, e.memory.id)).toBeNull();
+
+    // The contradiction is still surfaced: recorded, reported as 'contradicted',
+    // and a loud warning nudges the caller to re-run with on_conflict='supersede'.
+    expect(conflictCount(db)).toBeGreaterThan(0);
+    expect(
+      n.conflicts?.some((c) => c.existing_memory_id === e.memory.id && c.type === 'contradicted'),
+    ).toBe(true);
+    expect(n.warnings?.some((w) => /supersede/i.test(w))).toBe(true);
+    expect(n.operation_reason).toMatch(/contradiction/i);
+  });
+
+  it('SUPERSEDE + contradiction: retires the prior fact (DELETE), no supersede-nudge warning', async () => {
+    const db = createTestDb();
+    const embedder = new ProximityEmbedder();
+    const nli = new StubNli();
+
+    const e = await handleStore(db, embedder, { content: 'PREMISE: The API uses port 3000' }, nli);
+    const before = memCount(db);
+
+    const n = await handleStore(
+      db,
+      embedder,
+      {
+        content: 'HYPOTHESIS: The API does NOT use port 3000 — it uses 8080',
+        on_conflict: 'supersede',
+      },
+      nli,
+    );
+
+    // Opted into the destructive resolution: prior fact retired, correction added.
     expect(n.stored).toBe(true);
     expect(n.operation).toBe('DELETE');
-    expect(memCount(db)).toBe(before + 1); // both facts kept (new one added)
-
-    // The superseded (contradicted) fact is bi-temporally invalidated, not deleted.
-    expect(validToOf(db, e.memory.id)).not.toBeNull();
+    expect(memCount(db)).toBe(before + 1);
+    expect(validToOf(db, e.memory.id)).not.toBeNull(); // retired (bi-temporal)
+    // Not deleted — just invalidated.
     expect(db.prepare('SELECT id FROM memories WHERE id = ?').get(e.memory.id)).toBeTruthy();
-
-    // Contradiction recorded so the conflict is auditable, not silent.
-    expect(conflictCount(db)).toBeGreaterThan(0);
-    expect(n.operation_reason).toMatch(/contradiction/i);
+    // The "re-run with supersede" nudge is pointless here — the caller already did.
+    expect(n.warnings).toBeUndefined();
   });
 
   it('no-classifier fallback: same default store does NOT invalidate the prior fact', async () => {
@@ -148,7 +186,7 @@ describe('handleStore — NLI write-gate on the DEFAULT (on_conflict=add) path',
     expect(nli.calls).toBe(0);
   });
 
-  it('overlap heuristic says "duplicate" but a negation cue differs → contradiction wins, NOT a NOOP', async () => {
+  it('overlap heuristic says "duplicate" but a negation cue differs → contradiction wins, NOT a NOOP, and NOT retired on add', async () => {
     const db = createTestDb();
     // Same vector for both → heuristic vectorSim ≈ 1; the two contents also share
     // almost every significant word (high jaccard) → overlapScore > 0.85 →
@@ -189,14 +227,15 @@ describe('handleStore — NLI write-gate on the DEFAULT (on_conflict=add) path',
       nli,
     );
 
-    // The correction is NOT swallowed as a duplicate/NOOP.
+    // The correction is NOT swallowed as a duplicate/NOOP — it is added as new.
     expect(n.stored).toBe(true);
-    expect(n.operation).toBe('DELETE');
+    expect(n.operation).toBe('ADD');
     expect(memCount(db)).toBe(before + 1);
     // Reported conflict for the prior fact is `contradicted`, never `duplicate`.
     expect(n.conflicts?.some((c) => c.existing_memory_id === e.memory.id)).toBe(true);
     expect(n.conflicts?.every((c) => c.type !== 'duplicate')).toBe(true);
-    expect(validToOf(db, e.memory.id)).not.toBeNull();
+    // On the default 'add' path the prior fact stays live (no silent retire).
+    expect(validToOf(db, e.memory.id)).toBeNull();
   });
 
   it('link-aware guard: does NOT retire a candidate the new memory links by id ([[id]])', async () => {
@@ -208,11 +247,14 @@ describe('handleStore — NLI write-gate on the DEFAULT (on_conflict=add) path',
 
     // The new note would NLI-contradict (it carries a NOT cue), but it explicitly
     // LINKS the prior memory by id — a reference signals "relates to", not
-    // "supersedes". The guard must keep the prior fact valid (no auto-retire).
+    // "supersedes". The guard must keep the prior fact valid even under supersede.
     const n = await handleStore(
       db,
       embedder,
-      { content: `HYPOTHESIS: builds on the earlier note, NOT a correction — see [[${e.memory.id}]]` },
+      {
+        content: `HYPOTHESIS: builds on the earlier note, NOT a correction — see [[${e.memory.id}]]`,
+        on_conflict: 'supersede',
+      },
       nli,
     );
 
@@ -229,30 +271,15 @@ describe('handleStore — NLI write-gate on the DEFAULT (on_conflict=add) path',
     const n = await handleStore(
       db,
       embedder,
-      { content: `HYPOTHESIS: related work, NOT a reversal — cf [[${e.memory.id.slice(0, 8)}]]` },
+      {
+        content: `HYPOTHESIS: related work, NOT a reversal — cf [[${e.memory.id.slice(0, 8)}]]`,
+        on_conflict: 'supersede',
+      },
       nli,
     );
 
     expect(validToOf(db, e.memory.id)).toBeNull();
     expect(n.operation).toBe('ADD');
-  });
-
-  it('regression: an UNLINKED genuine negation still auto-retires on default add', async () => {
-    const db = createTestDb();
-    const embedder = new ProximityEmbedder();
-    const nli = new StubNli();
-
-    const e = await handleStore(db, embedder, { content: 'PREMISE: The API uses port 3000' }, nli);
-    const n = await handleStore(
-      db,
-      embedder,
-      { content: 'HYPOTHESIS: The API does NOT use port 3000 — it uses 8080' },
-      nli,
-    );
-
-    // No link → R3 self-correction is preserved.
-    expect(n.operation).toBe('DELETE');
-    expect(validToOf(db, e.memory.id)).not.toBeNull();
   });
 
   it('with classifier but no contradiction (neutral): normal ADD, prior fact stays valid', async () => {

@@ -208,17 +208,24 @@ export async function handleStore(
   const decision = decideWriteOperation(conflicts, input.on_conflict ?? 'add');
 
   // ── R3: self-correcting NLI write-gate (subsumes BATTLE-PLAN §2 #6). ──
-  // Runs on EVERY store whenever a classifier is available — regardless of
-  // on_conflict. The pre-R3 gate also required on_conflict==='supersede', so the
-  // default 'add' path (every default integration) never fired and "X uses 3000"
-  // then "X does NOT use 3000" was dropped as a duplicate/NOOP. Now the NLI reads
-  // each near neighbor as a premise vs. the new content as hypothesis, catching
-  // real logical contradictions (negations) the overlap heuristic above is blind
-  // to. Any contradicted memory is invalidated (bi-temporal retire) and the new
-  // memory is added anew — operation reported as DELETE, with the contradiction
-  // recorded (below). When `nli` is undefined this whole block is skipped, so the
-  // no-classifier fallback path is unchanged (no contradiction detection — the
-  // overlap heuristic alone, which cannot see negation; this is documented).
+  // DETECTION runs on EVERY store whenever a classifier is available — regardless
+  // of on_conflict — so "X uses 3000" then "X does NOT use 3000" is never dropped
+  // as a duplicate/NOOP. The NLI reads each near neighbor as a premise vs. the new
+  // content as hypothesis, catching real logical contradictions (negations) the
+  // overlap heuristic above is blind to.
+  //
+  // ACTING on a detected contradiction HONOURS on_conflict (the documented
+  // contract, and what the response's own warning promises): only
+  // on_conflict='supersede' bi-temporally RETIRES the contradicted fact; on the
+  // default 'add' path the contradiction is REPORTED (conflicts + a loud warning)
+  // and the correction is added as new, but BOTH facts stay live. This is the
+  // guard against a destructive NLI false positive — an over-predicted
+  // contradiction (unrelated notes scoring ~0.60) must never silently retire an
+  // existing memory on the default path. See `nliRetires` below.
+  //
+  // When `nli` is undefined this whole block is skipped, so the no-classifier
+  // fallback path is unchanged (no contradiction detection — the overlap heuristic
+  // alone, which cannot see negation; this is documented).
   //
   // Laziness: the shortlist is computed first and classify() only runs when it is
   // non-empty, so the real model never loads on a store with no near neighbors.
@@ -328,16 +335,25 @@ export async function handleStore(
     }
   }
 
-  // When NLI retired a contradicted fact, the new memory always supersedes it:
-  // bypass the heuristic NOOP/UPDATE/DELETE short-circuits and insert anew.
-  const nliContradiction = nliInvalidated.length > 0;
+  // NLI detected one or more genuine contradictions among the near neighbours.
+  // A detected contradiction always bypasses the heuristic NOOP/UPDATE short-
+  // circuits so the correction is inserted as new (never collapsed into the fact
+  // it contradicts).
+  const nliContradictionDetected = nliInvalidated.length > 0;
+  // …but only on_conflict='supersede' may ACT on it by bi-temporally RETIRING the
+  // contradicted fact. On the default 'add' path the contradiction is reported +
+  // warned and BOTH facts stay live — a destructive NLI false positive must never
+  // silently delete an existing memory (matches the documented on_conflict
+  // contract and the response's own warning text).
+  const nliRetires = nliContradictionDetected && (input.on_conflict ?? 'add') === 'supersede';
 
   // R3: never let a token/vector overlap label a contradicted fact a "duplicate"
   // (or "superseded"). When NLI flagged the same id as a contradiction, drop the
   // heuristic verdict for it so memory_conflicts records the honest `contradicted`
   // type — a negation cue differs, so it is NOT a duplicate. (The NLI-flagged
-  // verdict is what gets recorded for these ids below.)
-  if (nliContradiction) {
+  // verdict is what gets recorded for these ids below.) Applies on BOTH paths so
+  // the response labels the conflict honestly whether or not we retire it.
+  if (nliContradictionDetected) {
     const contradictedIds = new Set(nliInvalidated);
     conflicts = conflicts.filter((c) => !contradictedIds.has(c.existing_memory_id));
   }
@@ -355,9 +371,15 @@ export async function handleStore(
   // Loud, human-readable alert for a contradiction/supersede match that the
   // chosen op did NOT act on (i.e. on_conflict='add' kept both facts). This is
   // the "your new note contradicts an old one" nudge that was previously buried
-  // in the `conflicts` array. NLI-retired (DELETE) and merged (UPDATE) paths
-  // already resolved the conflict, so they produce no warning.
-  const warningsOut = buildContradictionWarnings(db, reportedConflicts, decision.op);
+  // in the `conflicts` array. The nudge says "re-run with on_conflict:'supersede'
+  // to retire it", so it only makes sense on the non-supersede path: on 'supersede'
+  // the caller already opted into the retire (the contradicted fact is retired
+  // below), so suppress it. Merged (UPDATE) / retired (DELETE) ops also produce
+  // no warning (handled inside buildContradictionWarnings).
+  const warningsOut =
+    (input.on_conflict ?? 'add') === 'supersede'
+      ? undefined
+      : buildContradictionWarnings(db, reportedConflicts, decision.op);
 
   // ── #4 PARAPHRASE NOOP: the new content merely rewords an existing fact. ──
   // Gated to the DEFAULT add path: explicit on_conflict='supersede'/'update'
@@ -367,7 +389,7 @@ export async function handleStore(
   // fires without a classifier. Reinforce the kept fact (the access path's
   // spaced-repetition bump) and return without inserting a row or a conflict —
   // stopping the per-session self-churn at its source (memory be1fc787).
-  if (!nliContradiction && (input.on_conflict ?? 'add') === 'add' && paraphraseTargetId) {
+  if (!nliContradictionDetected && (input.on_conflict ?? 'add') === 'add' && paraphraseTargetId) {
     const existingRow = getMemoryById(db, paraphraseTargetId);
     if (existingRow) {
       recordAccess(db, [{ memory_id: existingRow.id, access_type: 'get' }]);
@@ -384,7 +406,7 @@ export async function handleStore(
   }
 
   // ── NOOP: exact duplicate already present — return it without inserting. ──
-  if (!nliContradiction && decision.op === 'NOOP') {
+  if (!nliContradictionDetected && decision.op === 'NOOP') {
     const existingRow = decision.targetId ? getMemoryById(db, decision.targetId) : null;
     if (existingRow) {
       return {
@@ -400,7 +422,7 @@ export async function handleStore(
   }
 
   // ── UPDATE: merge into the existing target via the standard update path. ──
-  if (!nliContradiction && decision.op === 'UPDATE' && decision.targetId) {
+  if (!nliContradictionDetected && decision.op === 'UPDATE' && decision.targetId) {
     const existing = getMemoryById(db, decision.targetId);
     if (existing) {
       const mergedContent = mergeUpdateContent(existing.content, input.content);
@@ -454,7 +476,7 @@ export async function handleStore(
   // insert rolls it back atomically — never retiring the old fact without a
   // replacement (G3-F1).
   const deleteTargetId =
-    !nliContradiction && decision.op === 'DELETE' && decision.targetId ? decision.targetId : null;
+    !nliContradictionDetected && decision.op === 'DELETE' && decision.targetId ? decision.targetId : null;
 
   // ── ADD (and DELETE's follow-on insert). ──
   const row: MemoryRow = {
@@ -503,9 +525,13 @@ export async function handleStore(
     // (row.created_at — insertMemory sets valid_from = created_at) so there is no
     // instant at which both are valid under an as_of query (battle-v7 L1). This
     // mirrors the heuristic superseded-band path (recordConflicts), which already
-    // stamps valid_to = the new memory's valid_from.
-    for (const id of nliInvalidated) {
-      invalidateMemory(db, id, row.created_at);
+    // stamps valid_to = the new memory's valid_from. Only retire the NLI-detected
+    // contradictions when the caller opted in via on_conflict='supersede'; on the
+    // default 'add' path they stay live (reported + warned, never deleted).
+    if (nliRetires) {
+      for (const id of nliInvalidated) {
+        invalidateMemory(db, id, row.created_at);
+      }
     }
     if (deleteTargetId) {
       invalidateMemory(db, deleteTargetId, row.created_at);
@@ -584,7 +610,10 @@ export async function handleStore(
   // retired (NLI contradiction / supersede / delete-intent), announce the
   // retirement and flag anything derived from it stale. Fail-soft + gated.
   notify(db, 'memory.created', rowToEventPayload(row));
-  for (const retiredId of new Set([...nliInvalidated, ...(deleteTargetId ? [deleteTargetId] : [])])) {
+  for (const retiredId of new Set([
+    ...(nliRetires ? nliInvalidated : []),
+    ...(deleteTargetId ? [deleteTargetId] : []),
+  ])) {
     const retired = getMemoryById(db, retiredId);
     if (retired) notify(db, 'memory.superseded', rowToEventPayload(retired));
     propagateSafe(db, retiredId);
@@ -597,17 +626,22 @@ export async function handleStore(
   // (and, via git sync, the stale one resurrected team-wide).
   const supersedeRequested = (input.on_conflict ?? 'add') === 'supersede';
   const supersedeRetiredNothing =
-    supersedeRequested && !nliContradiction && decision.op !== 'DELETE' && decision.op !== 'UPDATE';
+    supersedeRequested && !nliRetires && decision.op !== 'DELETE' && decision.op !== 'UPDATE';
 
   return {
     stored: true,
     memory: rowToMemory(row),
-    operation: nliContradiction || decision.op === 'DELETE' ? 'DELETE' : 'ADD',
-    operation_reason: nliContradiction
+    // DELETE only when a fact was actually retired: NLI contradiction under
+    // supersede (nliRetires) or a heuristic supersede-band delete. A contradiction
+    // detected on the default 'add' path retires nothing → operation is ADD.
+    operation: nliRetires || decision.op === 'DELETE' ? 'DELETE' : 'ADD',
+    operation_reason: nliRetires
       ? `NLI contradiction — retired ${nliInvalidated.join(', ')} (on_conflict=supersede)`
-      : supersedeRetiredNothing
-        ? `on_conflict=supersede but no existing memory matched closely enough to retire — stored as new (nothing superseded). ${decision.reason}`
-        : decision.reason,
+      : nliContradictionDetected
+        ? `NLI contradiction with ${nliInvalidated.join(', ')} recorded; both kept (on_conflict=add — re-run with on_conflict=supersede to retire the old fact)`
+        : supersedeRetiredNothing
+          ? `on_conflict=supersede but no existing memory matched closely enough to retire — stored as new (nothing superseded). ${decision.reason}`
+          : decision.reason,
     superseded_nothing: supersedeRetiredNothing || undefined,
     conflicts: conflictsOut,
     warnings: warningsOut,

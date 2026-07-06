@@ -85,18 +85,21 @@ describe('handleStore — H6: bidirectional NLI guard prevents false-positive re
     const existing = await handleStore(db, embedder, { content: 'PREMISE the cache uses ONEWAY redis with a 60s TTL' }, new OneWayNli());
     expect(validToOf(existing.memory.id)).toBeNull();
 
-    const second = await handleStore(db, embedder, { content: 'HYPOTHESIS the cache also stores session tokens' }, new OneWayNli());
+    // on_conflict='supersede' OPTS INTO retiring a contradicted fact, so this test
+    // proves the bidirectional guard itself (not the add-path non-retire) rejects
+    // a one-way over-prediction.
+    const second = await handleStore(db, embedder, { content: 'HYPOTHESIS the cache also stores session tokens', on_conflict: 'supersede' }, new OneWayNli());
     expect(second.stored).toBe(true);
 
     // The compatible fact must survive — a single-direction over-prediction is not
-    // enough to retire it.
+    // enough to retire it, even when the caller asked to supersede.
     expect(validToOf(existing.memory.id)).toBeNull();
     expect(second.operation).toBe('ADD');
   });
 
   it('a genuine (bidirectional) contradiction still retires the old fact', async () => {
     const existing = await handleStore(db, embedder, { content: 'PREMISE the service listens on port 3000' }, new SymmetricNli());
-    const correction = await handleStore(db, embedder, { content: 'HYPOTHESIS the service does NOT listen on port 3000' }, new SymmetricNli());
+    const correction = await handleStore(db, embedder, { content: 'HYPOTHESIS the service does NOT listen on port 3000', on_conflict: 'supersede' }, new SymmetricNli());
 
     expect(correction.stored).toBe(true);
     expect(correction.operation).toBe('DELETE');
